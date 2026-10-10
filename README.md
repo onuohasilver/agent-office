@@ -9,9 +9,26 @@ npm start            # builds, then serves on http://localhost:4317
 npm run dev          # hot reload on http://localhost:5317
 ```
 
+## Talking to the office
+
+There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
+
+- `@Ada #Afriex check the open PRs` goes straight to Ada.
+- Untagged messages go to the **chief of staff** at reception, a fast model
+  (Haiku by default) that decides who should handle them:
+  - a message that relates to a running job is handed to that agent *live*,
+    and they fold it into the work they're already doing;
+  - a follow-up to a finished job resumes that agent's session;
+  - new work goes to whoever's free, or queues for the agent you tagged;
+  - if it can't tell which project you mean, it asks.
+- Agents post their results back into the chat.
+
+The clearance and model pickers under the composer apply to new work.
+
 ## How the office works
 
-Every staff member is one headless `claude` process. What they do on screen is
+Every job is one headless `claude` process whose stdin stays open, so new
+messages can reach it mid-task. What they do on screen is
 driven by the tool calls in its stream:
 
 | Work | Where they go |
@@ -37,6 +54,7 @@ same session. A finished plan can be approved and built the same way.
 | `OFFICE_ROOT` | the folder above this one; its subfolders are the projects |
 | `PORT` | `4317` |
 | `CLAUDE_BIN` | `claude` |
+| `CHIEF_MODEL` | `haiku` |
 
 The server only listens on 127.0.0.1 and refuses requests from other origins,
 because it can start Claude with full permissions. State lives in

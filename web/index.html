@@ -19,45 +19,40 @@
     </header>
     <div class="stats panel" id="stats"></div>
 
-    <aside class="board panel">
-      <button class="primary" id="newJob">New job <kbd>N</kbd></button>
-      <div class="jobs" id="jobs"></div>
-      <button class="ghost" id="clear" hidden>Clear finished</button>
+    <aside class="side panel">
+      <nav class="tabs">
+        <button type="button" data-tab="chat" class="on">Chat</button>
+        <button type="button" data-tab="jobs">Jobs <span id="jobCount"></span></button>
+      </nav>
+      <section class="pane" id="chatPane">
+        <div class="msgs" id="msgs"></div>
+        <div class="typing" id="typing" hidden><span></span><span></span><span></span> Chief is reading</div>
+        <form class="composer" id="composer">
+          <div class="ac" id="ac" hidden></div>
+          <textarea id="input" rows="1" placeholder="Message the office · @agent #project" aria-label="Message the office"></textarea>
+          <div class="controls">
+            <select id="mode" aria-label="Clearance for new work">
+              <option value="plan">Plan only</option>
+              <option value="edit" selected>Edit files</option>
+              <option value="auto">Full autonomy</option>
+            </select>
+            <select id="model" aria-label="Model for new work">
+              <option value="">Default model</option>
+              <option value="opus">Opus</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="haiku">Haiku</option>
+            </select>
+            <button class="primary small" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+      <section class="pane" id="jobsPane" hidden>
+        <div class="jobs" id="jobs"></div>
+        <button class="ghost" id="clear" hidden>Clear finished</button>
+      </section>
     </aside>
 
     <aside class="detail panel" id="detail" hidden></aside>
-
-    <dialog id="dlg">
-      <form method="dialog" id="jobForm">
-        <h2>New job</h2>
-        <label>Project
-          <input name="repo" list="repos" autocomplete="off" required placeholder="Pick a folder" />
-          <datalist id="repos"></datalist>
-        </label>
-        <label>Brief
-          <textarea name="prompt" rows="5" required placeholder="What should get done?"></textarea>
-        </label>
-        <fieldset class="modes">
-          <legend>Clearance</legend>
-          <label><input type="radio" name="mode" value="plan" /><span><b>Plan only</b>Reads and proposes. Changes nothing.</span></label>
-          <label><input type="radio" name="mode" value="edit" checked /><span><b>Edit files</b>Can edit files. Shell commands get blocked.</span></label>
-          <label><input type="radio" name="mode" value="auto" /><span><b>Full autonomy</b>Runs any command without asking.</span></label>
-        </fieldset>
-        <label>Model
-          <select name="model">
-            <option value="">Default</option>
-            <option value="opus">Opus</option>
-            <option value="sonnet">Sonnet</option>
-            <option value="haiku">Haiku</option>
-          </select>
-        </label>
-        <p class="err" id="formErr"></p>
-        <div class="actions">
-          <button type="button" class="ghost" id="cancel">Cancel</button>
-          <button type="submit" class="primary">Hand it over</button>
-        </div>
-      </form>
-    </dialog>
 
     <div class="banner" id="banner"></div>
     <div class="toast" id="toast"></div>

@@ -26,9 +26,9 @@ scene.background = new THREE.Color('#e7e1d8');
 scene.fog = new THREE.Fog('#e7e1d8', 80, 140);
 
 const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 300);
-camera.position.set(19, 27, 33);
+camera.position.set(19, 27, 36.5);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(-1, 0, 0);
+controls.target.set(-1, 0, 2.5);
 controls.enableDamping = true;
 controls.maxPolarAngle = 1.22;
 controls.minPolarAngle = 0.3;
@@ -51,8 +51,11 @@ const confetti = new Confetti(scene);
 
 // ---------- state ----------
 
+const CHIEF = { id: 'chief', name: 'Chief', shirt: '#2b2d42', hair: '#8d8d8d', skin: '#a8714a' };
+
 const app = {
   staff: [],
+  chiefCost: 0,
   modes: {},
   progress: null,
   jobs: new Map(),
@@ -60,9 +63,26 @@ const app = {
   selected: null,
   job: (id) => app.jobs.get(id),
   staffName: (id) => app.staff.find((s) => s.id === id)?.name || '',
+  person: (from) => {
+    if (from === 'you') return { name: 'You', color: '#c9c1b4' };
+    if (from === 'chief') return { name: 'Chief of Staff', color: CHIEF.shirt };
+    const s = app.staff.find((x) => x.id === from);
+    return { name: s?.name || from, color: s?.shirt || '#999' };
+  },
+  roster: () => app.staff.slice(0, app.progress?.capacity || 0).map((s) => {
+    const job = [...app.jobs.values()].find((j) => j.status === 'working' && j.agentId === s.id);
+    return { name: s.name, color: s.shirt, note: job ? `on ${job.repo}` : 'free' };
+  }),
+  busyIn: (repo) => {
+    const names = [...app.jobs.values()].filter((j) => j.status === 'working' && j.repo === repo).map((j) => app.staffName(j.agentId));
+    return names.length ? `${names.join(', ')} here` : '';
+  },
 };
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
+const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
+chief.want = 'desk';
+chief.teleport('desk');
 
 app.mergeLog = (full) => {
   const job = app.jobs.get(full.id);
@@ -73,7 +93,7 @@ app.mergeLog = (full) => {
 app.refreshLists = () => {
   const jobs = [...app.jobs.values()];
   hud.renderJobs(jobs, app.staffName);
-  hud.renderStats(jobs);
+  hud.renderStats(jobs, app.chiefCost);
   drawBoard(office.board, jobs);
 };
 
@@ -91,6 +111,7 @@ app.select = (agentId, openJob = true) => {
   if (!agentId || !openJob) return;
   const agent = app.agents.get(agentId);
   focus();
+  hud.focusInput(`@${agent.name} `);
   const mine = [...app.jobs.values()].filter((j) => j.agentId === agentId);
   const current = mine.find((j) => j.status === 'working') || mine.sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))[0];
   if (current) hud.openDetail(current.id);
@@ -136,7 +157,10 @@ function handle(msg) {
     app.staff = msg.staff;
     app.modes = msg.modes;
     app.progress = msg.progress;
+    app.chiefCost = msg.chiefCost || 0;
     app.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
+    hud.renderChat(msg.chat || []);
+    hud.chiefBusy(msg.chiefBusy);
     hire(firstHello);
     syncAgents(firstHello);
     firstHello = false;
@@ -173,6 +197,17 @@ function handle(msg) {
     for (const a of app.agents.values()) if (a.job?.id === job.id) a.onLog(msg.entry);
     if (msg.entry.todos) drawWhiteboard(office.scribble, msg.entry.todos);
     hud.appendLog(job.id, msg.entry);
+  } else if (msg.t === 'chat') {
+    hud.addMessage(msg.msg);
+    if (msg.msg.from === 'chief') {
+      chief.job = null;
+      chief.say(msg.msg.text.length > 90 ? msg.msg.text.slice(0, 89) + '…' : msg.msg.text, '', 6000);
+    }
+  } else if (msg.t === 'chief') {
+    hud.chiefBusy(msg.busy);
+    if (msg.busy) { chief.job = { id: 'routing' }; chief.say('Reading your message…', 'thinking'); }
+    else chief.job = null;
+    if (msg.cost !== undefined) { app.chiefCost = msg.cost; app.refreshLists(); }
   } else if (msg.t === 'xp') {
     app.progress = msg.progress;
     hud.renderLevel(app.progress);
@@ -224,12 +259,16 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
   ray.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
-  const hit = ray.intersectObjects([...app.agents.values()].map((a) => a.root), true)[0];
-  if (hit) app.select(hit.object.userData.agentId);
+  const hit = ray.intersectObjects([...app.agents.values(), chief].map((a) => a.root), true)[0];
+  if (!hit) return;
+  if (hit.object.userData.agentId === 'chief') {
+    hud.focusInput();
+    chief.say('Tell me what you need.', '', 3000);
+  } else app.select(hit.object.userData.agentId);
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   ray.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
-  const over = ray.intersectObjects([...app.agents.values()].map((a) => a.root), true).length > 0;
+  const over = ray.intersectObjects([...app.agents.values(), chief].map((a) => a.root), true).length > 0;
   renderer.domElement.style.cursor = over ? 'pointer' : '';
 });
 
@@ -274,6 +313,7 @@ function frame() {
   controls.update();
 
   for (const a of app.agents.values()) a.update(dt, t);
+  chief.update(dt, t);
   confetti.update(dt);
   office.globe.rotation.y += dt * 0.4;
 
@@ -285,6 +325,7 @@ function frame() {
 
   renderer.render(scene, camera);
   for (const a of app.agents.values()) a.placeLabel(camera, innerWidth, innerHeight);
+  chief.placeLabel(camera, innerWidth, innerHeight);
   requestAnimationFrame(frame);
 }
 

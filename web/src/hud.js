@@ -47,18 +47,17 @@ export class Hud {
     this.openId = null;
     this.repos = null;
 
-    $('newJob').onclick = () => this.openDialog();
-    $('cancel').onclick = () => $('dlg').close();
     $('clear').onclick = async () => { await api('/api/jobs/clear', {}); this.closeDetail(); };
-    $('jobForm').onsubmit = (e) => this.submit(e);
     $('jobs').onclick = (e) => {
       const btn = e.target.closest('[data-id]');
       if (btn) this.app.openJob(btn.dataset.id);
     };
+    document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => this.tab(b.dataset.tab)));
+    this.bindChat();
     addEventListener('keydown', (e) => {
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
-      if (e.key === 'n' && !typing && !e.metaKey && !e.ctrlKey && !$('dlg').open) { e.preventDefault(); this.openDialog(); }
-      if (e.key === 'Escape' && !$('dlg').open) this.closeDetail();
+      if ((e.key === 'n' || e.key === '/') && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); this.focusInput(); }
+      if (e.key === 'Escape' && !typing) this.closeDetail();
     });
     setInterval(() => this.tick(), 1000);
   }
@@ -71,9 +70,9 @@ export class Hud {
     $('xptext').textContent = `${p.xp - p.floor} / ${p.next - p.floor} XP`;
   }
 
-  renderStats(jobs) {
+  renderStats(jobs, extra = 0) {
     const count = (s) => jobs.filter((j) => j.status === s).length;
-    const spent = jobs.reduce((a, j) => a + (j.cost || 0), 0);
+    const spent = jobs.reduce((a, j) => a + (j.cost || 0), extra);
     $('stats').innerHTML = [
       `<span><b>${count('working')}</b> working</span>`,
       `<span><b>${count('queued')}</b> queued</span>`,
@@ -94,8 +93,10 @@ export class Hud {
           <span class="t">${esc(j.title)}</span>
           <span class="m">${esc(j.repo)}${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''} · ${STATUS[j.status]}</span>
         </button>`).join('')
-      : `<p class="empty">The office is quiet. Hand someone a job.</p>`;
+      : `<p class="empty">No jobs yet. Ask for something in the chat.</p>`;
     $('clear').hidden = !list.some((j) => order[j.status] === 2);
+    const open = list.filter((j) => order[j.status] < 2).length;
+    $('jobCount').textContent = open ? String(open) : '';
   }
 
   // ---------- detail drawer ----------
@@ -224,40 +225,176 @@ export class Hud {
     if (job && (job.status === 'working' || job.status === 'queued')) this.renderMeta(job);
   }
 
-  // ---------- dialog ----------
+  // ---------- chat ----------
 
-  async openDialog(prefill = {}) {
-    const form = $('jobForm');
-    $('formErr').textContent = '';
-    form.repo.value = prefill.repo || store('office.repo') || '';
-    form.prompt.value = '';
-    const mode = store('office.mode');
-    if (mode) form.querySelector(`input[name="mode"][value="${mode}"]`)?.click();
-    $('dlg').showModal();
-    (form.repo.value ? form.prompt : form.repo).focus();
-    if (!this.repos) {
-      try {
-        this.repos = (await api('/api/repos')).repos;
-        $('repos').innerHTML = this.repos.map((r) => `<option value="${esc(r)}"></option>`).join('');
-      } catch (err) { $('formErr').textContent = err.message; }
+  tab(name) {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+    $('chatPane').hidden = name !== 'chat';
+    $('jobsPane').hidden = name !== 'jobs';
+    if (name === 'chat') this.scrollChat(true);
+  }
+
+  focusInput(prefix = '') {
+    this.tab('chat');
+    const input = $('input');
+    if (prefix && !input.value.includes(prefix.trim())) input.value = prefix + input.value;
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    this.autosize();
+  }
+
+  bindChat() {
+    const input = $('input');
+    for (const id of ['mode', 'model']) {
+      const saved = store(`office.${id}`);
+      if (saved !== null) $(id).value = saved;
+      $(id).onchange = () => store(`office.${id}`, $(id).value);
+    }
+    $('composer').onsubmit = (e) => { e.preventDefault(); this.send(); };
+    input.oninput = () => { this.autosize(); this.suggest(); };
+    input.onclick = () => this.suggest();
+    input.onblur = () => setTimeout(() => ($('ac').hidden = true), 120);
+    input.onkeydown = (e) => {
+      const ac = $('ac');
+      if (!ac.hidden) {
+        const items = [...ac.children];
+        const at = items.findIndex((i) => i.classList.contains('on'));
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          const next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+          items.forEach((i, k) => i.classList.toggle('on', k === next));
+          return;
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); this.pick(items[Math.max(0, at)]); return; }
+        if (e.key === 'Escape') { e.preventDefault(); ac.hidden = true; return; }
+      }
+      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.send(); }
+    };
+    $('ac').onmousedown = (e) => {
+      const item = e.target.closest('[data-insert]');
+      if (item) { e.preventDefault(); this.pick(item); }
+    };
+    $('msgs').onclick = (e) => {
+      const open = e.target.closest('[data-open]');
+      if (open) return this.app.openJob(open.dataset.open);
+      const more = e.target.closest('[data-more]');
+      if (more) { more.closest('.msg').classList.add('full'); more.remove(); return; }
+      const grant = e.target.closest('[data-grant]');
+      if (grant) {
+        api(`/api/jobs/${grant.dataset.grant}/reply`, {
+          message: 'You now have permission to run the commands that were blocked. Carry on from where you stopped.', mode: 'auto',
+        }).then(() => grant.remove(), (err) => this.toast(err.message, 'bad'));
+      }
+    };
+  }
+
+  autosize() {
+    const input = $('input');
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 140) + 'px';
+  }
+
+  async send() {
+    const input = $('input');
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    this.autosize();
+    $('ac').hidden = true;
+    try {
+      await api('/api/chat', { text, mode: $('mode').value, model: $('model').value });
+    } catch (err) {
+      input.value = text;
+      this.toast(err.message, 'bad');
     }
   }
 
-  async submit(e) {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const body = Object.fromEntries(fd.entries());
-    if (this.repos && !this.repos.includes(body.repo)) { $('formErr').textContent = 'Pick a project from the list.'; return; }
-    try {
-      const job = await api('/api/jobs', body);
-      store('office.repo', body.repo);
-      store('office.mode', body.mode);
-      $('dlg').close();
-      this.toast('Handed over. Someone will pick it up.');
-      this.app.openJob(job.id);
-    } catch (err) {
-      $('formErr').textContent = err.message;
+  // @ for people, # for projects. Projects with spaces are written with dashes.
+  async suggest() {
+    const input = $('input');
+    const before = input.value.slice(0, input.selectionStart);
+    const m = before.match(/(^|\s)([@#])([\w.-]*)$/);
+    const ac = $('ac');
+    if (!m) { ac.hidden = true; return; }
+    const [, , sigil, typed] = m;
+    const q = typed.toLowerCase().replace(/[^a-z0-9]/g, '');
+    let items;
+    if (sigil === '@') {
+      items = this.app.roster().map((a) => ({ insert: `@${a.name}`, label: a.name, note: a.note, dot: a.color }));
+    } else {
+      if (!this.repos) {
+        try { this.repos = (await api('/api/repos')).repos; } catch { this.repos = []; }
+      }
+      items = this.repos.map((r) => ({ insert: `#${r.replace(/\s+/g, '-')}`, label: r, note: this.app.busyIn(r) }));
     }
+    items = items.filter((i) => i.label.toLowerCase().replace(/[^a-z0-9]/g, '').includes(q))
+      .sort((a, b) => a.label.toLowerCase().replace(/[^a-z0-9]/g, '').indexOf(q) - b.label.toLowerCase().replace(/[^a-z0-9]/g, '').indexOf(q))
+      .slice(0, 8);
+    if (!items.length) { ac.hidden = true; return; }
+    ac.innerHTML = items.map((i, k) => `
+      <div class="item ${k === 0 ? 'on' : ''}" data-insert="${esc(i.insert)}" data-len="${typed.length + 1}">
+        ${i.dot ? `<i style="background:${i.dot}"></i>` : '<i class="hash">#</i>'}
+        <span>${esc(i.label)}</span>${i.note ? `<em>${esc(i.note)}</em>` : ''}
+      </div>`).join('');
+    ac.hidden = false;
+  }
+
+  pick(item) {
+    if (!item) return;
+    const input = $('input');
+    const caret = input.selectionStart;
+    const start = caret - Number(item.dataset.len);
+    input.value = input.value.slice(0, start) + item.dataset.insert + ' ' + input.value.slice(caret);
+    const pos = start + item.dataset.insert.length + 1;
+    input.setSelectionRange(pos, pos);
+    $('ac').hidden = true;
+    input.focus();
+  }
+
+  renderChat(messages) {
+    $('msgs').innerHTML = messages.length
+      ? messages.map((m) => this.message(m)).join('')
+      : `<p class="empty">Tell the office what you need. Tag someone with @, or a project with #. The chief of staff hands everything else to whoever fits.</p>`;
+    this.scrollChat(true);
+  }
+
+  addMessage(m) {
+    const msgs = $('msgs');
+    const stick = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
+    msgs.querySelector('.empty')?.remove();
+    msgs.insertAdjacentHTML('beforeend', this.message(m));
+    if (stick || m.from === 'you') this.scrollChat(true);
+  }
+
+  scrollChat() {
+    const msgs = $('msgs');
+    requestAnimationFrame(() => (msgs.scrollTop = msgs.scrollHeight));
+  }
+
+  message(m) {
+    const who = this.app.person(m.from);
+    const time = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const body = m.from === 'you'
+      ? `<p>${esc(m.text).replace(/(^|\s)([@#][\w.-]+)/g, '$1<span class="tag">$2</span>')}</p>`
+      : rich(m.text);
+    const long = m.from !== 'you' && m.from !== 'chief' && m.text.length > 420;
+    const extras = [
+      long ? '<button type="button" class="link" data-more>Show all</button>' : '',
+      m.jobId && m.from !== 'you' ? `<button type="button" class="link" data-open="${m.jobId}">Open job</button>` : '',
+      m.denials?.length ? `<button type="button" class="primary small" data-grant="${m.jobId}">Grant full autonomy and continue</button>` : '',
+    ].filter(Boolean).join('');
+    return `
+      <div class="msg from-${m.from === 'you' ? 'you' : m.from === 'chief' ? 'chief' : 'agent'} ${m.status || ''} ${long ? 'clamp' : ''}">
+        <div class="who"><i style="background:${who.color}"></i><b>${esc(who.name)}</b><time>${time}</time></div>
+        <div class="body md">${body}</div>
+        ${m.denials?.length ? `<p class="blocked">Blocked from using ${m.denials.map(esc).join(', ')}.</p>` : ''}
+        ${extras ? `<div class="acts">${extras}</div>` : ''}
+      </div>`;
+  }
+
+  chiefBusy(on) {
+    $('typing').hidden = !on;
+    if (on) this.scrollChat();
   }
 
   // ---------- moments ----------

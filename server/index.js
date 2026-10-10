@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
+import { route } from './chief.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -16,6 +17,11 @@ const DATA = path.join(APP, 'data');
 const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const MAX_LOG = 600;
+const MAX_CHAT = 300;
+const CHIEF_MODEL = process.env.CHIEF_MODEL || 'haiku';
+// After a turn ends, keep the session open briefly: a message that landed
+// at the last moment starts another turn instead of being lost.
+const GRACE_MS = 2500;
 
 // The roster. Capacity grows with level, so later names are "hires".
 const STAFF = [
@@ -38,7 +44,7 @@ const MODELS = new Set(['', 'opus', 'sonnet', 'haiku']);
 
 // ---------- state ----------
 
-let state = { xp: 0, jobs: [] };
+let state = { xp: 0, jobs: [], chat: [], chiefCost: 0 };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
@@ -77,7 +83,7 @@ function send(msg) {
   for (const ws of clients) if (ws.readyState === 1) ws.send(data);
 }
 const publicJob = (j, tail = 40) => {
-  const { stopRequested, ...rest } = j;
+  const { stopRequested, lastTurn, ...rest } = j;
   return { ...rest, log: j.log.slice(-tail) };
 };
 const snapshot = () => ({
@@ -86,7 +92,19 @@ const snapshot = () => ({
   modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label])),
   progress: progress(),
   jobs: state.jobs.map((j) => publicJob(j)),
+  chat: state.chat.slice(-150),
+  chiefCost: state.chiefCost,
+  chiefBusy,
 });
+
+function post(from, text, extra = {}) {
+  const msg = { id: crypto.randomUUID().slice(0, 8), from, text, ts: Date.now(), ...extra };
+  state.chat.push(msg);
+  if (state.chat.length > MAX_CHAT) state.chat.splice(0, state.chat.length - MAX_CHAT);
+  send({ t: 'chat', msg });
+  save();
+  return msg;
+}
 
 function addLog(job, entry) {
   entry.ts = Date.now();
@@ -102,6 +120,8 @@ const pushJob = (job) => { send({ t: 'job', job: publicJob(job, 0) }); save(); }
 // ---------- jobs ----------
 
 const running = new Map();
+const graces = new Map();
+const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
 function repoPath(name) {
   if (typeof name !== 'string' || !name || /[\/\\]/.test(name) || name.startsWith('.')) return null;
@@ -117,7 +137,7 @@ function listRepos() {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
-function createJob({ repo, prompt, mode = 'edit', model = '' }) {
+function createJob({ repo, prompt, mode = 'edit', model = '', agentId = '' }) {
   if (!repoPath(repo)) throw new Error('Unknown project folder.');
   prompt = String(prompt || '').trim();
   if (!prompt) throw new Error('Give the job a brief.');
@@ -131,6 +151,7 @@ function createJob({ repo, prompt, mode = 'edit', model = '' }) {
     status: 'queued', createdAt: now, queuedAt: now, startedAt: null, endedAt: null,
     sessionId: null, agentId: null, cost: 0, turns: 0, tools: 0, xp: 0,
     pending: prompt, denials: [], error: null, log: [],
+    wantAgent: STAFF.some((st) => st.id === agentId) ? agentId : null,
   };
   state.jobs.push(job);
   addLog(job, { kind: 'user', summary: prompt });
@@ -144,8 +165,8 @@ function pump() {
   const queued = state.jobs.filter((j) => j.status === 'queued').sort((a, b) => a.queuedAt - b.queuedAt);
   for (const job of queued) {
     const busy = new Set(state.jobs.filter((j) => j.status === 'working').map((j) => j.agentId));
-    const free = roster.filter((s) => !busy.has(s.id));
-    if (!free.length) break;
+    const free = roster.filter((s) => !busy.has(s.id) && (!job.wantAgent || s.id === job.wantAgent));
+    if (!free.length) continue;
     // Follow-ups go back to whoever did the first round, if they're free.
     const agent = free.find((s) => s.id === job.agentId) || free[Math.floor(Math.random() * free.length)];
     start(job, agent.id);
@@ -154,20 +175,25 @@ function pump() {
 
 function start(job, agentId) {
   const cwd = repoPath(job.repo);
-  const args = ['-p', job.pending, '--output-format', 'stream-json', '--verbose', ...MODES[job.mode].args];
+  const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', ...MODES[job.mode].args];
   if (job.model) args.push('--model', job.model);
   if (job.sessionId) args.push('--resume', job.sessionId);
+  const first = job.pending;
 
   Object.assign(job, {
     status: 'working', agentId, pending: null, denials: [], error: null,
-    stopRequested: false, startedAt: job.startedAt ?? Date.now(), turnTools: 0,
+    stopRequested: false, startedAt: job.startedAt ?? Date.now(), turnTools: 0, lastTurn: null,
   });
   pushJob(job);
 
   if (!cwd) return finish(job, 'failed', 'That project folder is gone.');
 
-  const child = spawn(CLAUDE, args, { cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // stdin stays open for the whole job, so the chief can hand the agent
+  // new messages while it works.
+  const child = spawn(CLAUDE, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
+  child.stdin.on('error', () => {});
+  write(child, first);
 
   let buf = '';
   child.stdout.setEncoding('utf8');
@@ -186,13 +212,37 @@ function start(job, agentId) {
 
   const ended = (why) => {
     running.delete(job.id);
-    if (job.status === 'working') {
-      if (job.stopRequested) finish(job, 'stopped', 'Stopped by you.');
-      else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
-    }
+    endGrace(job);
+    if (job.status !== 'working') return;
+    if (job.stopRequested) finish(job, 'stopped', 'Stopped by you.');
+    else if (job.lastTurn) finish(job, job.lastTurn.ok ? 'done' : 'failed', job.lastTurn.ok ? null : job.lastTurn.error);
+    else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
   };
   child.on('error', (err) => ended(`Could not start claude: ${err.message}`));
   child.on('close', (code) => ended(`claude exited with code ${code}`));
+}
+
+function write(child, text) {
+  if (!child.stdin.writable) return false;
+  child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n');
+  return true;
+}
+
+// Hand a message to a job, whatever state it is in.
+function deliver(job, text) {
+  if (job.status === 'working' && running.has(job.id)) {
+    endGrace(job);
+    job.lastTurn = null;
+    addLog(job, { kind: 'user', summary: text });
+    if (write(running.get(job.id), text)) return 'live';
+  }
+  if (job.status === 'queued') {
+    job.pending = `${job.pending}\n\n${text}`;
+    addLog(job, { kind: 'user', summary: text });
+    return 'queued';
+  }
+  replyJob(job, { message: text });
+  return 'resumed';
 }
 
 const textOf = (content) =>
@@ -203,6 +253,7 @@ const textOf = (content) =>
 function onLine(job, line) {
   let e;
   try { e = JSON.parse(line); } catch { return; }
+  if (e.type === 'assistant' && graces.has(job.id)) { endGrace(job); job.lastTurn = null; }
 
   if (e.type === 'system' && e.subtype === 'init') {
     job.sessionId = e.session_id;
@@ -236,7 +287,14 @@ function onLine(job, line) {
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
     addLog(job, { kind: 'result', ok, summary: String(e.result || e.subtype || '').trim().slice(0, 8000), cost: e.total_cost_usd, ms: e.duration_ms });
-    finish(job, ok ? 'done' : 'failed', ok ? null : `Ended with ${e.subtype}`);
+    job.lastTurn = { ok, error: ok ? null : `Ended with ${e.subtype}`, text: String(e.result || '').trim() };
+    endGrace(job);
+    graces.set(job.id, setTimeout(() => {
+      graces.delete(job.id);
+      const child = running.get(job.id);
+      if (child) child.stdin.end();
+      else finish(job, ok ? 'done' : 'failed', job.lastTurn?.error);
+    }, GRACE_MS));
   }
 }
 
@@ -254,6 +312,10 @@ function finish(job, status, error) {
     const after = progress();
     send({ t: 'xp', progress: after, gained, jobId: job.id, agentId: job.agentId, levelUp: after.level > before.level });
   }
+  const text = status === 'done' ? job.lastTurn?.text || 'Done.'
+    : status === 'stopped' ? 'Stopped, as asked.'
+    : `I hit a wall: ${error || 'something went wrong'}`;
+  post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
   save();
   setImmediate(pump);
 }
@@ -277,7 +339,11 @@ function stopJob(job) {
 }
 
 function replyJob(job, { message, mode }) {
-  if (job.status === 'working' || job.status === 'queued') throw new Error('That job is still open.');
+  if (job.status === 'working' || job.status === 'queued') {
+    if (!String(message || '').trim()) throw new Error('Say something first.');
+    deliver(job, String(message).trim());
+    return;
+  }
   message = String(message || '').trim();
   if (!message) throw new Error('Say something first.');
   if (mode && !MODES[mode]) throw new Error('Unknown mode.');
@@ -286,6 +352,125 @@ function replyJob(job, { message, mode }) {
   addLog(job, { kind: 'user', summary: message });
   pushJob(job);
   pump();
+}
+
+
+// ---------- chat + chief of staff ----------
+
+let chiefBusy = false;
+let chiefQueue = Promise.resolve();
+const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+const nameOf = (id) => STAFF.find((s) => s.id === id)?.name || 'someone';
+const ago = (ts) => {
+  const m = Math.round((Date.now() - ts) / 60000);
+  return m < 60 ? `${m}m` : `${Math.round(m / 60)}h`;
+};
+
+function parseTags(text) {
+  const roster = STAFF.slice(0, capacity());
+  const repos = listRepos();
+  const agentFor = (n) => roster.find((s) => norm(s.name) === norm(n));
+  const repoFor = (n) => repos.find((r) => norm(r) === norm(n));
+  const agents = [...text.matchAll(/@([\w-]+)/g)].map((m) => agentFor(m[1])).filter(Boolean);
+  const projects = [...text.matchAll(/#([\w.-]+)/g)].map((m) => repoFor(m[1])).filter(Boolean);
+  // Tags in front are just addressing; tags mid-sentence read as words.
+  const clean = text
+    .replace(/^(\s*[@#][\w.-]+)+\s*/, (lead) => lead.replace(/[@#]([\w.-]+)/g, (m, n) => (agentFor(n) || repoFor(n) ? '' : m)))
+    .replace(/@([\w-]+)/g, (m, n) => (agentFor(n) ? '' : m))
+    .replace(/#([\w.-]+)/g, (m, n) => repoFor(n) || m)
+    .replace(/[ \t]+/g, ' ')
+    .trim();
+  return { agent: agents[0], repo: projects[0], clean: clean || text };
+}
+
+function chiefContext(text, agent, repo) {
+  const roster = STAFF.slice(0, capacity());
+  const lines = ['Staff:'];
+  for (const s of roster) {
+    const j = state.jobs.find((x) => x.status === 'working' && x.agentId === s.id);
+    if (!j) { lines.push(`- ${s.name} (id ${s.id}): free`); continue; }
+    const last = [...j.log].reverse().find((e) => e.kind === 'tool' || e.kind === 'text');
+    lines.push(`- ${s.name} (id ${s.id}): working on job ${j.id} in ${j.repo}: "${j.title}". Latest: ${last ? last.summary.slice(0, 100).replace(/\n/g, ' ') : 'just starting'}`);
+  }
+  const queued = state.jobs.filter((j) => j.status === 'queued');
+  if (queued.length) {
+    lines.push('Queued:');
+    for (const j of queued) lines.push(`- job ${j.id} in ${j.repo}: "${j.title}"${j.wantAgent ? ` (for ${nameOf(j.wantAgent)})` : ''}`);
+  }
+  const recent = state.jobs.filter((j) => ['done', 'failed', 'stopped'].includes(j.status)).sort((a, b) => b.endedAt - a.endedAt).slice(0, 6);
+  if (recent.length) {
+    lines.push('Recently finished:');
+    for (const j of recent) lines.push(`- job ${j.id} by ${nameOf(j.agentId)} in ${j.repo}: "${j.title}" (${j.status}, ${ago(j.endedAt)} ago)`);
+  }
+  lines.push('', `Projects: ${listRepos().join(', ')}`, '', 'Recent chat:');
+  for (const m of state.chat.slice(-9, -1)) {
+    const who = m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from);
+    lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}`);
+  }
+  lines.push('', `New message from the boss: ${text}`);
+  if (agent) lines.push(`Tagged agent: ${agent.name} (id ${agent.id})`);
+  if (repo) lines.push(`Tagged project: ${repo}`);
+  return lines.join('\n');
+}
+
+function hireWork({ repo, brief, agentId, mode, model, say }) {
+  const job = createJob({ repo, prompt: brief, mode, model, agentId: agentId || '' });
+  const who = nameOf(job.agentId);
+  let line = say || `${who} is on it.`;
+  if (job.status === 'queued') {
+    line = agentId
+      ? `${nameOf(agentId)} is busy right now, so it's next on their list.`
+      : `Everyone's busy, so it's in the queue. First free hand takes it.`;
+  }
+  post('chief', line, { jobId: job.id });
+}
+
+async function dispatch(text, mode, model) {
+  const { agent, repo, clean } = parseTags(text);
+  const open = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');
+
+  // A named project with nothing open in it can only be new work.
+  if (repo && !open.some((j) => j.repo === repo)) {
+    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model });
+  }
+
+  chiefBusy = true;
+  send({ t: 'chief', busy: true });
+  let d;
+  try {
+    d = await route(chiefContext(text, agent, repo), { bin: CLAUDE, model: CHIEF_MODEL });
+    state.chiefCost += d.cost || 0;
+  } finally {
+    chiefBusy = false;
+    send({ t: 'chief', busy: false, cost: state.chiefCost });
+  }
+
+  if (d.action === 'followup') {
+    const job = state.jobs.find((j) => j.id === d.jobId);
+    if (job) {
+      deliver(job, clean);
+      return post('chief', d.say || `Passed to ${nameOf(job.agentId)}.`, { jobId: job.id });
+    }
+  }
+  if (d.action === 'new' || d.action === 'followup') {
+    const project = repo || listRepos().find((r) => norm(r) === norm(d.repo || ''));
+    if (!project) return post('chief', 'Which project is that for? Tag it with #project.');
+    const roster = STAFF.slice(0, capacity());
+    const agentId = agent?.id || (roster.some((s) => s.id === d.agentId) ? d.agentId : '');
+    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say });
+  }
+  post('chief', d.say || 'Could you say a bit more?');
+}
+
+function chat({ text, mode = 'edit', model = '' }) {
+  text = String(text || '').trim();
+  if (!text) throw new Error('Say something first.');
+  if (!MODES[mode]) throw new Error('Unknown mode.');
+  if (!MODELS.has(model)) throw new Error('Unknown model.');
+  post('you', text);
+  chiefQueue = chiefQueue
+    .then(() => dispatch(text, mode, model))
+    .catch((err) => post('chief', `I couldn't route that one: ${err.message}`));
 }
 
 // ---------- http ----------
@@ -344,6 +529,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    if (req.method === 'POST' && url.pathname === '/api/chat') { chat(await readBody(req)); return json(res, 202, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {
       state.jobs = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');

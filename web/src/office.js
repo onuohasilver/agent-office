@@ -241,6 +241,30 @@ export function buildOffice(scene) {
   const board = canvasPlane(scene, 9, 3.2, 1536, 546);
   board.mesh.position.set(0, 2.2, -14.88);
 
+  // reception — the chief of staff
+  const reception = new THREE.Group();
+  reception.position.set(15.5, 0, 10.6);
+  box(reception, 3.4, 1.05, 0.9, '#efe9df', 0, 0.525, 0);
+  box(reception, 3.5, 0.06, 1.0, C.wood, 0, 1.08, 0);
+  box(reception, 0.9, 0.55, 0.05, C.metal, -0.8, 1.4, -0.25);
+  const sign = canvasPlane(reception, 1.6, 0.34, 400, 85);
+  sign.mesh.position.set(0, 0.62, 0.456);
+  sign.ctx.fillStyle = '#efe9df';
+  sign.ctx.fillRect(0, 0, 400, 85);
+  sign.ctx.fillStyle = '#1d1b18';
+  sign.ctx.font = `650 38px ${FONT}`;
+  sign.ctx.textAlign = 'center';
+  sign.ctx.fillText('Chief of Staff', 200, 56);
+  sign.tex.needsUpdate = true;
+  const stool = new THREE.Group();
+  stool.position.set(0, 0, -1.0);
+  box(stool, 0.62, 0.08, 0.6, C.chair, 0, 0.5, 0);
+  box(stool, 0.62, 0.6, 0.08, C.chair, 0, 0.84, -0.3);
+  box(stool, 0.06, 0.46, 0.06, C.metal, 0, 0.24, 0);
+  reception.add(stool);
+  scene.add(reception);
+  grid.block(13.7, 17.3, 10.1, 11.1);
+
   // entrance
   const mat0 = box(scene, 2.4, 0.02, 1.6, '#b9a58f', 18.2, 0.01, 13.4);
   mat0.castShadow = false;
@@ -264,7 +288,7 @@ export function buildOffice(scene) {
     },
   };
 
-  return { grid, desks, stations, board, scribble, blinkers, globe: land, door: new THREE.Vector3(18.6, 0, 14.4) };
+  return { grid, desks, stations, board, scribble, blinkers, globe: land, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
 }
 
 // ---------- kanban + whiteboard drawing ----------

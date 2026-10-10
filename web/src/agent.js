@@ -28,12 +28,13 @@ function limb(parent, x, y, w, h, d, color, handColor) {
 }
 
 export class Agent {
-  constructor(staff, world, labels) {
+  constructor(staff, world, labels, opts = {}) {
     this.staff = staff;
     this.id = staff.id;
     this.name = staff.name;
     this.world = world;
-    this.desk = world.desks[world.agentIndex(staff.id)];
+    this.desk = opts.desk || world.desks[world.agentIndex(staff.id)];
+    this.deskFace = opts.face ?? Math.PI;
 
     this.root = new THREE.Group();
     this.body = new THREE.Group();
@@ -132,7 +133,7 @@ export class Agent {
   }
 
   resolve(key, fresh = false) {
-    if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: Math.PI, pose: 'desk' };
+    if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: this.deskFace, pose: 'desk' };
     if (key === 'door') return { key, pos: this.world.door.clone(), face: Math.PI, pose: 'stand' };
     const station = this.world.stations[key];
     if (!station) return null;
