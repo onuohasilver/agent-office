@@ -27,6 +27,9 @@ export function summarizeTool(name, input = {}) {
     case 'ExitPlanMode': return 'Presenting the plan';
     case 'Skill': return `Opening the ${clip(input.skill, 30)} playbook`;
     case 'ToolSearch': return 'Fetching the right tool';
+    case 'mcp__office__office_roster': return 'Checking who’s around';
+    case 'mcp__office__message_colleague': return `Messaging ${clip(input.to, 20)}`;
+    case 'mcp__office__hand_off': return `Handing off to ${clip(input.to, 20) || 'a colleague'}`;
     default:
       return name.startsWith('mcp__')
         ? `Using ${name.split('__').slice(1).join(' · ')}`
@@ -40,6 +43,7 @@ const WINDOW = new Set(['WebSearch', 'WebFetch']);
 const WHITEBOARD = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'Task', 'Agent', 'ExitPlanMode', 'ToolSearch']);
 
 export function stationFor(name) {
+  if (name.startsWith('mcp__office__')) return 'desk';
   if (LIBRARY.has(name)) return 'library';
   if (SERVERS.has(name)) return 'servers';
   if (WINDOW.has(name) || name.startsWith('mcp__')) return 'window';

@@ -7,6 +7,7 @@ import { buildOffice, drawScreen, drawBoard, drawWhiteboard } from './office.js'
 import { Agent } from './agent.js';
 import { Confetti } from './fx.js';
 import { Hud } from './hud.js';
+import { sound } from './sound.js';
 
 // ---------- renderer, camera, light ----------
 
@@ -176,11 +177,14 @@ function handle(msg) {
     if (job.status === 'working') {
       const a = app.agents.get(job.agentId);
       if (a && a.job?.id !== job.id) a.assign(job);
+      else if (a) a.job = job;
     } else {
       for (const a of app.agents.values()) {
         if (a.job?.id !== job.id) continue;
         a.finish(job.status);
         if (job.status === 'done') confetti.burst(a.pos, [a.staff.shirt, '#f2cc8f', '#81b29a', '#3d7ea6', '#ffffff']);
+        if (job.status === 'done') { sound.ship(); notify(`${a.name} shipped`, job.title); }
+        if (job.status === 'failed') { sound.fail(); notify(`${a.name} hit a wall`, job.title); }
       }
     }
     if (prev?.status !== job.status) {
@@ -199,6 +203,8 @@ function handle(msg) {
     hud.appendLog(job.id, msg.entry);
   } else if (msg.t === 'chat') {
     hud.addMessage(msg.msg);
+    const from = app.agents.get(msg.msg.from), to = app.agents.get(msg.msg.to);
+    if (from && to) { from.visit(to, msg.msg.text); sound.knock(); }
     if (msg.msg.from === 'chief') {
       chief.job = null;
       chief.say(msg.msg.text.length > 90 ? msg.msg.text.slice(0, 89) + '…' : msg.msg.text, '', 6000);
@@ -220,6 +226,7 @@ function handle(msg) {
       setTimeout(() => f.remove(), 1800);
     }
     if (msg.levelUp) {
+      setTimeout(() => sound.levelUp(), 700);
       const hiredName = app.staff[app.progress.capacity - 1]?.name;
       const hiring = !app.agents.has(app.staff[app.progress.capacity - 1]?.id);
       hud.banner(`Level ${app.progress.level}`, hiring ? `${hiredName} just joined the office.` : 'The office is fully staffed.');
@@ -227,6 +234,41 @@ function handle(msg) {
     }
   }
 }
+
+// ---------- notifications ----------
+
+let unseen = 0;
+function notify(title, body) {
+  if (!document.hidden) return;
+  unseen++;
+  document.title = `(${unseen}) Agent Office`;
+  try {
+    if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, silent: true });
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { unseen = 0; document.title = 'Agent Office'; }
+});
+// Ask once, on the first message you send.
+document.getElementById('composer').addEventListener('submit', () => {
+  try { if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission(); } catch {}
+}, { once: true });
+
+const ICON_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
+const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>';
+const soundBtn = document.getElementById('sound');
+function paintSound() {
+  soundBtn.innerHTML = sound.muted ? ICON_OFF : ICON_ON;
+  const label = sound.muted ? 'Sound off' : 'Sound on';
+  soundBtn.title = label;
+  soundBtn.setAttribute('aria-label', label);
+}
+soundBtn.onclick = () => {
+  sound.setMuted(!sound.muted);
+  paintSound();
+  if (!sound.muted) sound.ship();
+};
+paintSound();
 
 function latestTodos() {
   let best = null;

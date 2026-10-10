@@ -14,8 +14,8 @@ npm run dev          # hot reload on http://localhost:5317
 There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
 
 - `@Ada #Afriex check the open PRs` goes straight to Ada.
-- Untagged messages go to the **chief of staff** at reception, a fast model
-  (Haiku by default) that decides who should handle them:
+- Untagged messages go to the **chief of staff** at reception (Sonnet by
+  default), who decides who should handle them:
   - a message that relates to a running job is handed to that agent *live*,
     and they fold it into the work they're already doing;
   - a follow-up to a finished job resumes that agent's session;
@@ -24,6 +24,26 @@ There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
 - Agents post their results back into the chat.
 
 The clearance and model pickers under the composer apply to new work.
+
+## Agents talk to each other
+
+Every agent gets three office tools (a small MCP server, `server/office-mcp.js`):
+
+- `office_roster`: who's around and what they're on.
+- `message_colleague`: reaches a working colleague mid-task. With
+  `wait_for_reply`, the sender's session pauses until the answer comes (10
+  minute limit).
+- `hand_off`: gives work in any project to a free colleague. Their result goes
+  back to the sender, who waits for it by default.
+
+Hand-offs only go to someone free right now, so two agents can never wait on
+each other. A job can be handed down at most twice. The sender walks over to
+the colleague, and the exchange shows in the chat as "Ada → Tunde".
+
+When someone ships you hear a chime, and if the tab is in the background you
+get a desktop notification. The speaker in the top right mutes it.
+
+If the server restarts mid-job, jobs with a session resume where they left off.
 
 ## How the office works
 
@@ -54,7 +74,7 @@ same session. A finished plan can be approved and built the same way.
 | `OFFICE_ROOT` | the folder above this one; its subfolders are the projects |
 | `PORT` | `4317` |
 | `CLAUDE_BIN` | `claude` |
-| `CHIEF_MODEL` | `haiku` |
+| `CHIEF_MODEL` | `sonnet` |
 
 The server only listens on 127.0.0.1 and refuses requests from other origins,
 because it can start Claude with full permissions. State lives in

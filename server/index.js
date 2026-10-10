@@ -18,7 +18,7 @@ const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
-const CHIEF_MODEL = process.env.CHIEF_MODEL || 'haiku';
+const CHIEF_MODEL = process.env.CHIEF_MODEL || 'sonnet';
 // After a turn ends, keep the session open briefly: a message that landed
 // at the last moment starts another turn instead of being lost.
 const GRACE_MS = 2500;
@@ -48,10 +48,19 @@ let state = { xp: 0, jobs: [], chat: [], chiefCost: 0 };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
+// A restart shouldn't cost anyone their work: jobs that were mid-session
+// pick up where they left off, with the same agent.
 for (const j of state.jobs) {
-  if (j.status === 'working') {
+  if (j.status !== 'working') continue;
+  if (j.sessionId) {
+    Object.assign(j, {
+      status: 'queued', queuedAt: Date.now(), wantAgent: j.agentId, waiting: false,
+      pending: 'The office restarted while you were working, which interrupted you. Pick up exactly where you left off.',
+    });
+    j.log.push({ kind: 'system', summary: 'Office restarted. Picking up where I left off.', ts: Date.now() });
+  } else {
     j.status = 'failed';
-    j.error = 'The office closed mid-job (server restarted).';
+    j.error = 'The office closed before this job got going.';
     j.endedAt = Date.now();
   }
 }
@@ -83,7 +92,7 @@ function send(msg) {
   for (const ws of clients) if (ws.readyState === 1) ws.send(data);
 }
 const publicJob = (j, tail = 40) => {
-  const { stopRequested, lastTurn, ...rest } = j;
+  const { stopRequested, lastTurn, sent, handoffs, ...rest } = j;
   return { ...rest, log: j.log.slice(-tail) };
 };
 const snapshot = () => ({
@@ -121,6 +130,12 @@ const pushJob = (job) => { send({ t: 'job', job: publicJob(job, 0) }); save(); }
 
 const running = new Map();
 const graces = new Map();
+const tokens = new Map();
+// Jobs paused until a colleague answers or finishes handed-off work:
+// jobId -> [{ kind: 'job', id } | { kind: 'reply', from, timer }]
+const waits = new Map();
+const REPLY_WAIT_MS = 10 * 60 * 1000;
+const OFFICE_TOOLS = ['mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off'];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
 function repoPath(name) {
@@ -178,11 +193,16 @@ function start(job, agentId) {
   const args = ['-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', ...MODES[job.mode].args];
   if (job.model) args.push('--model', job.model);
   if (job.sessionId) args.push('--resume', job.sessionId);
+  const token = crypto.randomUUID();
+  tokens.set(job.id, token);
+  const mcp = { mcpServers: { office: { command: process.execPath, args: [path.join(HERE, 'office-mcp.js')],
+    env: { OFFICE_URL: `http://127.0.0.1:${PORT}`, OFFICE_JOB: job.id, OFFICE_TOKEN: token } } } };
+  args.push('--mcp-config', JSON.stringify(mcp), '--allowedTools', OFFICE_TOOLS.join(','), '--append-system-prompt', officePrompt(agentId));
   const first = job.pending;
 
   Object.assign(job, {
     status: 'working', agentId, pending: null, denials: [], error: null,
-    stopRequested: false, startedAt: job.startedAt ?? Date.now(), turnTools: 0, lastTurn: null,
+    stopRequested: false, startedAt: job.startedAt ?? Date.now(), turnTools: 0, lastTurn: null, waiting: false,
   });
   pushJob(job);
 
@@ -233,6 +253,7 @@ function deliver(job, text) {
   if (job.status === 'working' && running.has(job.id)) {
     endGrace(job);
     job.lastTurn = null;
+    if (job.waiting) { job.waiting = false; pushJob(job); }
     addLog(job, { kind: 'user', summary: text });
     if (write(running.get(job.id), text)) return 'live';
   }
@@ -289,6 +310,15 @@ function onLine(job, line) {
     addLog(job, { kind: 'result', ok, summary: String(e.result || e.subtype || '').trim().slice(0, 8000), cost: e.total_cost_usd, ms: e.duration_ms });
     job.lastTurn = { ok, error: ok ? null : `Ended with ${e.subtype}`, text: String(e.result || '').trim() };
     endGrace(job);
+    const pending = waits.get(job.id) || [];
+    if (ok && pending.length && running.has(job.id)) {
+      // Keep the session open; whatever they're waiting for will wake it.
+      const names = [...new Set(pending.map((w) => (w.kind === 'job' ? nameOf(state.jobs.find((j) => j.id === w.id)?.agentId) : nameOf(w.from))))];
+      job.waiting = true;
+      addLog(job, { kind: 'system', summary: `Waiting on ${names.join(' and ')}`, wait: true });
+      pushJob(job);
+      return;
+    }
     graces.set(job.id, setTimeout(() => {
       graces.delete(job.id);
       const child = running.get(job.id);
@@ -300,6 +330,9 @@ function onLine(job, line) {
 
 function finish(job, status, error) {
   if (job.status !== 'working') return;
+  clearWaits(job);
+  tokens.delete(job.id);
+  job.waiting = false;
   const before = progress();
   job.status = status;
   job.error = error;
@@ -316,8 +349,42 @@ function finish(job, status, error) {
     : status === 'stopped' ? 'Stopped, as asked.'
     : `I hit a wall: ${error || 'something went wrong'}`;
   post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
+
+  // Hand the result back to whoever delegated this, if they're still at it.
+  const asker = job.requestedBy && state.jobs.find((j) => j.id === job.requestedBy);
+  if (asker?.status === 'working' && running.has(asker.id)) {
+    settle(asker, (w) => w.kind === 'job' && w.id === job.id);
+    deliver(asker, `${nameOf(job.agentId)} finished the work you handed off ("${job.title}"), status: ${status}.\n\n${text}`);
+  }
+  // Anyone waiting on a reply from this agent stops waiting.
+  for (const other of state.jobs) {
+    if (other.status === 'working' && running.has(other.id) && settle(other, (w) => w.kind === 'reply' && w.from === job.agentId)) {
+      deliver(other, `${nameOf(job.agentId)} finished their job without replying to you. Carry on without their answer.`);
+    }
+  }
   save();
   setImmediate(pump);
+}
+
+function clearWaits(job) {
+  for (const w of waits.get(job.id) || []) clearTimeout(w.timer);
+  waits.delete(job.id);
+}
+
+// Drop the waits that match; true if any did.
+function settle(job, match) {
+  const list = waits.get(job.id);
+  if (!list) return false;
+  const gone = list.filter(match);
+  if (!gone.length) return false;
+  gone.forEach((w) => clearTimeout(w.timer));
+  const keep = list.filter((w) => !match(w));
+  if (keep.length) waits.set(job.id, keep); else waits.delete(job.id);
+  return true;
+}
+
+function addWait(job, w) {
+  waits.set(job.id, [...(waits.get(job.id) || []), w]);
 }
 
 function stopJob(job) {
@@ -404,7 +471,7 @@ function chiefContext(text, agent, repo) {
   }
   lines.push('', `Projects: ${listRepos().join(', ')}`, '', 'Recent chat:');
   for (const m of state.chat.slice(-9, -1)) {
-    const who = m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from);
+    const who = (m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from)) + (m.to ? ` → ${nameOf(m.to)}` : '');
     lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}`);
   }
   lines.push('', `New message from the boss: ${text}`);
@@ -473,6 +540,114 @@ function chat({ text, mode = 'edit', model = '' }) {
     .catch((err) => post('chief', `I couldn't route that one: ${err.message}`));
 }
 
+
+// ---------- agents talking to each other ----------
+
+function officePrompt(agentId) {
+  const me = nameOf(agentId);
+  const others = STAFF.slice(0, capacity()).filter((s) => s.id !== agentId).map((s) => s.name).join(', ');
+  return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` +
+    `The office tools let you see what colleagues are doing (office_roster), message a colleague mid-task (message_colleague), ` +
+    `and hand work to a free colleague, in this project or another (hand_off). Use them when a colleague's work or another project matters to yours, ` +
+    `or to split independent work. Keep messages short and specific. Messages from colleagues reach you as user messages starting "Message from". ` +
+    `When a colleague asks you something, answer with message_colleague.`;
+}
+
+const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2;
+
+function caller(req) {
+  const id = req.headers['x-office-job'];
+  const job = state.jobs.find((j) => j.id === id);
+  if (!job || job.status !== 'working' || !tokens.get(id) || tokens.get(id) !== req.headers['x-office-token']) return null;
+  return job;
+}
+
+function colleague(name) {
+  return STAFF.slice(0, capacity()).find((s) => norm(s.name) === norm(name));
+}
+const workingJobOf = (agentId) => state.jobs.find((j) => j.status === 'working' && j.agentId === agentId);
+
+const agentApi = {
+  office_roster(me) {
+    const lines = [`You are ${nameOf(me.agentId)}.`, 'Colleagues:'];
+    for (const s of STAFF.slice(0, capacity())) {
+      if (s.id === me.agentId) continue;
+      const j = workingJobOf(s.id);
+      lines.push(j ? `- ${s.name}: ${j.waiting ? 'waiting on a colleague' : 'working'} on "${j.title}" in ${j.repo}` : `- ${s.name}: free`);
+    }
+    lines.push('', `Projects: ${listRepos().join(', ')}`);
+    return lines.join('\n');
+  },
+
+  message_colleague(me, { to, message, wait_for_reply = false }) {
+    const target = colleague(to || '');
+    message = String(message || '').trim();
+    if (!target) throw new Error(`Nobody called ${to} works here. Check office_roster.`);
+    if (target.id === me.agentId) throw new Error("That's you.");
+    if (!message) throw new Error('The message is empty.');
+    if ((me.sent = (me.sent || 0) + 1) > MAX_MESSAGES) throw new Error("You've sent a lot of messages on this job. Finish the work with what you have.");
+    const theirs = workingJobOf(target.id);
+    if (!theirs || !running.has(theirs.id)) throw new Error(`${target.name} isn't on a job right now. Use hand_off to give them work.`);
+
+    const myName = nameOf(me.agentId);
+    deliver(theirs, `Message from ${myName} (working on "${me.title}" in ${me.repo}): ${message}` +
+      (wait_for_reply ? `\n\n${myName} is waiting for your answer. Reply with message_colleague.` : ''));
+    // If they were waiting to hear from me, this is that answer.
+    settle(theirs, (w) => w.kind === 'reply' && w.from === me.agentId);
+    if (wait_for_reply) {
+      const timer = setTimeout(() => {
+        if (settle(me, (w) => w.kind === 'reply' && w.from === target.id) && me.status === 'working') {
+          deliver(me, `No reply from ${target.name} after 10 minutes. Carry on without it.`);
+        }
+      }, REPLY_WAIT_MS);
+      addWait(me, { kind: 'reply', from: target.id, timer });
+    }
+    post(me.agentId, message, { to: target.id, kind: 'dm' });
+    send({ t: 'visit', from: me.agentId, to: target.id });
+    return wait_for_reply
+      ? `Delivered to ${target.name}. Wrap up this step and end your turn; you'll resume when they answer.`
+      : `Delivered to ${target.name}.`;
+  },
+
+  hand_off(me, { project, brief, to, wait = true }) {
+    const repo = listRepos().find((r) => norm(r) === norm(project || ''));
+    brief = String(brief || '').trim();
+    if (!repo) throw new Error(`No project called "${project}". Projects: ${listRepos().join(', ')}`);
+    if (!brief) throw new Error('The brief is empty.');
+    if ((me.depth || 0) >= MAX_DEPTH) throw new Error('This work has already been handed down twice. Do it yourself.');
+    if ((me.handoffs = (me.handoffs || 0) + 1) > MAX_HANDOFFS) throw new Error("You've handed off a lot already. Finish the rest yourself.");
+
+    // Only free colleagues: nobody can end up waiting on someone who waits on them.
+    let target;
+    if (to) {
+      target = colleague(to);
+      if (!target) throw new Error(`Nobody called ${to} works here. Check office_roster.`);
+      if (target.id === me.agentId) throw new Error("That's you.");
+      const busy = workingJobOf(target.id);
+      if (busy) throw new Error(`${target.name} is busy with "${busy.title}". Pick someone free or do it yourself.`);
+    } else {
+      target = STAFF.slice(0, capacity()).find((s) => s.id !== me.agentId && !workingJobOf(s.id));
+      if (!target) throw new Error('Nobody is free right now. Do it yourself, or check office_roster later.');
+    }
+
+    const myName = nameOf(me.agentId);
+    const job = createJob({
+      repo, mode: me.mode, model: me.model, agentId: target.id,
+      prompt: `${brief}\n\n(Handed to you by ${myName}, who is working on "${me.title}" in ${me.repo}. Your final reply goes straight back to them, so make it the answer they need.)`,
+    });
+    job.requestedBy = me.id;
+    job.depth = (me.depth || 0) + 1;
+    job.title = brief.split('\n')[0].slice(0, 90);
+    pushJob(job);
+    if (wait) addWait(me, { kind: 'job', id: job.id });
+    post(me.agentId, brief, { to: target.id, kind: 'handoff', jobId: job.id, project: repo });
+    send({ t: 'visit', from: me.agentId, to: target.id });
+    return wait
+      ? `${target.name} has it (job ${job.id}, ${repo}). Wrap up this step and end your turn; their result will come to you.`
+      : `${target.name} has it (job ${job.id}, ${repo}). Their result will reach you if you're still working.`;
+  },
+};
+
 // ---------- http ----------
 
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
@@ -529,6 +704,11 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    if (req.method === 'POST' && parts[1] === 'agent' && agentApi[parts[2]]) {
+      const me = caller(req);
+      if (!me) return json(res, 403, { error: 'Not on the clock.' });
+      return json(res, 200, { text: agentApi[parts[2]](me, await readBody(req)) });
+    }
     if (req.method === 'POST' && url.pathname === '/api/chat') { chat(await readBody(req)); return json(res, 202, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {

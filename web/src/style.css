@@ -48,7 +48,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .bar i { display: block; height: 100%; width: 0; background: var(--ink); border-radius: 3px; transition: width 0.8s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .xp { grid-column: 2; font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
-.stats { top: 16px; right: 16px; padding: 10px 16px; display: flex; gap: 18px; font-size: 13px; color: var(--ink-2); }
+.stats { top: 16px; right: 16px; padding: 6px 8px 6px 16px; display: flex; align-items: center; gap: 14px; font-size: 13px; color: var(--ink-2); }
+#stats { display: flex; gap: 18px; }
+.sound { all: unset; cursor: pointer; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; color: var(--ink-2); }
+.sound:hover { background: rgba(29, 27, 24, 0.06); color: var(--ink); }
+.sound svg { width: 17px; height: 17px; }
 .stats b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; margin-right: 3px; }
 
 /* ---------- side panel: chat + jobs ---------- */
@@ -73,12 +77,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .msg .who { display: flex; align-items: center; gap: 6px; font-size: 12.5px; margin-bottom: 3px; }
 .msg .who i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .msg .who b { font-weight: 640; }
+.msg .who .arrow { color: var(--ink-3); }
 .msg .who time { color: var(--ink-3); font-size: 11.5px; font-variant-numeric: tabular-nums; }
 .msg .body { padding-left: 14px; overflow-wrap: anywhere; }
 .msg .body p { margin: 0 0 6px; }
 .msg .body > :last-child { margin-bottom: 0; }
 .msg.from-you .body p { white-space: pre-wrap; }
 .msg.from-chief .body { color: var(--ink-2); }
+.msg.dm .body, .msg.handoff .body { border-left: 2px solid var(--line); padding-left: 10px; margin-left: 4px; color: var(--ink-2); }
+.msg .kind { font-size: 11px; font-weight: 620; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px 14px; }
 .msg.failed .body { color: var(--bad); }
 .msg.clamp:not(.full) .body { max-height: 190px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .msg .acts { display: flex; gap: 12px; align-items: center; padding-left: 14px; margin-top: 6px; flex-wrap: wrap; }
@@ -246,6 +253,7 @@ dialog input:not([type=radio]), dialog textarea, dialog select {
 .bubble.idle { color: var(--ink-2); }
 .bubble.warn { background: #fbe9e4; color: #8f3121; }
 .bubble.good { background: #e3f3e8; color: #22603b; }
+.bubble.talk { background: #eaf1f9; color: #1f4f80; }
 .xpfloat {
   position: absolute; top: -10px; font-size: 14px; font-weight: 720; color: #22603b;
   animation: float 1.8s ease-out forwards; text-shadow: 0 1px 0 #fff;

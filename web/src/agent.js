@@ -134,6 +134,7 @@ export class Agent {
 
   resolve(key, fresh = false) {
     if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: this.deskFace, pose: 'desk' };
+    if (key === 'visit') return this.visitTarget;
     if (key === 'door') return { key, pos: this.world.door.clone(), face: Math.PI, pose: 'stand' };
     const station = this.world.stations[key];
     if (!station) return null;
@@ -166,7 +167,7 @@ export class Agent {
     this.pos.set(g.pos.x, 0, g.pos.z);
     this.placeKey = g.key;
     this.pose = g.pose;
-    this.dwellUntil = now + (g.key === 'desk' ? 0.8 : g.key === 'lounge' ? 0 : 2.4);
+    this.dwellUntil = now + (g.key === 'desk' ? 0.8 : g.key === 'lounge' ? 0 : g.key === 'visit' ? 3.4 : 2.4);
     if (g.key === 'lounge') this.wanderAt = now + rand(18, 40);
   }
 
@@ -181,15 +182,31 @@ export class Agent {
     if (instant) this.teleport('desk');
   }
 
+  // Walk over to a colleague's side to talk to them.
+  visit(other, text) {
+    const grid = this.world.grid;
+    const spots = [[1.1, 0], [-1.1, 0], [0, 1.1], [0, -1.1], [0.9, 0.9], [-0.9, 0.9]];
+    const [dx, dz] = spots.find(([x, z]) => !grid.blocked(...grid.cellOf(other.pos.x + x, other.pos.z + z))) || [1.1, 0];
+    const pos = new THREE.Vector3(other.pos.x + dx, 0, other.pos.z + dz);
+    this.visitTarget = { key: 'visit', pos, face: Math.atan2(other.pos.x - pos.x, other.pos.z - pos.z), pose: 'talk' };
+    this.afterVisit = this.want === 'visit' ? this.afterVisit : this.want;
+    this.want = 'visit';
+    this.placeKey = null;
+    this.path = [];
+    if (this.spot) { this.spot.taken = null; this.spot = null; }
+    this.say(text.length > 90 ? text.slice(0, 89) + '…' : text, 'talk', 0);
+  }
+
   onLog(entry) {
     if (!this.job) return;
     const color = { tool: null, text: '#e8edf3', error: '#f87171', thinking: '#64748b', system: '#64748b' }[entry.kind];
+    const goTo = (where) => { if (this.want === 'visit') this.afterVisit = where; else this.want = where; };
     if (entry.kind === 'tool') {
-      this.want = entry.station === 'desk' ? 'desk' : entry.station;
+      goTo(entry.station === 'desk' ? 'desk' : entry.station);
       this.say(entry.summary);
       this.lines.push({ text: '› ' + entry.summary, color });
     } else if (entry.kind === 'text') {
-      this.want = 'desk';
+      goTo('desk');
       const first = entry.summary.split(/(?<=[.!?])\s|\n/)[0];
       this.say(first.length > 80 ? first.slice(0, 79) + '…' : first);
       this.lines.push({ text: first, color });
@@ -200,6 +217,7 @@ export class Agent {
       this.lines.push({ text: '✕ ' + entry.summary.split('\n')[0], color });
     } else if (entry.kind === 'system') {
       this.lines.push({ text: entry.summary, color });
+      if (entry.wait) { goTo('desk'); this.say(entry.summary + '…', 'thinking'); }
     }
     if (this.lines.length > 40) this.lines.splice(0, this.lines.length - 40);
   }
@@ -209,6 +227,7 @@ export class Agent {
     this.anim = { kind: status === 'done' ? 'celebrate' : 'slump', until: now + 2.2 };
     this.say(status === 'done' ? 'Shipped it!' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
     this.job = null;
+    this.afterVisit = null;
     this.want = 'lounge';
   }
 
@@ -225,6 +244,11 @@ export class Agent {
       return;
     }
     if (now < this.dwellUntil) return;
+    if (this.placeKey === 'visit' && this.want === 'visit') {
+      this.want = this.job ? this.afterVisit || 'desk' : 'lounge';
+      this.afterVisit = null;
+      if (this.bubbleEl.classList.contains('talk')) this.say('');
+    }
     if (this.want !== this.placeKey) this.goTo(this.want, now);
     else if (this.want === 'lounge' && now > this.wanderAt) this.goTo('lounge', now, true);
 
@@ -279,7 +303,8 @@ export class Agent {
         legL = legR = -1.5; y = -0.27; headX = 0.12;
         armL = -1.15 + Math.sin(p * 19) * 0.12;
         armR = -1.15 + Math.sin(p * 19 + 1.7) * 0.12;
-        if (!this.job) armL = armR = -0.3;
+        if (!this.job || this.job.waiting) armL = armR = -0.3;
+        if (this.job?.waiting) headY = Math.sin(p * 0.6) * 0.5;
         break;
       case 'couch':
         legL = legR = -1.45; y = -0.3; armL = armR = -0.25; headY = Math.sin(p * 0.3) * 0.4;
@@ -300,6 +325,9 @@ export class Agent {
         break;
       case 'mug':
         armR = Math.sin(p * 0.9) > 0.8 ? -2.1 : -1.3; headX = 0.05;
+        break;
+      case 'talk':
+        armR = -0.7 + Math.sin(p * 5) * 0.35; armL = Math.sin(p * 1.5) * 0.05; headX = -0.05;
         break;
       case 'celebrate':
         armL = armR = -2.9 + Math.sin(p * 14) * 0.15; y = Math.abs(Math.sin(p * 9)) * 0.35;

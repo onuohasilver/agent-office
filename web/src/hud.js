@@ -373,19 +373,21 @@ export class Hud {
 
   message(m) {
     const who = this.app.person(m.from);
+    const to = m.to && this.app.person(m.to);
     const time = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const body = m.from === 'you'
       ? `<p>${esc(m.text).replace(/(^|\s)([@#][\w.-]+)/g, '$1<span class="tag">$2</span>')}</p>`
       : rich(m.text);
-    const long = m.from !== 'you' && m.from !== 'chief' && m.text.length > 420;
+    const long = m.from !== 'you' && m.from !== 'chief' && !m.to && m.text.length > 420;
     const extras = [
       long ? '<button type="button" class="link" data-more>Show all</button>' : '',
       m.jobId && m.from !== 'you' ? `<button type="button" class="link" data-open="${m.jobId}">Open job</button>` : '',
       m.denials?.length ? `<button type="button" class="primary small" data-grant="${m.jobId}">Grant full autonomy and continue</button>` : '',
     ].filter(Boolean).join('');
     return `
-      <div class="msg from-${m.from === 'you' ? 'you' : m.from === 'chief' ? 'chief' : 'agent'} ${m.status || ''} ${long ? 'clamp' : ''}">
-        <div class="who"><i style="background:${who.color}"></i><b>${esc(who.name)}</b><time>${time}</time></div>
+      <div class="msg from-${m.from === 'you' ? 'you' : m.from === 'chief' ? 'chief' : 'agent'} ${m.kind || ''} ${m.status || ''} ${long ? 'clamp' : ''}">
+        <div class="who"><i style="background:${who.color}"></i><b>${esc(who.name)}</b>${to ? `<span class="arrow">→</span><i style="background:${to.color}"></i><b>${esc(to.name)}</b>` : ''}<time>${time}</time></div>
+        ${m.kind === 'handoff' ? `<p class="kind">Handed off · ${esc(m.project || '')}</p>` : ''}
         <div class="body md">${body}</div>
         ${m.denials?.length ? `<p class="blocked">Blocked from using ${m.denials.map(esc).join(', ')}.</p>` : ''}
         ${extras ? `<div class="acts">${extras}</div>` : ''}
