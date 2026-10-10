@@ -6,60 +6,76 @@
     <title>Agent Office</title>
   </head>
   <body>
-    <div id="stage"></div>
-    <div id="labels"></div>
-
-    <header class="top panel">
-      <h1>Agent Office</h1>
-      <div class="level">
-        <span class="lv" id="lv">Level 1</span>
-        <div class="bar"><i id="xpbar"></i></div>
-        <span class="xp" id="xptext">0 / 100 XP</span>
-      </div>
-    </header>
-    <div class="stats panel">
-      <span id="stats"></span>
-      <button type="button" class="sound" id="sound" aria-label="Sound on" title="Sound on"></button>
-    </div>
-
-    <aside class="side panel">
-      <nav class="tabs">
-        <button type="button" data-tab="chat" class="on">Chat</button>
-        <button type="button" data-tab="jobs">Jobs <span id="jobCount"></span></button>
-      </nav>
-      <section class="pane" id="chatPane">
-        <div class="msgs" id="msgs"></div>
-        <div class="typing" id="typing" hidden><span></span><span></span><span></span> Chief is reading</div>
-        <form class="composer" id="composer">
-          <div class="ac" id="ac" hidden></div>
-          <textarea id="input" rows="1" placeholder="Message the office · @agent #project" aria-label="Message the office"></textarea>
-          <div class="controls">
-            <select id="mode" aria-label="Clearance for new work">
-              <option value="plan">Plan only</option>
-              <option value="edit" selected>Edit files</option>
-              <option value="auto">Full autonomy</option>
-            </select>
-            <select id="model" aria-label="Model for new work">
-              <option value="">Default model</option>
-              <option value="opus">Opus</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="haiku">Haiku</option>
-            </select>
-            <button class="primary small" type="submit">Send</button>
+    <div class="app">
+      <aside class="side">
+        <header class="brand">
+          <h1>Agent Office</h1>
+          <div class="level">
+            <span class="lv" id="lv">Level 1</span>
+            <div class="xpbar"><i id="xpbar"></i></div>
+            <span class="xp" id="xptext">0 / 100 XP</span>
           </div>
-        </form>
-      </section>
-      <section class="pane" id="jobsPane" hidden>
-        <div class="jobs" id="jobs"></div>
-        <button class="ghost" id="clear" hidden>Clear finished</button>
-      </section>
-    </aside>
+        </header>
+        <nav class="tabs">
+          <button type="button" data-tab="chat" class="on">Chat</button>
+          <button type="button" data-tab="jobs">Jobs <span id="jobCount"></span></button>
+        </nav>
+        <section class="pane" id="chatPane">
+          <div class="msgs" id="msgs"></div>
+          <div class="typing" id="typing" hidden><span></span><span></span><span></span> Chief is reading</div>
+          <form class="composer" id="composer">
+            <div class="ac" id="ac" hidden></div>
+            <textarea id="input" rows="1" placeholder="Message the office · @agent #project" aria-label="Message the office"></textarea>
+            <div class="controls">
+              <select id="mode" aria-label="Clearance for new work">
+                <option value="plan">Plan only</option>
+                <option value="edit" selected>Edit files</option>
+                <option value="auto">Full autonomy</option>
+              </select>
+              <select id="model" aria-label="Model for new work">
+                <option value="">Default model</option>
+                <option value="opus">Opus</option>
+                <option value="sonnet">Sonnet</option>
+                <option value="haiku">Haiku</option>
+              </select>
+              <button class="primary small" type="submit">Send</button>
+            </div>
+          </form>
+        </section>
+        <section class="pane" id="jobsPane" hidden>
+          <div class="jobs" id="jobs"></div>
+          <button class="ghost" id="clear" hidden>Clear finished</button>
+        </section>
+      </aside>
 
-    <aside class="detail panel" id="detail" hidden></aside>
+      <main class="view" id="view">
+        <div id="stage"></div>
+        <div id="labels"></div>
 
-    <div class="banner" id="banner"></div>
-    <div class="toast" id="toast"></div>
-    <p class="hint">Drag to look around · Right-drag to pan · Scroll to zoom · Click anyone to see their work</p>
+        <div class="hud">
+          <div class="chip" id="stats"></div>
+          <div class="chip tools">
+            <button type="button" id="turnLeft" title="Turn left (Q)" aria-label="Turn left">
+              <svg viewBox="0 0 24 24"><path d="M9 7H4V2"/><path d="M4.6 7A9 9 0 1 1 3 13"/></svg>
+            </button>
+            <button type="button" id="turnRight" title="Turn right (E)" aria-label="Turn right">
+              <svg viewBox="0 0 24 24"><path d="M15 7h5V2"/><path d="M19.4 7A9 9 0 1 0 21 13"/></svg>
+            </button>
+            <button type="button" id="recenter" title="Recenter (R)" aria-label="Recenter">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
+            <span class="sep"></span>
+            <button type="button" class="sound" id="sound" aria-label="Sound on" title="Sound on"></button>
+          </div>
+        </div>
+
+        <div class="banner" id="banner"></div>
+        <div class="toast" id="toast"></div>
+        <p class="hint">Drag to move · Right-drag or Q / E to turn · Scroll to zoom · Double-click to go there</p>
+      </main>
+
+      <aside class="detail" id="detail" hidden></aside>
+    </div>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

@@ -6,7 +6,7 @@ export const W = 40, D = 30;
 const C = {
   floor: '#ece3d4', wall: '#f5f0e8', trim: '#d9cdbb', wood: '#c39a6b', woodDark: '#8c6440',
   metal: '#3b404c', rack: '#262a33', plant: '#5f9e6e', plantDark: '#477d55', pot: '#e4d6c1',
-  couch: '#5b7fa6', rug: '#d8bfa8', glass: '#cfe6f2', board: '#fbfaf7', chair: '#30343d',
+  couch: '#5b7fa6', rug: '#c99b84', glass: '#cfe6f2', board: '#fbfaf7', chair: '#30343d',
 };
 
 const mats = new Map();
@@ -132,22 +132,44 @@ export function buildOffice(scene) {
   const grid = new Grid(W, D);
   const blinkers = [];
 
-  // floor + walls
-  const floor = box(scene, W, 0.2, D, C.floor, 0, -0.1, 0);
-  floor.castShadow = false;
-  box(scene, W + 0.3, 4.2, 0.3, C.wall, -0.15, 2.1, -D / 2 - 0.15);
-  box(scene, 0.3, 4.2, D, C.wall, -W / 2 - 0.15, 2.1, 0);
-  box(scene, W, 0.22, 0.06, C.trim, 0, 0.11, -D / 2 + 0.03);
-  box(scene, 0.06, 0.22, D, C.trim, -W / 2 + 0.03, 0.11, 0);
+  // The office sits on a thick wooden slab, like a model on a table.
+  const edge = mat('#a97a50');
+  const top = new THREE.MeshStandardMaterial({ map: plankTexture(), roughness: 0.7 });
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.7, D + 0.6), [edge, edge, top, edge, edge, edge]);
+  slab.position.y = -0.35;
+  slab.receiveShadow = true;
+  slab.castShadow = true;
+  scene.add(slab);
+  const catcher = new THREE.Mesh(new THREE.PlaneGeometry(160, 160), new THREE.ShadowMaterial({ opacity: 0.14 }));
+  catcher.rotation.x = -Math.PI / 2;
+  catcher.position.y = -0.72;
+  catcher.receiveShadow = true;
+  scene.add(catcher);
+  scene.add(contactShadow(W + 16, D + 16));
+  const carpet = box(scene, 24.5, 0.02, 12.6, '#d2d8da', 0, 0.011, 1.2, { roughness: 1 });
+  carpet.castShadow = false;
+
+  // Four walls. The ones between the camera and the room drop to a stub so
+  // you can always see in, whichever way you turn.
+  const walls = [
+    buildWall(scene, W + 0.6, 0, -D / 2 - 0.15, 0, [0, 0, -1]),
+    buildWall(scene, W + 0.6, 0, D / 2 + 0.15, Math.PI, [0, 0, 1], [[-W / 2 - 0.3, -19.2], [-16.8, W / 2 + 0.3]]),
+    buildWall(scene, D, -W / 2 - 0.15, 0, Math.PI / 2, [-1, 0, 0]),
+    buildWall(scene, D, W / 2 + 0.15, 0, -Math.PI / 2, [1, 0, 0]),
+  ];
+  const [north, , west] = walls;
   grid.block(-W / 2, W / 2, -D / 2, -D / 2 + 0.2);
   grid.block(-W / 2, -W / 2 + 0.2, -D / 2, D / 2);
 
-  // left-wall windows
+  // Windows on the west wall (local x runs along -z there).
   for (const wz of [-6, 0, 6]) {
-    box(scene, 0.08, 2.2, 3.6, C.glass, -W / 2 + 0.02, 2.2, wz, { emissive: '#bfe3f5', emissiveIntensity: 0.35, roughness: 0.2 });
-    box(scene, 0.14, 0.12, 3.8, C.trim, -W / 2 + 0.06, 1.08, wz);
-    box(scene, 0.14, 0.12, 3.8, C.trim, -W / 2 + 0.06, 3.32, wz);
-    box(scene, 0.14, 2.3, 0.1, C.trim, -W / 2 + 0.06, 2.2, wz);
+    const lx = -wz;
+    west.attach.push(
+      box(west.g, 3.6, 2.2, 0.06, C.glass, lx, 2.2, 0.15, { emissive: '#bfe3f5', emissiveIntensity: 0.45, roughness: 0.15 }),
+      box(west.g, 3.8, 0.12, 0.14, C.trim, lx, 1.08, 0.2),
+      box(west.g, 3.8, 0.12, 0.14, C.trim, lx, 3.32, 0.2),
+      box(west.g, 0.1, 2.3, 0.14, C.trim, lx, 2.2, 0.2),
+    );
   }
 
   // desks
@@ -237,9 +259,10 @@ export function buildOffice(scene) {
   grid.block(-20, -18.6, 10.4, 13.6);
 
   // kanban wall
-  box(scene, 9.4, 3.5, 0.08, '#d9cdbb', 0, 2.2, -14.94);
-  const board = canvasPlane(scene, 9, 3.2, 1536, 546);
-  board.mesh.position.set(0, 2.2, -14.88);
+  north.attach.push(box(north.g, 9.4, 3.5, 0.08, '#d9cdbb', 0, 2.2, 0.2));
+  const board = canvasPlane(north.g, 9, 3.2, 1536, 546);
+  board.mesh.position.set(0, 2.2, 0.26);
+  north.attach.push(board.mesh);
 
   // reception — the chief of staff
   const reception = new THREE.Group();
@@ -288,7 +311,101 @@ export function buildOffice(scene) {
     },
   };
 
-  return { grid, desks, stations, board, scribble, blinkers, globe: land, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
+  const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
+  return { grid, desks, stations, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
+}
+
+
+// ---------- floor, walls, shadow ----------
+
+function plankTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 1024;
+  const g = c.getContext('2d');
+  const rows = 16, h = c.height / rows;
+  for (let r = 0; r < rows; r++) {
+    let x = -Math.random() * 400;
+    while (x < c.width) {
+      const len = 380 + Math.random() * 520;
+      const l = 73 + Math.random() * 3.5;
+      g.fillStyle = `hsl(${32 + Math.random() * 3}, ${33 + Math.random() * 5}%, ${l}%)`;
+      g.fillRect(x, r * h, len, h);
+      g.globalAlpha = 0.045;
+      for (let k = 0; k < 6; k++) {
+        g.fillStyle = Math.random() < 0.5 ? '#7a5634' : '#fff6e8';
+        g.fillRect(x, r * h + Math.random() * h, len, 1 + Math.random() * 2);
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = 'rgba(90, 60, 35, 0.22)';
+      g.fillRect(x, r * h, 2, h);
+      x += len;
+    }
+    g.fillStyle = 'rgba(90, 60, 35, 0.18)';
+    g.fillRect(0, r * h, c.width, 2);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(W / 8, D / 8);
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function contactShadow(w, d) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(128, 128, 30, 128, 128, 128);
+  grad.addColorStop(0, 'rgba(60, 40, 20, 0.28)');
+  grad.addColorStop(0.6, 'rgba(60, 40, 20, 0.12)');
+  grad.addColorStop(1, 'rgba(60, 40, 20, 0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = -0.715;
+  return m;
+}
+
+const WALL_H = 4.2, STUB_H = 0.5;
+
+// A wall runs along its local x; local +z faces into the room.
+function buildWall(scene, len, x, z, rotY, outward, segments = [[-len / 2, len / 2]]) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rotY;
+  const body = new THREE.Group();
+  const cap = new THREE.Group();
+  g.add(body, cap);
+  for (const [a, b] of segments) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(b - a, WALL_H, 0.3), mat(C.wall));
+    m.position.set((a + b) / 2, WALL_H / 2, 0);
+    m.castShadow = m.receiveShadow = true;
+    body.add(m);
+    const trim = new THREE.Mesh(new THREE.BoxGeometry(b - a, 0.1, 0.36), mat('#cbbba3'));
+    trim.position.set((a + b) / 2, 0.05, 0);
+    cap.add(trim);
+    const skirting = new THREE.Mesh(new THREE.BoxGeometry(b - a, 0.22, 0.04), mat(C.trim));
+    skirting.position.set((a + b) / 2, 0.11, 0.17);
+    g.add(skirting);
+  }
+  scene.add(g);
+  const wall = { g, body, cap, outward: new THREE.Vector3(...outward), h: WALL_H, attach: [] };
+  cap.position.y = WALL_H;
+  return wall;
+}
+
+const view = new THREE.Vector3();
+function cutaway(walls, camera, target, dt) {
+  view.subVectors(camera.position, target).setY(0).normalize();
+  for (const w of walls) {
+    const goal = w.outward.dot(view) > 0.2 ? STUB_H : WALL_H;
+    w.h += (goal - w.h) * Math.min(1, dt * 7);
+    w.body.scale.y = w.h / WALL_H;
+    w.cap.position.y = w.h;
+    for (const a of w.attach) a.visible = w.h > 3.4;
+  }
 }
 
 // ---------- kanban + whiteboard drawing ----------

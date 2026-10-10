@@ -2,7 +2,8 @@ import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { MapControls } from 'three/addons/controls/MapControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { buildOffice, drawScreen, drawBoard, drawWhiteboard } from './office.js';
 import { Agent } from './agent.js';
 import { Confetti } from './fx.js';
@@ -11,41 +12,82 @@ import { sound } from './sound.js';
 
 // ---------- renderer, camera, light ----------
 
+const view = document.getElementById('view');
 const stage = document.getElementById('stage');
 const labels = document.getElementById('labels');
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.0;
 stage.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('#e7e1d8');
-scene.fog = new THREE.Fog('#e7e1d8', 80, 140);
+// Soft studio light from a virtual room, so surfaces read as materials.
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.55;
 
-const camera = new THREE.PerspectiveCamera(32, innerWidth / innerHeight, 0.1, 300);
-camera.position.set(19, 27, 36.5);
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(-1, 0, 2.5);
-controls.enableDamping = true;
-controls.maxPolarAngle = 1.22;
-controls.minPolarAngle = 0.3;
-controls.minDistance = 10;
-controls.maxDistance = 95;
-controls.screenSpacePanning = false;
-
-scene.add(new THREE.HemisphereLight('#fff8ef', '#b9ab99', 1.1));
-const sun = new THREE.DirectionalLight('#fff1dc', 1.9);
-sun.position.set(-16, 30, 18);
+scene.add(new THREE.HemisphereLight('#fff8ef', '#b9ab99', 0.55));
+const sun = new THREE.DirectionalLight('#fff0d8', 1.75);
+sun.position.set(-18, 34, 20);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -28, right: 28, top: 24, bottom: -24, near: 1, far: 90 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.02;
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 28, bottom: -28, near: 1, far: 100 });
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.03;
 scene.add(sun);
+
+// Map-style camera: drag moves you around, right-drag (or Q/E) turns
+// around whatever is in the middle of the view, scroll zooms to the cursor.
+const camera = new THREE.PerspectiveCamera(30, 1, 0.5, 400);
+const HOME = { target: new THREE.Vector3(0, 0, 0.5), radius: 60, phi: 0.86, theta: Math.PI / 4 };
+camera.position.setFromSpherical(new THREE.Spherical(HOME.radius, HOME.phi, HOME.theta)).add(HOME.target);
+const controls = new MapControls(camera, renderer.domElement);
+controls.target.copy(HOME.target);
+Object.assign(controls, {
+  enableDamping: true, dampingFactor: 0.09, minPolarAngle: 0.25, maxPolarAngle: 1.22,
+  minDistance: 12, maxDistance: 130, zoomToCursor: true, rotateSpeed: 0.55, zoomSpeed: 0.9, panSpeed: 1.1,
+});
+
+// How far back the camera must sit for the whole office to fit the view.
+const CORNERS = [];
+for (const x of [-20.3, 20.3]) for (const z of [-15.3, 15.3]) for (const y of [-0.7, 3]) CORNERS.push(new THREE.Vector3(x, y, z));
+function fitRadius(phi, theta, target) {
+  const probe = camera.clone();
+  let lo = 15, hi = 130;
+  for (let i = 0; i < 20; i++) {
+    const r = (lo + hi) / 2;
+    probe.position.setFromSpherical(new THREE.Spherical(r, phi, theta)).add(target);
+    probe.lookAt(target);
+    probe.updateMatrixWorld();
+    const fits = CORNERS.every((c) => {
+      const v = c.clone().project(probe);
+      return Math.abs(v.x) < 0.93 && Math.abs(v.y) < 0.88;
+    });
+    if (fits) hi = r; else lo = r;
+  }
+  return hi;
+}
+
+let viewW = 1, viewH = 1;
+let touched = false;
+function resize() {
+  viewW = view.clientWidth;
+  viewH = view.clientHeight;
+  renderer.setSize(viewW, viewH, false);
+  camera.aspect = viewW / viewH;
+  camera.updateProjectionMatrix();
+  // Until you've moved the camera yourself, keep the whole office framed.
+  if (!touched) {
+    HOME.radius = fitRadius(HOME.phi, HOME.theta, HOME.target);
+    camera.position.setFromSpherical(new THREE.Spherical(HOME.radius, HOME.phi, HOME.theta)).add(HOME.target);
+    controls.target.copy(HOME.target);
+  }
+}
+new ResizeObserver(resize).observe(view);
+resize();
 
 const office = buildOffice(scene);
 const confetti = new Confetti(scene);
@@ -276,48 +318,127 @@ function latestTodos() {
   return best?.todos || [];
 }
 
-// ---------- camera focus + picking ----------
+// ---------- camera ----------
 
-// The camera follows whoever is selected, framed in the space left of the
-// detail drawer. Panning hands control back to you.
+const sph = new THREE.Spherical();
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+let tween = null;
 let follow = false;
-function focus() { follow = true; }
-function framePoint(pos) {
-  const p = new THREE.Vector3(pos.x, 0, pos.z);
-  const drawer = document.getElementById('detail');
-  if (drawer.hidden) return p;
-  const dist = camera.position.distanceTo(controls.target);
-  const perPx = (2 * dist * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))) / innerHeight;
-  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).setY(0).normalize();
-  return p.addScaledVector(right, (drawer.offsetWidth / 2 + 8) * perPx);
+function focus() { follow = true; tween = null; touched = true; }
+
+function camTo({ target, radius, phi, theta }, dur = 0.7) {
+  sph.setFromVector3(camera.position.clone().sub(controls.target));
+  tween = {
+    t: 0, dur,
+    target0: controls.target.clone(), target1: (target || controls.target).clone().setY(0),
+    r0: sph.radius, r1: radius ?? sph.radius, p0: sph.phi, p1: phi ?? sph.phi, th0: sph.theta, th1: theta ?? sph.theta,
+  };
+}
+function turn(dir) {
+  touched = true;
+  sph.setFromVector3(camera.position.clone().sub(controls.target));
+  const from = tween ? tween.th1 : sph.theta;
+  camTo({ theta: from + (dir * Math.PI) / 4, target: tween?.target1 }, 0.55);
+}
+function recenter() {
+  follow = false;
+  sph.setFromVector3(camera.position.clone().sub(controls.target));
+  let th = HOME.theta;
+  while (th - sph.theta > Math.PI) th -= Math.PI * 2;
+  while (sph.theta - th > Math.PI) th += Math.PI * 2;
+  camTo({ target: HOME.target, radius: fitRadius(HOME.phi, th, HOME.target), phi: HOME.phi, theta: th }, 0.9);
+}
+controls.addEventListener('start', () => {
+  touched = true;
+  tween = null;
+  follow = false;
+  setTimeout(() => document.querySelector('.hint')?.classList.add('gone'), 5000);
+});
+document.getElementById('turnLeft').onclick = () => turn(-1);
+document.getElementById('turnRight').onclick = () => turn(1);
+document.getElementById('recenter').onclick = () => recenter();
+
+const held = new Set();
+addEventListener('keydown', (e) => {
+  if (/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName) || e.metaKey || e.ctrlKey) return;
+  const k = e.key.toLowerCase();
+  if (k === 'q') turn(-1);
+  else if (k === 'e') turn(1);
+  else if (k === 'r') recenter();
+  else if ('wasd'.includes(k) && k.length === 1) { held.add(k); tween = null; follow = false; }
+});
+addEventListener('keyup', (e) => held.delete(e.key.toLowerCase()));
+addEventListener('blur', () => held.clear());
+
+const fwd = new THREE.Vector3(), right = new THREE.Vector3(), move = new THREE.Vector3();
+function steer(dt) {
+  if (tween) {
+    tween.t = Math.min(1, tween.t + dt / tween.dur);
+    const k = ease(tween.t);
+    const target = tween.target0.clone().lerp(tween.target1, k);
+    sph.set(THREE.MathUtils.lerp(tween.r0, tween.r1, k), THREE.MathUtils.lerp(tween.p0, tween.p1, k), THREE.MathUtils.lerp(tween.th0, tween.th1, k));
+    controls.target.copy(target);
+    camera.position.setFromSpherical(sph).add(target);
+    if (tween.t >= 1) tween = null;
+  }
+  move.set(0, 0, 0);
+  const followed = follow && app.agents.get(app.selected);
+  if (followed) move.set(followed.pos.x - controls.target.x, 0, followed.pos.z - controls.target.z).multiplyScalar(Math.min(1, dt * 3));
+  if (held.size) {
+    fwd.subVectors(controls.target, camera.position).setY(0).normalize();
+    right.crossVectors(fwd, camera.up).normalize();
+    const speed = 0.45 * camera.position.distanceTo(controls.target) * dt;
+    if (held.has('w')) move.addScaledVector(fwd, speed);
+    if (held.has('s')) move.addScaledVector(fwd, -speed);
+    if (held.has('d')) move.addScaledVector(right, speed);
+    if (held.has('a')) move.addScaledVector(right, -speed);
+  }
+  controls.target.add(move);
+  camera.position.add(move);
+  controls.update();
+  // Never lose the office: keep the point you're looking at on the floor.
+  const t = controls.target;
+  move.set(THREE.MathUtils.clamp(t.x, -19, 19) - t.x, -t.y, THREE.MathUtils.clamp(t.z, -14, 14) - t.z);
+  t.add(move);
+  camera.position.add(move);
 }
 
+// ---------- picking ----------
+
 const ray = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+function aim(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+}
+const people = () => [...app.agents.values(), chief].map((a) => a.root);
+
 let down = null;
-renderer.domElement.addEventListener('pointerdown', (e) => {
-  down = [e.clientX, e.clientY];
-  if (e.button === 2 || e.shiftKey || e.ctrlKey || e.metaKey) follow = false;
-});
+renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
-  ray.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
-  const hit = ray.intersectObjects([...app.agents.values(), chief].map((a) => a.root), true)[0];
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || e.button !== 0) return;
+  aim(e);
+  const hit = ray.intersectObjects(people(), true)[0];
   if (!hit) return;
   if (hit.object.userData.agentId === 'chief') {
     hud.focusInput();
     chief.say('Tell me what you need.', '', 3000);
   } else app.select(hit.object.userData.agentId);
 });
-renderer.domElement.addEventListener('pointermove', (e) => {
-  ray.setFromCamera(new THREE.Vector2((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1), camera);
-  const over = ray.intersectObjects([...app.agents.values(), chief].map((a) => a.root), true).length > 0;
-  renderer.domElement.style.cursor = over ? 'pointer' : '';
+renderer.domElement.addEventListener('dblclick', (e) => {
+  aim(e);
+  const hit = ray.intersectObject(office.slab, false)[0];
+  if (hit) {
+    follow = false;
+    camTo({ target: hit.point, radius: Math.min(camera.position.distanceTo(controls.target), 34) }, 0.8);
+  }
 });
-
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (e.buttons) return;
+  aim(e);
+  renderer.domElement.style.cursor = ray.intersectObjects(people(), true).length ? 'pointer' : '';
 });
 
 // ---------- loop ----------
@@ -342,17 +463,13 @@ function drawScreens(t) {
   });
 }
 
+let far = false;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.elapsedTime;
 
-  const followed = follow && app.agents.get(app.selected);
-  if (followed) {
-    const delta = framePoint(followed.pos).sub(controls.target).multiplyScalar(Math.min(1, dt * 3));
-    controls.target.add(delta);
-    camera.position.add(delta);
-  }
-  controls.update();
+  steer(dt);
+  office.updateWalls(camera, controls.target, dt);
 
   for (const a of app.agents.values()) a.update(dt, t);
   chief.update(dt, t);
@@ -366,8 +483,13 @@ function frame() {
   }
 
   renderer.render(scene, camera);
-  for (const a of app.agents.values()) a.placeLabel(camera, innerWidth, innerHeight);
-  chief.placeLabel(camera, innerWidth, innerHeight);
+  // Zoomed far out, names stay but speech bubbles step back.
+  const isFar = camera.position.distanceTo(controls.target) > 74;
+  for (const a of [...app.agents.values(), chief]) {
+    a.placeLabel(camera, viewW, viewH);
+    if (isFar !== far) a.label.classList.toggle('far', isFar);
+  }
+  far = isFar;
   requestAnimationFrame(frame);
 }
 

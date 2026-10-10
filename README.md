@@ -45,6 +45,14 @@ get a desktop notification. The speaker in the top right mutes it.
 
 If the server restarts mid-job, jobs with a session resume where they left off.
 
+## Getting around
+
+Drag to move, right-drag (or `Q` / `E`) to turn around what's in the middle
+of the view, scroll to zoom toward the cursor, double-click to glide somewhere.
+`W A S D` pan, `R` recenters. The walls nearest you drop down so you can always
+see in. Chat and job details sit in their own columns and never cover the
+office.
+
 ## How the office works
 
 Every job is one headless `claude` process whose stdin stays open, so new
