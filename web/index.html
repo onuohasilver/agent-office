@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Office</title>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <div id="labels"></div>
+
+    <header class="top panel">
+      <h1>Agent Office</h1>
+      <div class="level">
+        <span class="lv" id="lv">Level 1</span>
+        <div class="bar"><i id="xpbar"></i></div>
+        <span class="xp" id="xptext">0 / 100 XP</span>
+      </div>
+    </header>
+    <div class="stats panel" id="stats"></div>
+
+    <aside class="board panel">
+      <button class="primary" id="newJob">New job <kbd>N</kbd></button>
+      <div class="jobs" id="jobs"></div>
+      <button class="ghost" id="clear" hidden>Clear finished</button>
+    </aside>
+
+    <aside class="detail panel" id="detail" hidden></aside>
+
+    <dialog id="dlg">
+      <form method="dialog" id="jobForm">
+        <h2>New job</h2>
+        <label>Project
+          <input name="repo" list="repos" autocomplete="off" required placeholder="Pick a folder" />
+          <datalist id="repos"></datalist>
+        </label>
+        <label>Brief
+          <textarea name="prompt" rows="5" required placeholder="What should get done?"></textarea>
+        </label>
+        <fieldset class="modes">
+          <legend>Clearance</legend>
+          <label><input type="radio" name="mode" value="plan" /><span><b>Plan only</b>Reads and proposes. Changes nothing.</span></label>
+          <label><input type="radio" name="mode" value="edit" checked /><span><b>Edit files</b>Can edit files. Shell commands get blocked.</span></label>
+          <label><input type="radio" name="mode" value="auto" /><span><b>Full autonomy</b>Runs any command without asking.</span></label>
+        </fieldset>
+        <label>Model
+          <select name="model">
+            <option value="">Default</option>
+            <option value="opus">Opus</option>
+            <option value="sonnet">Sonnet</option>
+            <option value="haiku">Haiku</option>
+          </select>
+        </label>
+        <p class="err" id="formErr"></p>
+        <div class="actions">
+          <button type="button" class="ghost" id="cancel">Cancel</button>
+          <button type="submit" class="primary">Hand it over</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="banner" id="banner"></div>
+    <div class="toast" id="toast"></div>
+    <p class="hint">Drag to look around · Right-drag to pan · Scroll to zoom · Click anyone to see their work</p>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
