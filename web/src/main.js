@@ -4,6 +4,10 @@ import './style.css';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildOffice, drawScreen, drawBoard, drawWhiteboard } from './office.js';
 import { Agent } from './agent.js';
 import { Confetti } from './fx.js';
@@ -20,11 +24,12 @@ renderer.setClearColor(0x000000, 0);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
 stage.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+scene.background = backdrop();
 // Soft studio light from a virtual room, so surfaces read as materials.
 scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.55;
@@ -71,12 +76,41 @@ function fitRadius(phi, theta, target) {
   return hi;
 }
 
+// Ambient occlusion: soft shade where things meet, which is most of what
+// makes a miniature read as solid. Rendered with 4x MSAA.
+const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+composer.addPass(new RenderPass(scene, camera));
+const ao = new GTAOPass(scene, camera, 1, 1);
+ao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.6, thickness: 1.5, scale: 1.1, samples: 16 });
+ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+ao.blendIntensity = 0.85;
+composer.addPass(ao);
+composer.addPass(new OutputPass());
+
+function backdrop() {
+  const c = document.createElement('canvas');
+  c.width = 512;
+  c.height = 512;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(256, 190, 20, 256, 230, 400);
+  grad.addColorStop(0, '#f7f3ec');
+  grad.addColorStop(0.6, '#ece5da');
+  grad.addColorStop(1, '#d9d0c2');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 512, 512);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 let viewW = 1, viewH = 1;
 let touched = false;
 function resize() {
   viewW = view.clientWidth;
   viewH = view.clientHeight;
   renderer.setSize(viewW, viewH, false);
+  composer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+  composer.setSize(viewW, viewH);
   camera.aspect = viewW / viewH;
   camera.updateProjectionMatrix();
   // Until you've moved the camera yourself, keep the whole office framed.
@@ -208,6 +242,7 @@ function handle(msg) {
     syncAgents(firstHello);
     firstHello = false;
     hud.renderLevel(app.progress);
+    hud.renderUsage(msg.usage);
     app.refreshLists();
     const todos = latestTodos();
     drawWhiteboard(office.scribble, todos);
@@ -256,6 +291,8 @@ function handle(msg) {
     if (msg.busy) { chief.job = { id: 'routing' }; chief.say('Reading your message…', 'thinking'); }
     else chief.job = null;
     if (msg.cost !== undefined) { app.chiefCost = msg.cost; app.refreshLists(); }
+  } else if (msg.t === 'usage') {
+    hud.renderUsage(msg.usage);
   } else if (msg.t === 'xp') {
     app.progress = msg.progress;
     hud.renderLevel(app.progress);
@@ -482,7 +519,7 @@ function frame() {
     for (const led of office.blinkers) if (Math.random() < 0.25) led.material.emissiveIntensity = Math.random() < 0.5 ? 0.15 : 1.4;
   }
 
-  renderer.render(scene, camera);
+  composer.render(dt);
   // Zoomed far out, names stay but speech bubbles step back.
   const isFar = camera.position.distanceTo(controls.target) > 74;
   for (const a of [...app.agents.values(), chief]) {

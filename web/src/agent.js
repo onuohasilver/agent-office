@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mat } from './office.js';
+import { Figure } from './figure.js';
 
 const lerp = (a, b, k) => a + (b - a) * k;
 const angleLerp = (a, b, k) => {
@@ -10,21 +10,18 @@ const rand = (a, b) => a + Math.random() * (b - a);
 
 const IDLE_LINES = ['coffee?', 'anyone seen my mug', 'back in 5', 'nice weather', 'who broke main', 'lunch soon?', 'reading the docs, honestly', 'standup when'];
 
-function limb(parent, x, y, w, h, d, color, handColor) {
-  const pivot = new THREE.Group();
-  pivot.position.set(x, y, 0);
-  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
-  m.position.y = -h / 2;
-  m.castShadow = true;
-  pivot.add(m);
-  if (handColor) {
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(w * 0.62, 10, 8), mat(handColor));
-    hand.position.y = -h - 0.02;
-    hand.castShadow = true;
-    pivot.add(hand);
-  }
-  parent.add(pivot);
-  return pivot;
+let blobTex = null;
+function blobTexture() {
+  if (blobTex) return blobTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 4, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(40, 28, 16, 0.32)');
+  grad.addColorStop(1, 'rgba(40, 28, 16, 0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return (blobTex = new THREE.CanvasTexture(c));
 }
 
 export class Agent {
@@ -37,44 +34,15 @@ export class Agent {
     this.deskFace = opts.face ?? Math.PI;
 
     this.root = new THREE.Group();
-    this.body = new THREE.Group();
-    this.root.add(this.body);
-    const shirtDark = new THREE.Color(staff.shirt).multiplyScalar(0.82).getStyle();
+    this.fig = new Figure(staff);
+    this.root.add(this.fig.group);
+    this.body = this.fig.body;
 
-    this.legL = limb(this.body, -0.14, 0.78, 0.2, 0.74, 0.24, '#2d3140');
-    this.legR = limb(this.body, 0.14, 0.78, 0.2, 0.74, 0.24, '#2d3140');
-    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.42, 6, 16), mat(staff.shirt));
-    torso.position.y = 1.22;
-    torso.scale.z = 0.8;
-    torso.castShadow = true;
-    this.body.add(torso);
-    this.armL = limb(this.body, -0.4, 1.5, 0.15, 0.56, 0.17, shirtDark, staff.skin);
-    this.armR = limb(this.body, 0.4, 1.5, 0.15, 0.56, 0.17, shirtDark, staff.skin);
-
-    this.head = new THREE.Group();
-    this.head.position.y = 1.98;
-    const skull = new THREE.Mesh(new THREE.SphereGeometry(0.3, 20, 16), mat(staff.skin));
-    skull.castShadow = true;
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.315, 20, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(staff.hair));
-    hair.position.set(0, 0.02, -0.02);
-    hair.rotation.x = -0.25;
-    this.head.add(skull, hair);
-    for (const ex of [-0.1, 0.1]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 6), mat('#15171c'));
-      eye.position.set(ex, 0.02, 0.275);
-      this.head.add(eye);
-    }
-    this.body.add(this.head);
-
-    this.book = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.06, 0.3), mat('#3d7ea6'));
-    this.book.position.set(0, 1.12, 0.42);
-    this.book.rotation.x = -0.5;
-    this.book.visible = false;
-    this.body.add(this.book);
-    this.mug = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.15, 10), mat('#ffffff'));
-    this.mug.position.set(0, -0.62, 0.06);
-    this.mug.visible = false;
-    this.armR.add(this.mug);
+    // A soft shadow blob keeps them grounded even where the sun's shadow is thin.
+    const blob = new THREE.Mesh(new THREE.CircleGeometry(0.5, 24), new THREE.MeshBasicMaterial({ map: blobTexture(), transparent: true, depthWrite: false }));
+    blob.rotation.x = -Math.PI / 2;
+    blob.position.y = 0.015;
+    this.root.add(blob);
 
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.55, 0.68, 40), new THREE.MeshBasicMaterial({ color: staff.shirt, transparent: true, opacity: 0.9 }));
     this.ring.rotation.x = -Math.PI / 2;
@@ -116,7 +84,7 @@ export class Agent {
     this.bubbleEl.textContent = text;
     this.bubbleEl.className = 'bubble' + (kind ? ' ' + kind : '');
     this.bubbleEl.style.display = text ? '' : 'none';
-    this.bubbleUntil = ms ? performance.now() / 1000 + ms / 1000 : 0;
+    this.bubbleUntil = ms ? (this.now || 0) + ms / 1000 : 0;
   }
 
   // ---------- placement ----------
@@ -223,7 +191,7 @@ export class Agent {
   }
 
   finish(status) {
-    const now = performance.now() / 1000;
+    const now = this.now || 0;
     this.anim = { kind: status === 'done' ? 'celebrate' : 'slump', until: now + 2.2 };
     this.say(status === 'done' ? 'Shipped it!' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
     this.job = null;
@@ -259,6 +227,7 @@ export class Agent {
   }
 
   update(dt, now) {
+    this.now = now;
     this.think(now);
 
     let moving = false;
@@ -286,69 +255,22 @@ export class Agent {
   }
 
   animate(pose, dt, t) {
-    const k = Math.min(1, dt * 10);
-    const p = (t + this.phase);
-    let legL = 0, legR = 0, armL = 0, armR = 0, y = 0, headX = 0, headY = 0;
-    this.book.visible = pose === 'read';
-    this.mug.visible = pose === 'mug';
-
-    switch (pose) {
-      case 'walk': {
-        const s = Math.sin(p * 10);
-        legL = s * 0.55; legR = -s * 0.55; armL = -s * 0.45; armR = s * 0.45;
-        y = Math.abs(Math.cos(p * 10)) * 0.06;
-        break;
-      }
-      case 'desk':
-        legL = legR = -1.5; y = -0.27; headX = 0.12;
-        armL = -1.15 + Math.sin(p * 19) * 0.12;
-        armR = -1.15 + Math.sin(p * 19 + 1.7) * 0.12;
-        if (!this.job || this.job.waiting) armL = armR = -0.3;
-        if (this.job?.waiting) headY = Math.sin(p * 0.6) * 0.5;
-        break;
-      case 'couch':
-        legL = legR = -1.45; y = -0.3; armL = armR = -0.25; headY = Math.sin(p * 0.3) * 0.4;
-        break;
-      case 'read':
-        armL = armR = -1.0; headX = 0.38; headY = Math.sin(p * 0.7) * 0.1;
-        break;
-      case 'type':
-        armL = -1.3 + Math.sin(p * 16) * 0.15;
-        armR = -1.3 + Math.sin(p * 16 + 2) * 0.15;
-        headX = 0.05;
-        break;
-      case 'gaze':
-        armL = armR = 0.3; headX = -0.18; headY = Math.sin(p * 0.5) * 0.35;
-        break;
-      case 'write':
-        armR = -2.4 + Math.sin(p * 7) * 0.25; armL = 0.05; headY = Math.sin(p * 1.3) * 0.08;
-        break;
-      case 'mug':
-        armR = Math.sin(p * 0.9) > 0.8 ? -2.1 : -1.3; headX = 0.05;
-        break;
-      case 'talk':
-        armR = -0.7 + Math.sin(p * 5) * 0.35; armL = Math.sin(p * 1.5) * 0.05; headX = -0.05;
-        break;
-      case 'celebrate':
-        armL = armR = -2.9 + Math.sin(p * 14) * 0.15; y = Math.abs(Math.sin(p * 9)) * 0.35;
-        break;
-      case 'slump':
-        headX = 0.5; armL = armR = 0.06; y = -0.04;
-        break;
-      default:
-        armL = Math.sin(p * 1.6) * 0.04; armR = -armL; y = Math.sin(p * 1.6) * 0.01;
-    }
-    this.legL.rotation.x = lerp(this.legL.rotation.x, legL, k);
-    this.legR.rotation.x = lerp(this.legR.rotation.x, legR, k);
-    this.armL.rotation.x = lerp(this.armL.rotation.x, armL, k);
-    this.armR.rotation.x = lerp(this.armR.rotation.x, armR, k);
-    this.head.rotation.x = lerp(this.head.rotation.x, headX, k);
-    this.head.rotation.y = lerp(this.head.rotation.y, headY, k * 0.5);
-    this.body.position.y = pose === 'walk' || pose === 'celebrate' ? y : lerp(this.body.position.y, y, k);
+    this.fig.pose(pose, dt, t + this.phase, {
+      typing: !!this.job && !this.job.waiting && this.job.id !== 'idle',
+      waiting: !!this.job?.waiting,
+    });
+    const kind = this.bubbleEl.className;
+    const mood = pose === 'celebrate' ? 'happy'
+      : pose === 'slump' || kind.includes('warn') ? 'worried'
+      : pose === 'talk' || (kind.includes('idle') && this.bubbleText) ? 'talk'
+      : kind.includes('thinking') ? 'think'
+      : kind.includes('good') ? 'happy'
+      : 'neutral';
+    this.fig.express(mood, dt, t + this.phase);
   }
 
   placeLabel(camera, w, h) {
-    const v = new THREE.Vector3(this.pos.x, this.body.position.y + 2.55, this.pos.z).project(camera);
+    const v = new THREE.Vector3(this.pos.x, this.body.position.y + 2.5 + (this.fig.look.hair === 'afro' ? 0.2 : 0), this.pos.z).project(camera);
     if (v.z > 1) { this.label.style.display = 'none'; return; }
     this.label.style.display = '';
     this.label.style.transform = `translate(-50%, -100%) translate(${(v.x * 0.5 + 0.5) * w}px, ${(-v.y * 0.5 + 0.5) * h}px)`;
