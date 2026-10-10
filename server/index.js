@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
 import { route } from './chief.js';
+import { fetchUsage } from './usage.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -104,7 +105,25 @@ const snapshot = () => ({
   chat: state.chat.slice(-150),
   chiefCost: state.chiefCost,
   chiefBusy,
+  usage,
 });
+
+// ---------- plan usage ----------
+
+const USAGE_EVERY = 2 * 60 * 1000;
+let usage = null;
+let usageTimer = null;
+async function refreshUsage() {
+  clearTimeout(usageTimer);
+  try { usage = await fetchUsage(); } catch { usage = { ...usage, error: 'Usage unavailable right now.' }; }
+  send({ t: 'usage', usage });
+  usageTimer = setTimeout(refreshUsage, USAGE_EVERY);
+}
+// Turns end in bursts, so a finished turn only nudges the next check closer.
+function nudgeUsage() {
+  clearTimeout(usageTimer);
+  usageTimer = setTimeout(refreshUsage, 5000);
+}
 
 function post(from, text, extra = {}) {
   const msg = { id: crypto.randomUUID().slice(0, 8), from, text, ts: Date.now(), ...extra };
@@ -305,6 +324,7 @@ function onLine(job, line) {
   } else if (e.type === 'result') {
     job.cost += e.total_cost_usd || 0;
     job.turns++;
+    nudgeUsage();
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
     addLog(job, { kind: 'result', ok, summary: String(e.result || e.subtype || '').trim().slice(0, 8000), cost: e.total_cost_usd, ms: e.duration_ms });
@@ -507,6 +527,7 @@ async function dispatch(text, mode, model) {
   try {
     d = await route(chiefContext(text, agent, repo), { bin: CLAUDE, model: CHIEF_MODEL });
     state.chiefCost += d.cost || 0;
+    nudgeUsage();
   } finally {
     chiefBusy = false;
     send({ t: 'chief', busy: false, cost: state.chiefCost });
@@ -743,6 +764,7 @@ server.on('upgrade', (req, socket, head) => {
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Office open on http://localhost:${PORT}  (projects in ${ROOT})`);
   pump();
+  refreshUsage();
 });
 
 const shutdown = () => {

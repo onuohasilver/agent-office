@@ -34,6 +34,19 @@ export function duration(ms) {
   return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
 
+const countdown = (ms) => {
+  const m = Math.ceil(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h}h ${m % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+};
+// Today's resets read as a time; later ones carry the weekday.
+const resetsAt = (ts) => {
+  const d = new Date(ts);
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? time : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+};
+
 async function api(path, body) {
   const res = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json().catch(() => ({}));
@@ -68,6 +81,29 @@ export class Hud {
     $('lv').textContent = `Level ${p.level}`;
     $('xpbar').style.width = `${Math.min(100, ((p.xp - p.floor) / (p.next - p.floor)) * 100)}%`;
     $('xptext').textContent = `${p.xp - p.floor} / ${p.next - p.floor} XP`;
+  }
+
+  // Plan usage: how much of the 5-hour session and the week is gone, and
+  // when each comes back. Countdowns tick with the clock between updates.
+  renderUsage(u) {
+    if (u !== undefined) this.usage = u;
+    u = this.usage;
+    $('usage').hidden = !u;
+    if (!u) return;
+    const err = u.error && !u.session && !u.week;
+    $('useErr').hidden = !err;
+    $('useErr').textContent = err ? u.error : '';
+    for (const [id, m] of [['useSession', u.session], ['useWeek', u.week]]) {
+      const el = $(id);
+      el.hidden = !m;
+      if (!m) continue;
+      const left = m.resetsAt ? m.resetsAt - Date.now() : null;
+      el.className = `meter ${m.pct >= 90 ? 'hot' : m.pct >= 70 ? 'warm' : ''}`;
+      el.querySelector('i').style.width = `${Math.min(100, m.pct)}%`;
+      el.querySelector('.v').textContent = `${m.pct}%`;
+      el.querySelector('.r').textContent = left === null ? '' : left <= 0 ? 'Resetting now' : `Resets ${resetsAt(m.resetsAt)} · in ${countdown(left)}`;
+      el.querySelector('.r').title = m.resetsAt ? new Date(m.resetsAt).toLocaleString() : '';
+    }
   }
 
   renderStats(jobs, extra = 0) {
@@ -223,6 +259,7 @@ export class Hud {
   tick() {
     const job = this.openId && this.app.job(this.openId);
     if (job && (job.status === 'working' || job.status === 'queued')) this.renderMeta(job);
+    if (this.usage) this.renderUsage();
   }
 
   // ---------- chat ----------

@@ -15,6 +15,21 @@
             <div class="xpbar"><i id="xpbar"></i></div>
             <span class="xp" id="xptext">0 / 100 XP</span>
           </div>
+          <div class="usage" id="usage" aria-label="Plan usage">
+            <div class="meter" id="useSession">
+              <span class="k">This session</span>
+              <div class="bar"><i></i></div>
+              <span class="v"></span>
+              <span class="r"></span>
+            </div>
+            <div class="meter" id="useWeek">
+              <span class="k">This week</span>
+              <div class="bar"><i></i></div>
+              <span class="v"></span>
+              <span class="r"></span>
+            </div>
+            <p class="u-err" id="useErr" hidden></p>
+          </div>
         </header>
         <nav class="tabs">
           <button type="button" data-tab="chat" class="on">Chat</button>

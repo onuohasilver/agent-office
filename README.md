@@ -67,6 +67,14 @@ driven by the tool calls in its stream:
 | Plans, todos, sub-agents | Whiteboard |
 | Edits and writing | Their desk |
 
+Under the level bar, two meters show how much of your Claude plan is used:
+**This session** (the 5-hour window) and **This week**, each with when it
+resets and a countdown. They turn amber at 70% and red at 90%. The server reads
+the same numbers as Claude Code's `/usage`, using the login Claude Code keeps
+on this machine (the macOS keychain, `~/.claude/.credentials.json`, or
+`CLAUDE_CODE_OAUTH_TOKEN`). It checks every two minutes and shortly after each
+turn finishes.
+
 Shipped jobs earn XP. Each level hires one more agent, so more jobs run at
 once (3 at level 1, up to 8).
 
