@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Grid } from './nav.js';
+import { SEAT } from './figure.js';
 
 export const W = 40, D = 30;
 
@@ -270,11 +271,8 @@ function buildDesk(scene, grid, x, z, index) {
   [() => deskLamp(g, 0.95, 0.83, -0.35), () => succulent(g, 0.95, 0.83, -0.2), () => bookStack(g, 0.9, 0.83, -0.22)][index % 3]();
 
   // chair
-  const chair = new THREE.Group();
+  const chair = deskChair(C.chair);
   chair.position.set(0, 0, 1.05);
-  box(chair, 0.62, 0.08, 0.6, C.chair, 0, 0.5, 0);
-  box(chair, 0.62, 0.6, 0.08, C.chair, 0, 0.84, 0.3);
-  box(chair, 0.06, 0.46, 0.06, C.metal, 0, 0.24, 0);
   g.add(chair);
 
   const screen = canvasPlane(g, 1.3, 0.74, 512, 292);
@@ -282,7 +280,55 @@ function buildDesk(scene, grid, x, z, index) {
 
   scene.add(g);
   grid.block(x - 1.3, x + 1.3, z - 0.7, z + 0.5);
-  return { index, x, z, seat: new THREE.Vector3(x, 0, z + 1.05), screen, chair };
+  return { index, x, z, seat: new THREE.Vector3(x, 0, z + 1.05), seatY: SEAT, screen, chair };
+}
+
+// ---------- seating ----------
+//
+// Every seat in the office is built to the same height, SEAT, and every
+// sit-down spot carries that height with it, so the figures rest on top of
+// the cushion instead of sinking through it.
+
+// A swivel chair, seat facing +z.
+function deskChair(color) {
+  const chair = new THREE.Group();
+  box(chair, 0.62, 0.08, 0.6, color, 0, SEAT - 0.04, 0);
+  box(chair, 0.62, 0.58, 0.08, color, 0, SEAT + 0.29, 0.3);
+  for (const ax of [-0.33, 0.33]) {
+    box(chair, 0.05, 0.2, 0.42, color, ax, SEAT + 0.1, 0.04);
+    box(chair, 0.07, 0.05, 0.46, '#5a5f6b', ax, SEAT + 0.2, 0.04);
+  }
+  cyl(chair, 0.05, 0.05, SEAT - 0.08, C.metal, 0, (SEAT - 0.08) / 2, 0, 10);
+  for (let k = 0; k < 5; k++) {
+    const a = (k / 5) * Math.PI * 2;
+    const foot = box(chair, 0.07, 0.04, 0.3, C.metal, Math.sin(a) * 0.14, 0.05, Math.cos(a) * 0.14);
+    foot.rotation.y = a;
+    foot.position.set(Math.sin(a) * 0.15, 0.05, Math.cos(a) * 0.15);
+  }
+  return chair;
+}
+
+// A soft single seat, facing +z. Same cushion height as the couch.
+function armchair(scene, grid, x, z, rotY) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  g.rotation.y = rotY;
+  box(g, 1.35, SEAT - 0.14, 1.2, C.couch, 0, (SEAT - 0.14) / 2, 0);
+  box(g, 1.15, 0.14, 1.0, '#6c8fb6', 0, SEAT - 0.07, 0.05);
+  box(g, 1.35, 0.78, 0.26, C.couch, 0, SEAT + 0.25, -0.47);
+  for (const ax of [-0.54, 0.54]) box(g, 0.27, 0.56, 1.2, C.couch, ax, SEAT - 0.06, 0);
+  for (const [lx, lz] of [[-0.55, -0.5], [0.55, -0.5], [-0.55, 0.5], [0.55, 0.5]]) cyl(g, 0.05, 0.04, 0.12, C.woodDark, lx, 0.06, lz, 8);
+  scene.add(g);
+  const half = 0.75;
+  grid.block(x - half, x + half, z - half, z + half);
+  return g;
+}
+
+// A round stool for the communal table.
+function stool(parent, x, z, color) {
+  cyl(parent, 0.26, 0.26, 0.08, color, x, SEAT - 0.04, z, 20);
+  cyl(parent, 0.035, 0.035, SEAT - 0.09, C.metal, x, (SEAT - 0.09) / 2, z, 8);
+  cyl(parent, 0.2, 0.22, 0.03, C.metal, x, 0.015, z, 16);
 }
 
 export function drawScreen(desk, { title = '', subtitle = '', lines = [], accent = '#7bd389', idle = false, t = 0 }) {
@@ -439,13 +485,17 @@ export function buildOffice(scene) {
   rug.castShadow = false;
   const couch = new THREE.Group();
   couch.position.set(-14.5, 0, 8.4);
-  box(couch, 5, 0.45, 1.2, C.couch, 0, 0.32, 0);
-  box(couch, 5, 0.8, 0.3, C.couch, 0, 0.75, -0.48);
-  box(couch, 0.3, 0.65, 1.2, C.couch, -2.35, 0.55, 0);
-  box(couch, 0.3, 0.65, 1.2, C.couch, 2.35, 0.55, 0);
-  for (const cx of [-1.5, 0, 1.5]) box(couch, 1.4, 0.14, 1.0, '#6c8fb6', cx, 0.6, 0.05);
+  box(couch, 5, SEAT - 0.14, 1.2, C.couch, 0, (SEAT - 0.14) / 2, 0);
+  box(couch, 5, 0.8, 0.3, C.couch, 0, SEAT + 0.26, -0.48);
+  for (const ax of [-2.35, 2.35]) box(couch, 0.3, 0.6, 1.2, C.couch, ax, SEAT - 0.08, 0);
+  for (const cx of [-1.5, 0, 1.5]) box(couch, 1.4, 0.14, 1.0, '#6c8fb6', cx, SEAT - 0.07, 0.05);
+  for (const [lx, lz] of [[-2.2, -0.5], [2.2, -0.5], [-2.2, 0.5], [2.2, 0.5]]) cyl(couch, 0.05, 0.04, 0.12, C.woodDark, lx, 0.06, lz, 8);
   scene.add(couch);
   grid.block(-17, -12, 7.8, 9);
+
+  // Two armchairs turn the couch into somewhere a few people can sit together.
+  armchair(scene, grid, -17.3, 10.9, Math.PI / 2);
+  armchair(scene, grid, -12, 10.9, -Math.PI / 2);
   box(scene, 2.4, 0.08, 1.2, C.wood, -14.5, 0.48, 10.6);
   for (const [lx, lz] of [[-1.1, -0.5], [1.1, -0.5], [-1.1, 0.5], [1.1, 0.5]]) box(scene, 0.06, 0.44, 0.06, C.metal, -14.5 + lx, 0.22, 10.6 + lz);
   grid.block(-15.8, -13.2, 10, 11.2);
@@ -491,12 +541,10 @@ export function buildOffice(scene) {
   sign.ctx.textAlign = 'center';
   sign.ctx.fillText('Chief of Staff', 200, 56);
   sign.tex.needsUpdate = true;
-  const stool = new THREE.Group();
-  stool.position.set(0, 0, -1.0);
-  box(stool, 0.62, 0.08, 0.6, C.chair, 0, 0.5, 0);
-  box(stool, 0.62, 0.6, 0.08, C.chair, 0, 0.84, -0.3);
-  box(stool, 0.06, 0.46, 0.06, C.metal, 0, 0.24, 0);
-  reception.add(stool);
+  const deskSeat = deskChair(C.chair);
+  deskSeat.position.set(0, 0, -1.0);
+  deskSeat.rotation.y = Math.PI;
+  reception.add(deskSeat);
   scene.add(reception);
   grid.block(13.7, 17.3, 10.1, 11.1);
 
@@ -540,11 +588,7 @@ export function buildOffice(scene) {
     box(table, 0.08, 0.74, 1.1, C.metal, lx, 0.38, 0);
   }
   for (const sx of [-1.7, 0, 1.7]) {
-    for (const sz of [-1.05, 1.05]) {
-      cyl(table, 0.24, 0.24, 0.07, ['#e07a5f', '#f2cc8f', '#81b29a'][Math.round(sx + 2) % 3], sx, 0.62, sz, 20);
-      cyl(table, 0.03, 0.03, 0.6, C.metal, sx, 0.3, sz, 8);
-      cyl(table, 0.18, 0.2, 0.03, C.metal, sx, 0.015, sz, 16);
-    }
+    for (const sz of [-1.05, 1.05]) stool(table, sx, sz, ['#e07a5f', '#f2cc8f', '#81b29a'][Math.round(sx + 2) % 3]);
   }
   bookStack(table, -1.4, 0.82, 0.1, 2);
   cyl(table, 0.06, 0.06, 0.14, '#ffffff', 0.5, 0.89, -0.2, 12);
@@ -586,19 +630,26 @@ export function buildOffice(scene) {
   for (const [x, z, s, kind] of plants) plant(scene, grid, x, z, s, kind);
 
   const face = { n: Math.PI, s: 0, w: -Math.PI / 2, e: Math.PI / 2 };
-  const spots = (list) => list.map(([x, z, f, pose]) => ({ pos: new THREE.Vector3(x, 0, z), face: face[f], pose, taken: null }));
+  // A spot is a place to be: where to stand, which way to look, what to do
+  // there, and — for anything with a seat — how high that seat is.
+  const spots = (list) => list.map(([x, z, f, pose, seatY]) => ({ pos: new THREE.Vector3(x, 0, z), face: face[f], pose, seatY, taken: null }));
   const stations = {
     library: { label: 'Library', spots: spots([[-17.6, -12.9, 'n', 'read'], [-15.3, -12.9, 'n', 'read'], [-13.1, -12.9, 'n', 'read'], [-11, -12.9, 'n', 'read']]) },
     servers: { label: 'Server room', spots: spots([[12.7, -12.6, 'n', 'type'], [14.1, -12.6, 'n', 'type'], [15.5, -12.6, 'n', 'type'], [16.9, -12.6, 'n', 'type']]) },
     window: { label: 'Research window', spots: spots([[-17.5, -6, 'w', 'gaze'], [-17.5, -2.6, 'w', 'gaze'], [-17.5, 2.6, 'w', 'gaze'], [-17.5, 6, 'w', 'gaze']]) },
     whiteboard: { label: 'Whiteboard', spots: spots([[13.9, -6.4, 'n', 'write'], [15.2, -6.4, 'n', 'write'], [16.5, -6.4, 'n', 'write'], [17.8, -6.4, 'n', 'write']]) },
+    // Enough seats for a full office: three on the couch, two armchairs and
+    // six places at the communal table, with the coffee machine and the
+    // standing table for anyone who'd rather be on their feet.
     lounge: {
       label: 'Break room',
       spots: spots([
-        [-16, 8.55, 's', 'couch'], [-14.5, 8.55, 's', 'couch'], [-13, 8.55, 's', 'couch'],
+        [-16, 8.5, 's', 'couch', SEAT], [-14.5, 8.5, 's', 'couch', SEAT], [-13, 8.5, 's', 'couch', SEAT],
+        [-17.2, 10.9, 'e', 'couch', SEAT], [-11.9, 10.9, 'w', 'couch', SEAT],
+        [-2.7, 10.55, 's', 'sit', SEAT], [-1, 10.55, 's', 'sit', SEAT], [0.7, 10.55, 's', 'sit', SEAT],
+        [-2.7, 12.65, 'n', 'sit', SEAT], [-1, 12.65, 'n', 'sit', SEAT], [0.7, 12.65, 'n', 'sit', SEAT],
         [-17.9, 11.4, 'w', 'mug'], [-17.9, 12.8, 'w', 'mug'],
-        [-11.95, 12, 'e', 'mug'], [-10.05, 12, 'w', 'mug'], [-11, 10.9, 's', 'mug'],
-        [-15.6, 12.7, 'n', 'stand'], [-13.2, 12.7, 'n', 'stand'],
+        [-11.95, 12, 'e', 'mug'], [-10.05, 12, 'w', 'mug'],
       ]),
     },
   };
@@ -613,7 +664,7 @@ export function buildOffice(scene) {
   });
 
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
+  return { grid, desks, stations, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6), seatY: SEAT } };
 }
 
 

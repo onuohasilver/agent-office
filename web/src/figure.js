@@ -23,6 +23,13 @@ function mesh(geo, material, parent, x = 0, y = 0, z = 0) {
 const capsule = (r, len) => new THREE.CapsuleGeometry(r, Math.max(0.001, len), 5, 12);
 const sphere = (r, w = 20, h = 14) => new THREE.SphereGeometry(r, w, h);
 
+// Body measurements the sitting maths needs: hip joint above the body
+// origin, thigh and shin length, ankle height standing, thigh thickness.
+const HIP_Y = 0.93, THIGH = 0.45, SHIN = 0.44, ANKLE = 0.06, THIGH_R = 0.1;
+// The seat height this body is built for: knees at a right angle, feet flat
+// on the floor. Every chair in the office is made to it.
+export const SEAT = 0.46;
+
 // Per-person looks. Anyone not listed gets a sensible default.
 export const LOOKS = {
   ada: { hair: 'afro', pants: '#3a3f5c', shoes: '#26211d' },
@@ -278,7 +285,8 @@ export class Figure {
         break;
       }
       case 'desk': {
-        hipL = hipR = -1.45; kneeL = kneeR = 1.45; y = -0.38; lean = 0.08;
+        const s = Figure.sit(state.seatY, -1.45);
+        hipL = hipR = s.hip; kneeL = kneeR = s.knee; y = s.y; lean = 0.08;
         if (state.typing) {
           shL = -0.5 + Math.sin(t * 17) * 0.05; shR = -0.5 + Math.sin(t * 17 + 2) * 0.05;
           elL = -1.15 + Math.sin(t * 19) * 0.12; elR = -1.15 + Math.sin(t * 19 + 1.6) * 0.12;
@@ -293,11 +301,22 @@ export class Figure {
         }
         break;
       }
-      case 'couch':
-        hipL = hipR = -1.4; kneeL = kneeR = 1.25; y = -0.27; lean = -0.18;
+      case 'couch': {
+        // Sunk back into the cushions, knees a little apart.
+        const s = Figure.sit(state.seatY, -1.3);
+        hipL = hipR = s.hip; kneeL = kneeR = s.knee; y = s.y; lean = -0.18;
         shL = shR = -0.2; elL = elR = -0.75; outL = -0.15; outR = 0.15;
         headY = Math.sin(t * 0.3) * 0.5; headZ = Math.sin(t * 0.21) * 0.06;
         break;
+      }
+      case 'sit': {
+        // Upright on a chair or stool, hands in the lap.
+        const s = Figure.sit(state.seatY, -1.42);
+        hipL = hipR = s.hip; kneeL = kneeR = s.knee; y = s.y; lean = 0.03;
+        shL = shR = -0.32; elL = elR = -0.95; outL = -0.16; outR = 0.16;
+        headY = Math.sin(t * 0.4) * 0.4; headZ = Math.sin(t * 0.27) * 0.05;
+        break;
+      }
       case 'read':
         shL = shR = -0.55; elL = elR = -1.35; outL = -0.12; outR = 0.12; headX = 0.4; headY = Math.sin(t * 0.6) * 0.12;
         break;

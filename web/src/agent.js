@@ -101,7 +101,7 @@ export class Agent {
   }
 
   resolve(key, fresh = false) {
-    if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: this.deskFace, pose: 'desk' };
+    if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: this.deskFace, pose: 'desk', seatY: this.desk.seatY };
     if (key === 'visit') return this.visitTarget;
     if (key === 'standup') return this.meeting;
     if (key === 'door') return { key, pos: this.world.door.clone(), face: Math.PI, pose: 'stand' };
@@ -118,7 +118,7 @@ export class Agent {
     spot.taken = this.id;
     this.spot = spot;
     const jitter = key === 'lounge' ? 0 : 0.12;
-    return { key, pos: spot.pos.clone().add(new THREE.Vector3(rand(-jitter, jitter), 0, rand(-jitter, jitter))), face: spot.face, pose: spot.pose };
+    return { key, pos: spot.pos.clone().add(new THREE.Vector3(rand(-jitter, jitter), 0, rand(-jitter, jitter))), face: spot.face, pose: spot.pose, seatY: spot.seatY };
   }
 
   goTo(key, now, fresh = false) {
@@ -136,6 +136,8 @@ export class Agent {
     this.pos.set(g.pos.x, 0, g.pos.z);
     this.placeKey = g.key;
     this.pose = g.pose;
+    // How high whatever they're sitting on is, so they sit on it, not in it.
+    this.seatY = g.seatY;
     this.dwellUntil = now + (g.key === 'desk' ? 0.8 : g.key === 'lounge' ? 0 : g.key === 'visit' ? 3.4 : g.key === 'standup' ? 0.5 : 2.4);
     if (g.key === 'lounge') this.wanderAt = now + rand(18, 40);
   }
@@ -305,6 +307,7 @@ export class Agent {
     this.fig.pose(pose, dt, t + this.phase, {
       typing: !!this.job && !this.job.waiting && this.job.id !== 'idle',
       waiting: !!this.job?.waiting,
+      seatY: this.seatY,
     });
     const kind = this.bubbleEl.className;
     const mood = pose === 'celebrate' ? 'happy'
