@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "vite build && node server/index.js"
+    "start": "vite build && node server/index.js",
+    "voice:model": "mkdir -p data/whisper && curl -L --progress-bar -o data/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
   },
   "dependencies": {
     "@fontsource-variable/inter": "5.1.0",

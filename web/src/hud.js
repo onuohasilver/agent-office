@@ -2,6 +2,7 @@
 // job detail drawer and the new-job dialog.
 
 import { Marked } from 'marked';
+import { recorder, voiceFile, speech } from './voice.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -59,8 +60,11 @@ const bytes = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : `${Mat
 // Small shares still deserve a digit; "0%" reads as broken.
 const pct = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`;
 
-async function api(path, body) {
-  const res = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+async function api(path, body, method) {
+  const init = body === undefined
+    ? (method ? { method } : {})
+    : { method: method || 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+  const res = await fetch(path, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -104,6 +108,13 @@ class Tray {
     this.render();
   }
 
+  // A voice note is already on the server by the time it gets here: the
+  // transcribing round trip uploaded it.
+  attach({ id, name, size: bytes }) {
+    this.items.push({ key: Math.random().toString(36).slice(2), id, name, size: bytes, done: Promise.resolve(), voice: true });
+    this.render();
+  }
+
   async ids() {
     await Promise.all(this.items.map((i) => i.done));
     return this.items.filter((i) => i.id).map((i) => i.id);
@@ -121,7 +132,7 @@ class Tray {
     this.el.hidden = !this.items.length;
     this.el.innerHTML = this.items.map((i) => `
       <span class="file ${i.loading ? 'loading' : ''}" title="${esc(i.name)} · ${size(i.size)}">
-        ${i.preview ? `<img src="${i.preview}" alt="">` : '<b>FILE</b>'}
+        ${i.preview ? `<img src="${i.preview}" alt="">` : i.voice ? '<b>VOICE</b>' : '<b>FILE</b>'}
         <span>${esc(i.name)}</span>
         <button type="button" data-drop="${i.key}" aria-label="Remove ${esc(i.name)}">×</button>
       </span>`).join('');
@@ -153,11 +164,14 @@ function bindFiles(tray, { zone, input, picker, button }) {
 const fileList = (files) => files?.length
   ? `<div class="files">${files.map((f) => f.image
       ? `<a class="thumb" href="${fileUrl(f)}" target="_blank" rel="noreferrer" title="${esc(f.name)}"><img src="${fileUrl(f)}" alt="${esc(f.name)}" loading="lazy"></a>`
+      : f.audio
+      ? `<audio class="voice" controls preload="metadata" src="${fileUrl(f)}" title="${esc(f.name)}"></audio>`
       : `<a class="file" href="${fileUrl(f)}" title="${esc(f.name)} · ${size(f.size)}"><b>FILE</b><span>${esc(f.name)}</span></a>`).join('')}</div>`
   : '';
 
 const ICONS = {
   more: '<svg viewBox="0 0 24 24"><path d="M7 7l5 5 5-5M7 13l5 5 5-5"/></svg>',
+  speak: '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>',
   open: '<svg viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
   reply: '<svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
 };
@@ -167,6 +181,9 @@ export class Hud {
     this.app = app;
     this.openId = null;
     this.repos = null;
+    this.channels = [{ id: 'general', name: 'general' }];
+    this.channel = store('office.channel') || 'general';
+    this.unread = new Map();
 
     $('clear').onclick = async () => { await api('/api/jobs/clear', {}); this.closeDetail(); };
     $('away').onclick = (e) => {
@@ -180,6 +197,8 @@ export class Hud {
     document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => this.tab(b.dataset.tab)));
     this.bindTeam();
     this.bindChat();
+    this.bindChannels();
+    this.renderChannels();
     addEventListener('keydown', (e) => {
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
       if ((e.key === 'n' || e.key === '/') && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); this.focusInput(); }
@@ -424,6 +443,100 @@ export class Hud {
     if (this.usage) this.renderUsage();
   }
 
+  // ---------- channels ----------
+  //
+  // One strand of conversation each, the way Slack does it. Messages are
+  // only ever shown in their own channel; anything that lands in one you
+  // aren't reading marks it unread.
+
+  renderChannels(list) {
+    if (list) this.channels = list;
+    // A channel that has gone (closed from another window) drops you back
+    // into #general rather than leaving its messages on screen.
+    if (!this.channels.some((c) => c.id === this.channel)) {
+      this.channel = 'general';
+      this.thread = null;
+      if (this.chat) setTimeout(() => this.paintChat());
+    }
+    const rail = $('channels');
+    const open = rail.querySelector('.new-channel');
+    rail.innerHTML = this.channels.map((c) => {
+      const n = this.unread.get(c.id) || 0;
+      const on = c.id === this.channel;
+      // Whatever the channel knows about itself goes in the tooltip: what
+      // it's for, and who an agent has pulled into it.
+      const who = (c.members || []).map((id) => this.app.person(id).name).join(', ');
+      const title = `#${c.name}${c.purpose ? ` — ${c.purpose}` : ''}${who ? `\nIn it: ${who}` : ''}`;
+      return `<button type="button" role="tab" aria-selected="${on}" class="channel ${on ? 'on' : ''}" data-channel="${esc(c.id)}" title="${esc(title)}">
+        <span class="hash">#</span>${esc(c.name)}${n && !on ? `<span class="badge">${n > 99 ? '99+' : n}</span>` : ''}</button>`;
+    }).join('')
+      + (this.channel === 'general' ? '' : `<button type="button" class="channel close" data-close-channel="${esc(this.channel)}" aria-label="Close this channel" title="Close this channel">×</button>`)
+      + `<button type="button" class="channel add" data-new-channel aria-label="New channel" title="New channel">+</button>`;
+    if (open) rail.append(open);
+    this.setPlaceholder();
+  }
+
+  setPlaceholder() {
+    $('input').placeholder = `Message #${this.channel} · @agent #project`;
+  }
+
+  selectChannel(id) {
+    if (!this.channels.some((c) => c.id === id)) return;
+    this.channel = id;
+    this.unread.delete(id);
+    store('office.channel', id);
+    this.thread = null;
+    this.renderChannels();
+    this.paintChat();
+    this.tab('chat');
+  }
+
+  bindChannels() {
+    $('channels').onclick = (e) => {
+      const gone = e.target.closest('[data-close-channel]');
+      if (gone) return this.deleteChannel(gone.dataset.closeChannel);
+      const pick = e.target.closest('[data-channel]');
+      if (pick) return this.selectChannel(pick.dataset.channel);
+      if (e.target.closest('[data-new-channel]')) this.newChannel();
+    };
+  }
+
+  // The + turns into a field in the rail; Enter creates, Escape backs out.
+  newChannel() {
+    const rail = $('channels');
+    if (rail.querySelector('.new-channel')) return rail.querySelector('.new-channel input').focus();
+    const form = document.createElement('form');
+    form.className = 'new-channel';
+    form.innerHTML = `<span class="hash">#</span><input maxlength="24" placeholder="new-channel" aria-label="Channel name" />`;
+    const close = () => form.remove();
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = form.querySelector('input').value.trim();
+      if (!name) return close();
+      try {
+        const channel = await api('/api/channels', { name });
+        close();
+        this.selectChannel(channel.id);
+      } catch (err) {
+        this.toast(err.message, 'bad');
+        form.querySelector('input').select();
+      }
+    };
+    form.querySelector('input').onkeydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); close(); } };
+    form.querySelector('input').onblur = () => setTimeout(() => { if (!form.querySelector('input')?.value.trim()) close(); }, 120);
+    rail.append(form);
+    form.querySelector('input').focus();
+  }
+
+  async deleteChannel(id) {
+    try {
+      await api(`/api/channels/${encodeURIComponent(id)}`, undefined, 'DELETE');
+      this.toast(`#${id} closed`, 'good');
+    } catch (err) {
+      this.toast(err.message, 'bad');
+    }
+  }
+
   // ---------- chat ----------
 
   tab(name) {
@@ -456,6 +569,7 @@ export class Hud {
     $('composer').onsubmit = (e) => { e.preventDefault(); this.send(); };
     this.tray = new Tray($('tray'), (m) => this.toast(m, 'bad'));
     bindFiles(this.tray, { zone: $('composer'), input, picker: $('file'), button: $('attach') });
+    this.bindVoice();
     input.oninput = () => { this.autosize(); this.suggest(); };
     input.onclick = () => this.suggest();
     input.onblur = () => setTimeout(() => ($('ac').hidden = true), 120);
@@ -494,6 +608,13 @@ export class Hud {
       if (pick) return this.openPicker(pick);
       const react = e.target.closest('[data-react]');
       if (react) return this.react(react.closest('.msg').dataset.id, react.dataset.react);
+      const say = e.target.closest('[data-say]');
+      if (say) {
+        const m = this.chat.get(say.closest('.msg').dataset.id);
+        speech.stop();
+        if (m) speech.speak(m.text, m.from, { force: true });
+        return;
+      }
       const open = e.target.closest('[data-open]');
       if (open) return this.app.openJob(open.dataset.open);
       const more = e.target.closest('[data-more]');
@@ -512,6 +633,76 @@ export class Hud {
     input.style.height = Math.min(input.scrollHeight, 140) + 'px';
   }
 
+  // The microphone. Click to start, click again to stop; the words come back
+  // into the composer so you can fix a misheard name before anyone acts on
+  // it, with the recording attached so you can hear what you actually said.
+  bindVoice() {
+    const mic = $('mic'), bar = $('rec'), label = $('recText');
+    if (!recorder.supported) { mic.hidden = true; return; }
+    let timer = null;
+    const paint = (state) => {
+      bar.hidden = state === 'idle';
+      bar.classList.toggle('working', state === 'working');
+      mic.classList.toggle('on', state === 'recording');
+      mic.disabled = state === 'working';
+      $('recStop').hidden = $('recDrop').hidden = state !== 'recording';
+      if (state === 'working') label.textContent = 'Transcribing…';
+    };
+    const tick = () => {
+      const s = Math.floor((Date.now() - recorder.startedAt) / 1000);
+      label.textContent = `Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    const start = async () => {
+      const ready = this.app.voice;
+      if (ready && !ready.ok) return this.toast(ready.reason, 'bad');
+      try { await recorder.start(); } catch (err) {
+        return this.toast(err.name === 'NotAllowedError'
+          ? 'The browser is blocking the microphone. Allow it for this page and try again.'
+          : `No microphone here: ${err.message}`, 'bad');
+      }
+      speech.stop();
+      paint('recording');
+      tick();
+      timer = setInterval(tick, 500);
+    };
+    const finish = async () => {
+      clearInterval(timer);
+      const blob = await recorder.stop();
+      if (!blob) return paint('idle');
+      paint('working');
+      try {
+        const file = voiceFile(blob);
+        const res = await fetch('/api/voice', {
+          method: 'POST',
+          headers: { 'x-file-name': encodeURIComponent(file.name), 'content-type': file.type || 'audio/webm' },
+          body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `Transcribing failed (${res.status})`);
+        this.tray.attach(data);
+        const input = $('input');
+        if (data.text) input.value = input.value.trim() ? `${input.value.trim()} ${data.text}` : data.text;
+        else this.toast("I couldn't make out any words in that one — it's attached if you want to send it anyway.", 'bad');
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        this.autosize();
+      } catch (err) {
+        this.toast(err.message, 'bad');
+      }
+      paint('idle');
+    };
+    const drop = () => { clearInterval(timer); recorder.cancel(); paint('idle'); };
+    mic.onclick = () => (recorder.active ? finish() : start());
+    $('recStop').onclick = finish;
+    $('recDrop').onclick = drop;
+    addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && recorder.active) { e.preventDefault(); return drop(); }
+      // Option-M from anywhere, so you can talk without reaching for the mouse.
+      if (e.altKey && /^(m|µ)$/i.test(e.key)) { e.preventDefault(); recorder.active ? finish() : start(); }
+    });
+    paint('idle');
+  }
+
   async send() {
     const input = $('input');
     const text = input.value.trim();
@@ -523,7 +714,7 @@ export class Hud {
     try {
       const files = await this.tray.ids();
       if (!text && !files.length) return;
-      await api('/api/chat', { text, files, mode: $('mode').value, model: $('model').value });
+      await api('/api/chat', { text, files, channel: this.channel, mode: $('mode').value, model: $('model').value });
       this.tray.clear();
     } catch (err) {
       input.value = text;
@@ -577,12 +768,25 @@ export class Hud {
 
   renderChat(messages) {
     this.chat = new Map(messages.map((m) => [m.id, m]));
-    const roots = messages.filter((m) => !this.inThread(m));
+    this.unread.clear();
+    this.renderChannels();
+    this.paintChat();
+  }
+
+  // Just this channel's messages, newest at the bottom.
+  paintChat() {
+    const roots = [...this.chat.values()].filter((m) => this.here(m) && !this.inThread(m));
     $('msgs').innerHTML = roots.length
       ? roots.map((m) => this.message(m)).join('')
-      : `<p class="empty">Tell the office what you need. Tag someone with @, or a project with #. The chief of staff hands everything else to whoever fits.</p>`;
+      : `<p class="empty">${this.channel === 'general'
+        ? 'Tell the office what you need. Tag someone with @, or a project with #. The chief of staff hands everything else to whoever fits.'
+        : `Nothing in #${esc(this.channel)} yet. Whatever you ask for here stays here.`}</p>`;
     this.scrollChat(true);
     if (this.thread) this.renderThread();
+  }
+
+  here(m) {
+    return (m.channel || 'general') === this.channel;
   }
 
   // A reply whose first message scrolled away shows in the main chat instead.
@@ -596,6 +800,12 @@ export class Hud {
 
   addMessage(m) {
     this.chat.set(m.id, m);
+    if (!this.here(m)) {
+      const id = m.channel || 'general';
+      this.unread.set(id, (this.unread.get(id) || 0) + 1);
+      this.renderChannels();
+      return;
+    }
     if (this.inThread(m)) {
       this.updateThreadSum(m.thread);
       if (this.thread === m.thread) {
@@ -622,6 +832,8 @@ export class Hud {
 
   openThread(id) {
     if (!this.chat.has(id)) return;
+    const m = this.chat.get(id);
+    if (!this.here(m)) this.selectChannel(m.channel || 'general');
     this.thread = id;
     this.renderThread();
     this.tab('chat');
@@ -650,10 +862,11 @@ export class Hud {
   }
 
   // A message typed in the main chat that the server filed under a job's thread.
-  moveToThread(id, thread) {
+  moveToThread(id, thread, channel) {
     const m = this.chat.get(id);
     if (!m) return;
     m.thread = thread;
+    if (channel) m.channel = channel;
     $('msgs').querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
     this.updateThreadSum(thread);
     if (this.thread === thread) this.renderThread();
@@ -709,6 +922,7 @@ export class Hud {
       long ? `<button type="button" class="icon" data-more aria-label="Show all" title="Show all">${ICONS.more}</button>` : '',
       m.jobId && m.from !== 'you' ? `<button type="button" class="icon" data-open="${m.jobId}" aria-label="Open job" title="Open job">${ICONS.open}</button>` : '',
       inThread ? '' : `<button type="button" class="icon quiet" data-thread="${esc(m.id)}" aria-label="Reply in thread" title="Reply in thread">${ICONS.reply}</button>`,
+      m.from !== 'you' && m.text && speech.supported ? `<button type="button" class="icon quiet" data-say aria-label="Read aloud" title="Read aloud">${ICONS.speak}</button>` : '',
       m.denials?.length ? `<button type="button" class="primary small" data-grant="${m.jobId}">Grant full autonomy and continue</button>` : '',
     ].filter(Boolean).join('');
     return `

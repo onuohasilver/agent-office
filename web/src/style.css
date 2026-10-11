@@ -138,6 +138,34 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .empty { margin: 12px 4px; color: var(--ink-3); font-size: 13px; text-wrap: pretty; }
 #clear { font-size: 12.5px; padding: 7px; margin-top: 6px; }
 
+/* ---------- channels ---------- */
+
+.channels {
+  flex: none; display: flex; gap: 4px; align-items: center; overflow-x: auto; scrollbar-width: none;
+  padding: 8px 12px 0;
+}
+.channels::-webkit-scrollbar { display: none; }
+.channel {
+  all: unset; cursor: pointer; flex: none; display: inline-flex; align-items: center; gap: 2px;
+  padding: 4px 9px; border-radius: 99px; font-size: 12.5px; font-weight: 580; color: var(--ink-3);
+  transition: color 0.15s, background 0.15s;
+}
+.channel:hover { color: var(--ink); background: rgba(29, 27, 24, 0.05); }
+.channel.on { color: #fff; background: var(--ink); }
+.channel .hash { opacity: 0.55; }
+.channel .badge {
+  margin-left: 4px; background: var(--work); color: #fff; border-radius: 99px;
+  font-size: 10.5px; font-weight: 700; line-height: 15px; padding: 0 5px;
+}
+.channel.add, .channel.close { color: var(--ink-3); font-size: 14px; line-height: 1; padding: 4px 8px; }
+.channel:focus-visible { outline: 2px solid var(--work); outline-offset: 1px; }
+.new-channel {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px;
+  border: 1px solid var(--line); border-radius: 99px; background: #fff;
+}
+.new-channel .hash { color: var(--ink-3); font-size: 12.5px; }
+.new-channel input { all: unset; width: 96px; font-size: 12.5px; font-weight: 580; }
+
 /* ---------- chat ---------- */
 
 .msgs { flex: 1; overflow-y: auto; padding: 14px 20px 8px; display: flex; flex-direction: column; gap: 16px; }
@@ -438,3 +466,31 @@ code { font-family: var(--mono); font-size: 0.88em; background: rgba(29, 27, 24,
 .msg .files { display: flex; flex-wrap: wrap; gap: 6px; padding-left: 14px; margin-top: 4px; }
 .msg .files .thumb img { display: block; max-width: 160px; max-height: 120px; border-radius: 8px; border: 1px solid var(--line); }
 .reply .row .attach { margin-left: auto; }
+
+/* ---------- voice ---------- */
+
+.mic { border: 0; background: none; cursor: pointer; padding: 4px; border-radius: 7px; color: var(--ink-3); display: inline-flex; }
+.mic:hover { background: rgba(29, 27, 24, 0.05); color: var(--ink-2); }
+.mic:disabled { opacity: 0.45; pointer-events: none; }
+.mic svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.mic.on { color: #fff; background: var(--bad); }
+.mic.on:hover { background: var(--bad); color: #fff; }
+
+/* The recording bar sits where the attachment tray does, so the composer
+   grows downward the same way whichever one is open. */
+.rec { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12.5px; color: var(--ink-2); }
+.rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); flex: none; animation: pulse 1.1s ease-in-out infinite; }
+.rec span { font-variant-numeric: tabular-nums; }
+.rec .link { margin-left: auto; color: var(--ink-3); }
+.rec .link + .link { margin-left: 0; }
+.rec.working i { background: var(--work); }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.8); } }
+@media (prefers-reduced-motion: reduce) { .rec i { animation: none; } }
+
+/* A voice note plays in place. The native control is the one people already
+   know how to scrub, so it only gets sized to the column. */
+audio.voice { width: 100%; max-width: 260px; height: 32px; }
+.msg .files audio.voice { margin-top: 2px; }
+.tray .file b { white-space: nowrap; }
+
+.chip.tools button.on { color: var(--work); background: rgba(47, 111, 174, 0.12); }

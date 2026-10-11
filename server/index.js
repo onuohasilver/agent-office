@@ -10,6 +10,7 @@ import { route } from './chief.js';
 import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
+import { transcribe, vocabulary, voiceReady } from './voice.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -85,10 +86,48 @@ const MODELS = new Set([
 
 // ---------- state ----------
 
-let state = { xp: 0, jobs: [], chat: [], chiefCost: 0, dismissed: [], profiles: {} };
+// ---------- channels ----------
+//
+// The office chat is split the way Slack is: #general always exists, and
+// anyone can open another channel for a strand of work. Every message
+// belongs to exactly one, and a reply stays in its thread's channel.
+
+const GENERAL = 'general';
+const MAX_CHANNELS = 40;
+const slug = (name) => String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+
+let state = { xp: 0, jobs: [], chat: [], channels: [], chiefCost: 0, dismissed: [], profiles: {} };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
+if (!state.channels.some((c) => c.id === GENERAL)) state.channels.unshift({ id: GENERAL, name: GENERAL, createdAt: Date.now() });
+
+const hasChannel = (id) => state.channels.some((c) => c.id === id);
+const channelOf = (id) => (hasChannel(id) ? id : GENERAL);
+
+// `by` is whoever opened it, `purpose` a line about what it's for, and
+// `members` anyone an agent has pulled in; all three are shown in the UI.
+function createChannel(name, { by = 'you', purpose = '' } = {}) {
+  const id = slug(name);
+  if (!id) throw new Error('Give the channel a name.');
+  if (hasChannel(id)) throw new Error(`#${id} already exists.`);
+  if (state.channels.length >= MAX_CHANNELS) throw new Error('That is a lot of channels already. Tidy some up first.');
+  const channel = { id, name: id, purpose: String(purpose || '').slice(0, 120), by, members: [], createdAt: Date.now() };
+  state.channels.push(channel);
+  send({ t: 'channels', channels: state.channels });
+  save();
+  return channel;
+}
+
+// Only an empty channel can go, so no conversation disappears with it.
+function deleteChannel(id) {
+  if (id === GENERAL) throw new Error('#general stays.');
+  if (!hasChannel(id)) throw new Error('No such channel.');
+  if (state.chat.some((m) => channelOf(m.channel) === id)) throw new Error('That channel has messages in it.');
+  state.channels = state.channels.filter((c) => c.id !== id);
+  send({ t: 'channels', channels: state.channels });
+  save();
+}
 for (const s of STAFF) Object.assign(s, state.profiles[s.id]);
 // A restart shouldn't cost anyone their work: jobs that were mid-session
 // pick up where they left off, with the same agent.
@@ -147,6 +186,7 @@ const snapshot = () => ({
   progress: progress(),
   jobs: state.jobs.map((j) => publicJob(j)),
   chat: state.chat.slice(-150),
+  channels: state.channels,
   chiefCost: state.chiefCost,
   chiefBusy,
   standup: standupNow && { who: standupNow.who },
@@ -154,6 +194,7 @@ const snapshot = () => ({
   procs,
   machine,
   dismissed: state.dismissed,
+  voice: voiceReady(DATA),
 });
 
 // ---------- what the agents are costing this machine ----------
@@ -226,9 +267,12 @@ function nudgeUsage() {
 
 function post(from, text, extra = {}) {
   const msg = { id: crypto.randomUUID().slice(0, 8), from, text, ts: Date.now(), ...extra };
-  // Anything about a job goes in that job's thread.
-  const job = msg.jobId && extra.thread === undefined && state.jobs.find((j) => j.id === msg.jobId);
-  if (job?.thread) msg.thread = job.thread;
+  // Anything about a job goes in that job's thread, and in the channel the
+  // job was asked for in.
+  const job = msg.jobId && state.jobs.find((j) => j.id === msg.jobId);
+  if (job?.thread && extra.thread === undefined) msg.thread = job.thread;
+  const root = msg.thread && state.chat.find((m) => m.id === msg.thread);
+  msg.channel = channelOf(root?.channel ?? extra.channel ?? job?.channel);
   state.chat.push(msg);
   if (state.chat.length > MAX_CHAT) state.chat.splice(0, state.chat.length - MAX_CHAT);
   send({ t: 'chat', msg });
@@ -629,7 +673,7 @@ function parseTags(text) {
   return { agent: agents[0], repo: projects[0], clean: clean || text };
 }
 
-function chiefContext(text, agent, repo) {
+function chiefContext(text, agent, repo, channel = GENERAL) {
   const roster = STAFF.slice(0, capacity());
   const lines = ['Staff:'];
   for (const s of roster) {
@@ -650,8 +694,9 @@ function chiefContext(text, agent, repo) {
     lines.push('Recently finished:');
     for (const j of recent) lines.push(`- job ${j.id} by ${nameOf(j.agentId)} in ${j.repo}: "${j.title}" (${j.status}, ${ago(j.endedAt)} ago)`);
   }
-  lines.push('', `Projects: ${listRepos().join(', ')}`, '', 'Recent chat:');
-  for (const m of state.chat.slice(-9, -1)) {
+  lines.push('', `Projects: ${listRepos().join(', ')}`);
+  lines.push('', `This message is in channel #${channel}. Channels: ${state.channels.map((c) => '#' + c.id).join(', ')}.`, '', `Recent chat in #${channel}:`);
+  for (const m of state.chat.filter((x) => channelOf(x.channel) === channel).slice(-9, -1)) {
     const who = (m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from)) + (m.to ? ` → ${nameOf(m.to)}` : '');
     const reacts = Object.keys(m.reactions || {}).join('');
     lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}${reacts ? ` [reactions: ${reacts}]` : ''}`);
@@ -662,9 +707,10 @@ function chiefContext(text, agent, repo) {
   return lines.join('\n');
 }
 
-function hireWork({ repo, brief, agentId, mode, model, say, files, thread }) {
+function hireWork({ repo, brief, agentId, mode, model, say, files, thread, channel }) {
   const job = createJob({ repo, prompt: withFiles(brief, files), mode, model, agentId: agentId || '' });
   job.thread = thread;
+  job.channel = channel;
   const who = nameOf(job.agentId);
   let line = say || `${who} is on it.`;
   if (job.status === 'queued') {
@@ -672,19 +718,19 @@ function hireWork({ repo, brief, agentId, mode, model, say, files, thread }) {
       ? `${nameOf(agentId)} is busy right now, so it's next on their list.`
       : `Everyone's busy, so it's in the queue. First free hand takes it.`;
   }
-  post('chief', line, { jobId: job.id });
+  post('chief', line, { jobId: job.id, channel });
 }
 
 // `root` is the thread this conversation lives in: the boss's message, or the
 // thread they replied in (`inThread`), where the chief answers too.
-async function dispatch(text, mode, model, files, root, inThread) {
+async function dispatch(text, mode, model, files, root, inThread, channel) {
   const { agent, repo, clean } = parseTags(text);
-  const say = (line, extra = {}) => post('chief', line, inThread ? { thread: root, ...extra } : extra);
+  const say = (line, extra = {}) => post('chief', line, { channel, ...(inThread ? { thread: root } : {}), ...extra });
   const open = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');
 
   // A named project with nothing open in it can only be new work.
   if (repo && !open.some((j) => j.repo === repo)) {
-    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model, files, thread: root });
+    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model, files, thread: root, channel });
   }
 
   chiefBusy = true;
@@ -692,7 +738,7 @@ async function dispatch(text, mode, model, files, root, inThread) {
   let d;
   try {
     const said = files.length ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')})` : text;
-    d = await route(chiefContext(said, agent, repo), { bin: CLAUDE, model: CHIEF_MODEL });
+    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -713,7 +759,7 @@ async function dispatch(text, mode, model, files, root, inThread) {
     if (!project) return say('Which project is that for? Tag it with #project.');
     const roster = STAFF.slice(0, capacity());
     const agentId = agent?.id || (roster.some((s) => s.id === d.agentId) ? d.agentId : '');
-    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say, files, thread: root });
+    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say, files, thread: root, channel });
   }
   if (d.action === 'dismiss' || d.action === 'recall') {
     const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
@@ -729,7 +775,9 @@ function fileUnder(job, msgId) {
   const msg = state.chat.find((m) => m.id === msgId);
   if (!msg || job.thread === msgId) return;
   msg.thread = job.thread;
-  send({ t: 'thread', id: msg.id, thread: job.thread });
+  // The thread may live in another channel; the message follows it there.
+  msg.channel = channelOf(state.chat.find((m) => m.id === job.thread)?.channel);
+  send({ t: 'thread', id: msg.id, thread: job.thread, channel: msg.channel });
   save();
 }
 
@@ -740,15 +788,19 @@ function threadJob(root) {
   return job;
 }
 
-function chat({ text, mode = 'edit', model = '', files, thread }) {
+function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
   text = String(text || '').trim();
   files = attachments(files);
   if (!text && !files.length) throw new Error('Say something first.');
   if (!MODES[mode]) throw new Error('Unknown mode.');
   if (!MODELS.has(model)) throw new Error('Unknown model.');
+  if (channel && !hasChannel(channel)) throw new Error('That channel is gone.');
   const root = thread && state.chat.find((m) => m.id === thread && !m.thread);
   if (thread && !root) throw new Error('That thread has scrolled out of the office chat.');
+  // A reply belongs to the channel its thread lives in.
+  const where = channelOf(root ? root.channel : channel);
   const msg = post('you', text, {
+    channel: where,
     ...(files.length && { files: files.map(({ path: _, ...f }) => f) }),
     ...(root && { thread: root.id }),
   });
@@ -758,8 +810,8 @@ function chat({ text, mode = 'edit', model = '', files, thread }) {
   const job = root && threadJob(root);
   if (job) return void deliver(job, withFiles(text, files));
   chiefQueue = chiefQueue
-    .then(() => dispatch(text, mode, model, files, root?.id || msg.id, !!root))
-    .catch((err) => post('chief', `I couldn't route that one: ${err.message}`));
+    .then(() => dispatch(text, mode, model, files, root?.id || msg.id, !!root, where))
+    .catch((err) => post('chief', `I couldn't route that one: ${err.message}`, { channel: where }));
 }
 
 
@@ -989,7 +1041,7 @@ const agentApi = {
       }, REPLY_WAIT_MS);
       addWait(me, { kind: 'reply', from: target.id, timer });
     }
-    post(me.agentId, message, { to: target.id, kind: 'dm' });
+    post(me.agentId, message, { to: target.id, kind: 'dm', channel: me.channel });
     send({ t: 'visit', from: me.agentId, to: target.id });
     return wait_for_reply
       ? `Delivered to ${target.name}. Wrap up this step and end your turn; you'll resume when they answer.`
@@ -1024,6 +1076,7 @@ const agentApi = {
       prompt: `${brief}\n\n(Handed to you by ${myName}, who is working on "${me.title}" in ${me.repo}. Your final reply goes straight back to them, so make it the answer they need.)`,
     });
     job.requestedBy = me.id;
+    job.channel = me.channel;
     job.depth = (me.depth || 0) + 1;
     job.title = brief.split('\n')[0].slice(0, 90);
     pushJob(job);
@@ -1040,6 +1093,9 @@ const agentApi = {
 
 // Each upload gets its own folder, so the original file name survives.
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+// Audio plays in the chat bubble, so these are served inline like images.
+const AUDIO_TYPES = { '.webm': 'audio/webm', '.m4a': 'audio/mp4', '.mp4': 'audio/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg', '.aac': 'audio/aac', '.flac': 'audio/flac' };
+const ext = (name) => path.extname(name).toLowerCase();
 const uploadDir = (id) => (typeof id === 'string' && /^[a-f0-9]{12}$/.test(id) ? path.join(UPLOADS, id) : null);
 
 function upload(req) {
@@ -1077,13 +1133,16 @@ function attachments(ids) {
     try { [name] = fs.readdirSync(dir); } catch {}
     if (!name) continue;
     const file = path.join(dir, name);
-    out.push({ id, name, size: fs.statSync(file).size, image: !!IMAGE_TYPES[path.extname(name).toLowerCase()], path: file });
+    out.push({ id, name, size: fs.statSync(file).size, image: !!IMAGE_TYPES[ext(name)], audio: !!AUDIO_TYPES[ext(name)], path: file });
   }
   return out;
 }
 
 function withFiles(text, files) {
   text = String(text || '').trim();
+  // A voice note reaches the agent as its transcript; the audio itself is
+  // only there for you to replay, and claude can't open it.
+  files = files?.filter((f) => !f.audio);
   if (!files?.length) return text;
   const list = files.map((f) => `- ${f.path}`).join('\n');
   return `${text}\n\nAttached ${files.length === 1 ? 'file' : 'files'} (open with the Read tool, which shows images too):\n${list}`.trim();
@@ -1092,8 +1151,8 @@ function withFiles(text, files) {
 function serveUpload(res, id, name) {
   const [f] = attachments([id]);
   if (!f || f.name !== name) return json(res, 404, { error: 'No such file.' });
-  const type = IMAGE_TYPES[path.extname(f.name).toLowerCase()];
-  // Only plain images show inline; anything else downloads, so an
+  const type = IMAGE_TYPES[ext(f.name)] || AUDIO_TYPES[ext(f.name)];
+  // Only plain images and audio show inline; anything else downloads, so an
   // uploaded page can't run on this origin.
   res.writeHead(200, {
     'content-type': type || 'application/octet-stream',
@@ -1168,6 +1227,22 @@ const server = http.createServer(async (req, res) => {
       const { path: _, ...f } = await upload(req);
       return json(res, 201, f);
     }
+    if (req.method === 'POST' && url.pathname === '/api/voice') {
+      const f = await upload(req);
+      let text = '';
+      // The name hints only improve the spelling, so a project folder that
+      // can't be listed must not cost you the transcript.
+      let hint = '';
+      try { hint = vocabulary(onFloor().map((s) => s.name), listRepos()); } catch {}
+      try {
+        text = await transcribe(f.path, { dataDir: DATA, prompt: hint });
+      } catch (err) {
+        fs.rm(path.dirname(f.path), { recursive: true, force: true }, () => {});
+        return json(res, 503, { error: err.message });
+      }
+      const { path: _, ...meta } = f;
+      return json(res, 200, { ...meta, text });
+    }
     if (req.method === 'GET' && parts[1] === 'uploads' && parts.length === 4) return serveUpload(res, parts[2], decodeURIComponent(parts[3]));
     if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && ['dismiss', 'recall'].includes(parts[3]) && !parts[4]) {
       const text = parts[3] === 'dismiss' ? dismiss([parts[2]]) : recall([parts[2]]);
@@ -1184,6 +1259,12 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
     if (req.method === 'POST' && url.pathname === '/api/chat') { chat(await readBody(req)); return json(res, 202, { ok: true }); }
+    if (req.method === 'GET' && url.pathname === '/api/channels') return json(res, 200, { channels: state.channels });
+    if (req.method === 'POST' && url.pathname === '/api/channels') {
+      const { name, purpose } = await readBody(req);
+      return json(res, 201, createChannel(name, { by: 'you', purpose }));
+    }
+    if (req.method === 'DELETE' && parts[1] === 'channels' && parts[2] && !parts[3]) { deleteChannel(parts[2]); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {
       state.jobs = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');

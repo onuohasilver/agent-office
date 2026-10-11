@@ -25,6 +25,53 @@ There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
 
 The clearance and model pickers under the composer apply to new work.
 
+### Channels
+
+The chat is split into channels, the way Slack is. `#general` is always
+there; the `+` in the channel bar opens another one for a strand of work,
+and a channel with nothing left in it can be closed again.
+
+Every message belongs to exactly one channel. What you ask in `#design`
+stays in `#design`: the chief answers there, the agent who picks the job up
+reports back there, anything they hand to a colleague stays there too, and
+the chief only reads that channel's history when deciding what you meant.
+Threads live in their channel. A channel you aren't reading shows a count of
+what you've missed.
+
+## Talking out loud
+
+You can say it instead of typing it, and hear the answer back. None of it
+leaves the machine: `whisper.cpp` does the listening and the system voices do
+the talking.
+
+```bash
+brew install ffmpeg whisper-cpp
+npm run voice:model        # ~148 MB, once
+```
+
+The microphone sits next to the paperclip, and `⌥M` works from anywhere.
+Click once to start, again to stop. What you said lands **in the composer**
+rather than going straight out, so you can fix a misheard name before anyone
+acts on it, and the recording rides along attached so you can hear what you
+actually said. Escape throws a recording away.
+
+The office knows its own vocabulary, so spoken names come back spelled the way
+the chief can route on them: "Ada, check the open PRs in Afriex" arrives as
+*Afriex*, not *a freaks*. Say `@` and `#` tags as plain names — the chief reads
+them either way.
+
+The speaker button in the top right reads replies aloud as they land: the
+chief, and agents reporting back to you. Everyone has their own voice, so you
+know who's talking without looking, and standup becomes something you can
+listen to while doing something else. Agent-to-agent asides stay quiet; they
+already have their knock. Markdown, code blocks and file paths are stripped
+before anything is spoken, because nobody wants to hear "backtick slash server
+slash index dot j s backtick" — the bubble keeps the detail. The small speaker
+on any message replays just that one.
+
+Agents never hear audio themselves: `claude -p` takes text, so a voice note
+reaches them as its transcript.
+
 ## Agents talk to each other
 
 Every agent gets three office tools (a small MCP server, `server/office-mcp.js`):
@@ -109,6 +156,9 @@ same session. A finished plan can be approved and built the same way.
 | `CHIEF_MODEL` | `sonnet` |
 | `STANDUP_AT` | `09:30` (local time), or `off` |
 | `STANDUP_WEEKENDS` | unset; `1` holds standups on weekends too |
+| `WHISPER_MODEL` | the best model in `data/whisper`; point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
+| `WHISPER_BIN` | `whisper-cli` |
+| `FFMPEG_BIN` | `ffmpeg` |
 
 The server only listens on 127.0.0.1 and refuses requests from other origins,
 because it can start Claude with full permissions. State lives in

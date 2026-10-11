@@ -14,6 +14,7 @@ import { BreakRoom } from './breakroom.js';
 import { Confetti } from './fx.js';
 import { Hud } from './hud.js';
 import { sound } from './sound.js';
+import { speech, recorder } from './voice.js';
 
 // ---------- renderer, camera, light ----------
 
@@ -271,10 +272,12 @@ function connect() {
 function handle(msg) {
   if (msg.t === 'hello') {
     app.staff = msg.staff;
+    app.voice = msg.voice;
     app.modes = msg.modes;
     app.progress = msg.progress;
     app.chiefCost = msg.chiefCost || 0;
     app.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
+    hud.renderChannels(msg.channels || [{ id: 'general', name: 'general' }]);
     hud.renderChat(msg.chat || []);
     hud.chiefBusy(msg.chiefBusy);
     syncStaff(msg.dismissed, firstHello);
@@ -320,12 +323,15 @@ function handle(msg) {
     for (const a of app.agents.values()) if (a.job?.id === job.id) a.onLog(msg.entry);
     if (msg.entry.todos) drawWhiteboard(office.scribble, msg.entry.todos);
     hud.appendLog(job.id, msg.entry);
+  } else if (msg.t === 'channels') {
+    hud.renderChannels(msg.channels);
   } else if (msg.t === 'thread') {
-    hud.moveToThread(msg.id, msg.thread);
+    hud.moveToThread(msg.id, msg.thread, msg.channel);
   } else if (msg.t === 'chat') {
     hud.addMessage(msg.msg);
     const from = app.agents.get(msg.msg.from), to = app.agents.get(msg.msg.to);
     if (from && to) { from.visit(to, msg.msg.text); sound.knock(); }
+    sayAloud(msg.msg);
     if (msg.msg.kind === 'standup') {
       const text = msg.msg.say || msg.msg.text;
       (msg.msg.from === 'chief' ? chief : from)?.speak(text.length > 90 ? text.slice(0, 89) + '…' : text);
@@ -408,6 +414,34 @@ soundBtn.onclick = () => {
   if (!sound.muted) sound.ship();
 };
 paintSound();
+
+// Reading replies aloud is its own switch: the cues and the voices are
+// different kinds of noise, and you may well want one without the other.
+const VOICE_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>';
+const VOICE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9V6a3 3 0 0 1 5.6-1.5M15 11a3 3 0 0 1-4.5 2.6"/><path d="M5 11a7 7 0 0 0 11 5.7M19 11v0"/><path d="M12 18v3"/><path d="m3 3 18 18"/></svg>';
+const speakBtn = document.getElementById('speak');
+function paintSpeak() {
+  speakBtn.innerHTML = speech.on ? VOICE_ON : VOICE_OFF;
+  speakBtn.classList.toggle('on', speech.on);
+  const label = speech.on ? 'Replies read aloud' : 'Replies not read aloud';
+  speakBtn.title = label;
+  speakBtn.setAttribute('aria-label', label);
+}
+if (!speech.supported) speakBtn.hidden = true;
+speakBtn.onclick = () => {
+  speech.setOn(!speech.on);
+  paintSpeak();
+  if (speech.on) speech.speak('Voice on. I will read replies out as they land.', 'chief', { force: true });
+};
+paintSpeak();
+
+// Whose words get spoken: the chief and the agents reporting back to you.
+// Agent-to-agent asides already have their own knock, and talking over your
+// own recording would only feed the microphone.
+function sayAloud(m) {
+  if (!speech.on || m.from === 'you' || m.to || recorder.active) return;
+  speech.speak(m.text, m.from);
+}
 
 function latestTodos() {
   let best = null;

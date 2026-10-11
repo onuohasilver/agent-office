@@ -3,3 +3,4 @@ dist
 data/*.json
 data/*.tmp
 data/uploads
+data/whisper
