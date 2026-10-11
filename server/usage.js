@@ -34,7 +34,7 @@ export async function fetchUsage() {
     headers: { authorization: `Bearer ${t}`, 'anthropic-beta': 'oauth-2025-04-20' },
     signal: AbortSignal.timeout(10000),
   });
-  if (!res.ok) return { error: res.status === 401 ? 'Claude Code login expired.' : `Usage unavailable (${res.status}).` };
+  if (!res.ok) return { error: res.status === 401 ? 'Claude Code login expired.' : `Usage unavailable (${res.status}).`, limited: res.status === 429 };
   const d = await res.json();
   return { session: meter(d.five_hour), week: meter(d.seven_day), at: Date.now() };
 }

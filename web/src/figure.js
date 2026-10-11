@@ -248,6 +248,16 @@ export class Figure {
 
   // ---------- motion ----------
 
+  // Sitting is worked out from the height of the seat, so nobody sinks into
+  // the furniture: the thighs rest on the cushion and the shins reach down
+  // for the floor, straightening as the seat gets higher.
+  static sit(seatY = SEAT, thigh = -1.4) {
+    const hip = seatY + THIGH_R;
+    const knee = hip - THIGH * Math.cos(thigh);
+    const shin = -Math.acos(Math.min(1, Math.max(-1, (knee - ANKLE) / SHIN)));
+    return { y: hip - HIP_Y, hip: thigh, knee: shin - thigh };
+  }
+
   pose(name, dt, t, state = {}) {
     const k = Math.min(1, dt * 10);
     let hipL = 0, hipR = 0, kneeL = 0, kneeR = 0;

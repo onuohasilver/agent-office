@@ -8,6 +8,8 @@ import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
 import { route } from './chief.js';
 import { fetchUsage } from './usage.js';
+import { writeStandup, dueToday } from './standup.js';
+import { sampleProcs, resetProcs, machine } from './procstat.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -17,38 +19,77 @@ const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 const DATA = path.join(APP, 'data');
 const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
+const UPLOADS = path.join(DATA, 'uploads');
+const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
 const CHIEF_MODEL = process.env.CHIEF_MODEL || 'sonnet';
+// The daily standup, local time; "off" turns it off. Weekdays unless STANDUP_WEEKENDS=1.
+const STANDUP_AT = process.env.STANDUP_AT ?? '09:30';
+const STANDUP_WEEKENDS = process.env.STANDUP_WEEKENDS === '1';
 // After a turn ends, keep the session open briefly: a message that landed
 // at the last moment starts another turn instead of being lost.
 const GRACE_MS = 2500;
 
 // The roster. Capacity grows with level, so later names are "hires".
+// Role, personality and background are defaults; the Team tab edits them.
 const STAFF = [
-  { id: 'ada', name: 'Ada', shirt: '#e07a5f', hair: '#2b2118', skin: '#8d5a3b' },
-  { id: 'tunde', name: 'Tunde', shirt: '#3d7ea6', hair: '#151515', skin: '#5c3a24' },
-  { id: 'mira', name: 'Mira', shirt: '#81b29a', hair: '#7a4b2a', skin: '#e2b48f' },
-  { id: 'kai', name: 'Kai', shirt: '#f2cc8f', hair: '#1f1f1f', skin: '#c48b5f' },
-  { id: 'zola', name: 'Zola', shirt: '#9c6ade', hair: '#2a1a12', skin: '#6b4329' },
-  { id: 'remi', name: 'Remi', shirt: '#e5989b', hair: '#d9a441', skin: '#f0c9a6' },
-  { id: 'obi', name: 'Obi', shirt: '#2a9d8f', hair: '#101010', skin: '#4e2f1c' },
-  { id: 'lin', name: 'Lin', shirt: '#577590', hair: '#0d0d0d', skin: '#e8c39e' },
+  { id: 'ada', name: 'Ada', shirt: '#e07a5f', hair: '#2b2118', skin: '#8d5a3b',
+    role: 'Frontend engineer',
+    personality: 'Warm and quick. Sweats the details people can see: spacing, copy, the feel of a click.',
+    background: 'Came up building marketing sites, then product UI. Has opinions about loading states.' },
+  { id: 'tunde', name: 'Tunde', shirt: '#3d7ea6', hair: '#151515', skin: '#5c3a24',
+    role: 'Backend engineer',
+    personality: 'Calm and methodical. Says little, checks everything twice.',
+    background: 'Years on payments infrastructure. Trusts logs over guesses.' },
+  { id: 'mira', name: 'Mira', shirt: '#81b29a', hair: '#7a4b2a', skin: '#e2b48f',
+    role: 'Full-stack engineer',
+    personality: 'Curious and upbeat. Asks the question nobody else did.',
+    background: 'Ran a small startup before joining. Happiest owning a feature end to end.' },
+  { id: 'kai', name: 'Kai', shirt: '#f2cc8f', hair: '#1f1f1f', skin: '#c48b5f',
+    role: 'Mobile engineer',
+    personality: 'Dry humour, steady hands. Never ships without trying it on a device.',
+    background: 'Built React Native and Swift apps for fintech. Knows every app store rejection by heart.' },
+  { id: 'zola', name: 'Zola', shirt: '#9c6ade', hair: '#2a1a12', skin: '#6b4329',
+    role: 'Release and tooling',
+    personality: 'Organised and direct. Likes a clean git history and a short checklist.',
+    background: 'Former DevOps lead. Builds the scripts everyone else ends up relying on.' },
+  { id: 'remi', name: 'Remi', shirt: '#e5989b', hair: '#d9a441', skin: '#f0c9a6',
+    role: 'QA and testing',
+    personality: 'Playfully sceptical. Finds the edge case, then writes the test for it.',
+    background: 'Started in support, so knows how real people break things.' },
+  { id: 'obi', name: 'Obi', shirt: '#2a9d8f', hair: '#101010', skin: '#4e2f1c',
+    role: 'Data and integrations',
+    personality: 'Patient and precise. Reads the API docs before writing a line.',
+    background: 'Wired up banks, payment rails and analytics pipelines. Fluent in webhooks.' },
+  { id: 'lin', name: 'Lin', shirt: '#577590', hair: '#0d0d0d', skin: '#e8c39e',
+    role: 'Security and review',
+    personality: 'Quiet, thorough, kind in review. Explains the why behind every change asked for.',
+    background: 'Did security audits for years. Reads diffs the way others read novels.' },
 ];
+const PROFILE = { role: 80, personality: 600, background: 600 };
 
 const MODES = {
   plan: { label: 'Plan only', args: ['--permission-mode', 'plan'] },
   edit: { label: 'Edit files', args: ['--permission-mode', 'acceptEdits'] },
   auto: { label: 'Full autonomy', args: ['--permission-mode', 'bypassPermissions'] },
 };
-const MODELS = new Set(['', 'opus', 'sonnet', 'haiku']);
+// Full model IDs for the picker; the family aliases stay valid for older jobs.
+const MODELS = new Set([
+  '', 'opus', 'sonnet', 'haiku',
+  'claude-fable-5-1', 'claude-fable-5',
+  'claude-opus-5-5', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6',
+  'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
+  'claude-haiku-5-5', 'claude-haiku-4-5',
+]);
 
 // ---------- state ----------
 
-let state = { xp: 0, jobs: [], chat: [], chiefCost: 0 };
+let state = { xp: 0, jobs: [], chat: [], chiefCost: 0, dismissed: [], profiles: {} };
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
+for (const s of STAFF) Object.assign(s, state.profiles[s.id]);
 // A restart shouldn't cost anyone their work: jobs that were mid-session
 // pick up where they left off, with the same agent.
 for (const j of state.jobs) {
@@ -69,6 +110,9 @@ for (const j of state.jobs) {
 const levelOf = (xp) => Math.floor(Math.sqrt(xp / 100)) + 1;
 const xpFor = (level) => 100 * (level - 1) ** 2;
 const capacity = () => Math.min(STAFF.length, 2 + levelOf(state.xp));
+const hired = () => STAFF.slice(0, capacity());
+// Who's in today: everyone hired, minus anyone the boss sent home.
+const onFloor = () => hired().filter((s) => !state.dismissed.includes(s.id));
 const progress = () => {
   const level = levelOf(state.xp);
   return { xp: state.xp, level, floor: xpFor(level), next: xpFor(level + 1), capacity: capacity() };
@@ -105,33 +149,106 @@ const snapshot = () => ({
   chat: state.chat.slice(-150),
   chiefCost: state.chiefCost,
   chiefBusy,
+  standup: standupNow && { who: standupNow.who },
   usage,
+  procs,
+  machine,
+  dismissed: state.dismissed,
 });
+
+// ---------- what the agents are costing this machine ----------
+
+const PROC_EVERY = 3000;
+let procs = null;
+let procTimer = null;
+let procBusy = false;
+
+async function pollProcs() {
+  if (procBusy) return;
+  procBusy = true;
+  try {
+    const roots = new Map();
+    for (const [id, child] of running) if (child.pid) roots.set(id, child.pid);
+    if (!roots.size) return stopProcs();
+    const next = await sampleProcs(roots);
+    // Nothing measurable (ps unavailable) is the same as nothing to show.
+    procs = next && Object.keys(next).length ? next : null;
+    send({ t: 'proc', procs, machine });
+  } finally {
+    procBusy = false;
+  }
+}
+
+// Only sampled while someone is working; an idle office polls nothing.
+function startProcs() {
+  if (procTimer) return;
+  resetProcs();
+  procTimer = setInterval(pollProcs, PROC_EVERY);
+  pollProcs();
+}
+
+function stopProcs() {
+  clearInterval(procTimer);
+  procTimer = null;
+  if (!procs) return;
+  procs = null;
+  send({ t: 'proc', procs, machine });
+}
 
 // ---------- plan usage ----------
 
 const USAGE_EVERY = 2 * 60 * 1000;
+const USAGE_GAP = 60 * 1000; // the endpoint rate-limits; never ask more often than this
+const USAGE_MAX_BACKOFF = 15 * 60 * 1000;
 let usage = null;
 let usageTimer = null;
+let usageLast = 0;
+let usageBackoff = 0;
 async function refreshUsage() {
   clearTimeout(usageTimer);
-  try { usage = await fetchUsage(); } catch { usage = { ...usage, error: 'Usage unavailable right now.' }; }
+  usageLast = Date.now();
+  let next;
+  try { next = await fetchUsage(); } catch { next = { error: 'Usage unavailable right now.' }; }
+  // A failed check keeps the last good numbers; the error only shows when
+  // there is nothing to show instead.
+  usage = next.error && (usage?.session || usage?.week) ? { ...usage, error: next.error } : next;
+  usageBackoff = next.limited ? Math.min(USAGE_MAX_BACKOFF, (usageBackoff || USAGE_EVERY) * 2) : 0;
   send({ t: 'usage', usage });
-  usageTimer = setTimeout(refreshUsage, USAGE_EVERY);
+  usageTimer = setTimeout(refreshUsage, usageBackoff || USAGE_EVERY);
 }
-// Turns end in bursts, so a finished turn only nudges the next check closer.
+// Turns end in bursts, so a finished turn only nudges the next check closer,
+// and never closer than the gap, nor while backing off a rate limit.
 function nudgeUsage() {
+  if (usageBackoff) return;
   clearTimeout(usageTimer);
-  usageTimer = setTimeout(refreshUsage, 5000);
+  usageTimer = setTimeout(refreshUsage, Math.max(5000, usageLast + USAGE_GAP - Date.now()));
 }
 
 function post(from, text, extra = {}) {
   const msg = { id: crypto.randomUUID().slice(0, 8), from, text, ts: Date.now(), ...extra };
+  // Anything about a job goes in that job's thread.
+  const job = msg.jobId && extra.thread === undefined && state.jobs.find((j) => j.id === msg.jobId);
+  if (job?.thread) msg.thread = job.thread;
   state.chat.push(msg);
   if (state.chat.length > MAX_CHAT) state.chat.splice(0, state.chat.length - MAX_CHAT);
   send({ t: 'chat', msg });
   save();
   return msg;
+}
+
+const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator})/u;
+// Toggles one person's reaction; empty emoji lists are dropped so old messages stay lean.
+function react(id, emoji, who = 'you') {
+  const msg = state.chat.find((m) => m.id === id);
+  if (!msg) throw new Error('No such message.');
+  if (typeof emoji !== 'string' || emoji.length > 16 || !EMOJI.test(emoji)) throw new Error('That is not an emoji.');
+  const r = (msg.reactions ||= {});
+  const people = r[emoji] || [];
+  r[emoji] = people.includes(who) ? people.filter((p) => p !== who) : [...people, who];
+  if (!r[emoji].length) delete r[emoji];
+  if (!Object.keys(r).length) delete msg.reactions;
+  send({ t: 'react', id, reactions: msg.reactions || {} });
+  save();
 }
 
 function addLog(job, entry) {
@@ -188,6 +305,7 @@ function createJob({ repo, prompt, mode = 'edit', model = '', agentId = '' }) {
     wantAgent: STAFF.some((st) => st.id === agentId) ? agentId : null,
   };
   state.jobs.push(job);
+  if (job.wantAgent && state.dismissed.includes(job.wantAgent)) recall([job.wantAgent]);
   addLog(job, { kind: 'user', summary: prompt });
   pushJob(job);
   pump();
@@ -195,8 +313,10 @@ function createJob({ repo, prompt, mode = 'edit', model = '', agentId = '' }) {
 }
 
 function pump() {
-  const roster = STAFF.slice(0, capacity());
   const queued = state.jobs.filter((j) => j.status === 'queued').sort((a, b) => a.queuedAt - b.queuedAt);
+  // Work waiting with nobody in to take it: call someone back.
+  if (queued.length && !onFloor().length && state.dismissed.length) recall([hired().find((s) => state.dismissed.includes(s.id))?.id]);
+  const roster = onFloor();
   for (const job of queued) {
     const busy = new Set(state.jobs.filter((j) => j.status === 'working').map((j) => j.agentId));
     const free = roster.filter((s) => !busy.has(s.id) && (!job.wantAgent || s.id === job.wantAgent));
@@ -216,6 +336,9 @@ function start(job, agentId) {
   tokens.set(job.id, token);
   const mcp = { mcpServers: { office: { command: process.execPath, args: [path.join(HERE, 'office-mcp.js')],
     env: { OFFICE_URL: `http://127.0.0.1:${PORT}`, OFFICE_JOB: job.id, OFFICE_TOKEN: token } } } };
+  // Attachments live outside the project, so agents need leave to read them.
+  fs.mkdirSync(UPLOADS, { recursive: true });
+  args.push('--add-dir', UPLOADS);
   args.push('--mcp-config', JSON.stringify(mcp), '--allowedTools', OFFICE_TOOLS.join(','), '--append-system-prompt', officePrompt(agentId));
   const first = job.pending;
 
@@ -231,6 +354,7 @@ function start(job, agentId) {
   // new messages while it works.
   const child = spawn(CLAUDE, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
+  startProcs();
   child.stdin.on('error', () => {});
   write(child, first);
 
@@ -251,6 +375,7 @@ function start(job, agentId) {
 
   const ended = (why) => {
     running.delete(job.id);
+    if (procs) { delete procs[job.id]; }
     endGrace(job);
     if (job.status !== 'working') return;
     if (job.stopRequested) finish(job, 'stopped', 'Stopped by you.');
@@ -425,7 +550,8 @@ function stopJob(job) {
   }
 }
 
-function replyJob(job, { message, mode }) {
+function replyJob(job, { message, mode, files }) {
+  message = withFiles(message, attachments(files));
   if (job.status === 'working' || job.status === 'queued') {
     if (!String(message || '').trim()) throw new Error('Say something first.');
     deliver(job, String(message).trim());
@@ -441,6 +567,39 @@ function replyJob(job, { message, mode }) {
   pump();
 }
 
+
+// ---------- sending people home ----------
+
+const names = (list) => (list.length < 2 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list.at(-1)}`);
+
+// Only idle agents can go; anyone mid-job stays until it's done.
+function dismiss(ids) {
+  const gone = [], busy = [];
+  for (const id of ids) {
+    const s = hired().find((x) => x.id === id);
+    if (!s || state.dismissed.includes(id)) continue;
+    if (workingJobOf(id)) { busy.push(s.name); continue; }
+    state.dismissed.push(id);
+    gone.push(s.name);
+    // Work queued for them goes to whoever is free instead.
+    for (const j of state.jobs) if (j.status === 'queued' && j.wantAgent === id) { j.wantAgent = null; pushJob(j); }
+  }
+  if (gone.length) { send({ t: 'staff', dismissed: state.dismissed }); save(); setImmediate(pump); }
+  return [
+    gone.length ? `${names(gone)} ${gone.length === 1 ? 'has' : 'have'} gone home.` : 'Nobody new to send home.',
+    busy.length ? `${names(busy)} ${busy.length === 1 ? 'is' : 'are'} mid-job, so they stay until it's done.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+function recall(ids) {
+  const back = ids.filter((id) => state.dismissed.includes(id));
+  if (!back.length) return 'Everyone you named is already in.';
+  state.dismissed = state.dismissed.filter((id) => !back.includes(id));
+  send({ t: 'staff', dismissed: state.dismissed });
+  save();
+  setImmediate(pump);
+  return `${names(back.map(nameOf))} ${back.length === 1 ? 'is' : 'are'} back in.`;
+}
 
 // ---------- chat + chief of staff ----------
 
@@ -474,10 +633,12 @@ function chiefContext(text, agent, repo) {
   const roster = STAFF.slice(0, capacity());
   const lines = ['Staff:'];
   for (const s of roster) {
+    const id = s.role ? `id ${s.id}, ${s.role}` : `id ${s.id}`;
     const j = state.jobs.find((x) => x.status === 'working' && x.agentId === s.id);
-    if (!j) { lines.push(`- ${s.name} (id ${s.id}): free`); continue; }
+    if (!j && state.dismissed.includes(s.id)) { lines.push(`- ${s.name} (${id}): dismissed, gone home`); continue; }
+    if (!j) { lines.push(`- ${s.name} (${id}): free`); continue; }
     const last = [...j.log].reverse().find((e) => e.kind === 'tool' || e.kind === 'text');
-    lines.push(`- ${s.name} (id ${s.id}): working on job ${j.id} in ${j.repo}: "${j.title}". Latest: ${last ? last.summary.slice(0, 100).replace(/\n/g, ' ') : 'just starting'}`);
+    lines.push(`- ${s.name} (${id}): working on job ${j.id} in ${j.repo}: "${j.title}". Latest: ${last ? last.summary.slice(0, 100).replace(/\n/g, ' ') : 'just starting'}`);
   }
   const queued = state.jobs.filter((j) => j.status === 'queued');
   if (queued.length) {
@@ -492,7 +653,8 @@ function chiefContext(text, agent, repo) {
   lines.push('', `Projects: ${listRepos().join(', ')}`, '', 'Recent chat:');
   for (const m of state.chat.slice(-9, -1)) {
     const who = (m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from)) + (m.to ? ` → ${nameOf(m.to)}` : '');
-    lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}`);
+    const reacts = Object.keys(m.reactions || {}).join('');
+    lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}${reacts ? ` [reactions: ${reacts}]` : ''}`);
   }
   lines.push('', `New message from the boss: ${text}`);
   if (agent) lines.push(`Tagged agent: ${agent.name} (id ${agent.id})`);
@@ -500,8 +662,9 @@ function chiefContext(text, agent, repo) {
   return lines.join('\n');
 }
 
-function hireWork({ repo, brief, agentId, mode, model, say }) {
-  const job = createJob({ repo, prompt: brief, mode, model, agentId: agentId || '' });
+function hireWork({ repo, brief, agentId, mode, model, say, files, thread }) {
+  const job = createJob({ repo, prompt: withFiles(brief, files), mode, model, agentId: agentId || '' });
+  job.thread = thread;
   const who = nameOf(job.agentId);
   let line = say || `${who} is on it.`;
   if (job.status === 'queued') {
@@ -512,20 +675,24 @@ function hireWork({ repo, brief, agentId, mode, model, say }) {
   post('chief', line, { jobId: job.id });
 }
 
-async function dispatch(text, mode, model) {
+// `root` is the thread this conversation lives in: the boss's message, or the
+// thread they replied in (`inThread`), where the chief answers too.
+async function dispatch(text, mode, model, files, root, inThread) {
   const { agent, repo, clean } = parseTags(text);
+  const say = (line, extra = {}) => post('chief', line, inThread ? { thread: root, ...extra } : extra);
   const open = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');
 
   // A named project with nothing open in it can only be new work.
   if (repo && !open.some((j) => j.repo === repo)) {
-    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model });
+    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model, files, thread: root });
   }
 
   chiefBusy = true;
   send({ t: 'chief', busy: true });
   let d;
   try {
-    d = await route(chiefContext(text, agent, repo), { bin: CLAUDE, model: CHIEF_MODEL });
+    const said = files.length ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')})` : text;
+    d = await route(chiefContext(said, agent, repo), { bin: CLAUDE, model: CHIEF_MODEL });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -536,42 +703,230 @@ async function dispatch(text, mode, model) {
   if (d.action === 'followup') {
     const job = state.jobs.find((j) => j.id === d.jobId);
     if (job) {
-      deliver(job, clean);
-      return post('chief', d.say || `Passed to ${nameOf(job.agentId)}.`, { jobId: job.id });
+      if (!inThread) fileUnder(job, root);
+      deliver(job, withFiles(clean, files));
+      return post('chief', d.say || `Passed to ${nameOf(job.agentId)}.`, { jobId: job.id, ...(inThread && { thread: root }) });
     }
   }
   if (d.action === 'new' || d.action === 'followup') {
     const project = repo || listRepos().find((r) => norm(r) === norm(d.repo || ''));
-    if (!project) return post('chief', 'Which project is that for? Tag it with #project.');
+    if (!project) return say('Which project is that for? Tag it with #project.');
     const roster = STAFF.slice(0, capacity());
     const agentId = agent?.id || (roster.some((s) => s.id === d.agentId) ? d.agentId : '');
-    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say });
+    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say, files, thread: root });
   }
-  post('chief', d.say || 'Could you say a bit more?');
+  if (d.action === 'dismiss' || d.action === 'recall') {
+    const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
+    return say(d.action === 'dismiss' ? dismiss(ids) : recall(ids));
+  }
+  if (d.action === 'standup') return void runStandup(true);
+  say(d.say || 'Could you say a bit more?');
 }
 
-function chat({ text, mode = 'edit', model = '' }) {
+// A follow-up typed in the main chat moves into the thread of the job it's about.
+function fileUnder(job, msgId) {
+  if (!job.thread) { job.thread = msgId; return; }
+  const msg = state.chat.find((m) => m.id === msgId);
+  if (!msg || job.thread === msgId) return;
+  msg.thread = job.thread;
+  send({ t: 'thread', id: msg.id, thread: job.thread });
+  save();
+}
+
+// The job a thread is about: one started from it, or the job its first message came from.
+function threadJob(root) {
+  const job = state.jobs.findLast((j) => j.thread === root.id) || (root.jobId && state.jobs.find((j) => j.id === root.jobId));
+  if (job && !job.thread) job.thread = root.id;
+  return job;
+}
+
+function chat({ text, mode = 'edit', model = '', files, thread }) {
   text = String(text || '').trim();
-  if (!text) throw new Error('Say something first.');
+  files = attachments(files);
+  if (!text && !files.length) throw new Error('Say something first.');
   if (!MODES[mode]) throw new Error('Unknown mode.');
   if (!MODELS.has(model)) throw new Error('Unknown model.');
-  post('you', text);
+  const root = thread && state.chat.find((m) => m.id === thread && !m.thread);
+  if (thread && !root) throw new Error('That thread has scrolled out of the office chat.');
+  const msg = post('you', text, {
+    ...(files.length && { files: files.map(({ path: _, ...f }) => f) }),
+    ...(root && { thread: root.id }),
+  });
+  if (/^\/standup$/i.test(text)) return void runStandup(true);
+  if (!text) text = files.length === 1 ? 'Take a look at the attached file.' : 'Take a look at the attached files.';
+  // A reply in a job's thread goes straight to that job; no routing needed.
+  const job = root && threadJob(root);
+  if (job) return void deliver(job, withFiles(text, files));
   chiefQueue = chiefQueue
-    .then(() => dispatch(text, mode, model))
+    .then(() => dispatch(text, mode, model, files, root?.id || msg.id, !!root))
     .catch((err) => post('chief', `I couldn't route that one: ${err.message}`));
 }
 
 
+// ---------- daily standup ----------
+
+const GATHER_MS = 7000, SPEAK_MS = 5500;
+const DAY_MS = 24 * 3600 * 1000;
+let standupNow = null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const clip = (s, n) => {
+  s = String(s || '').replace(/\s+/g, ' ').trim();
+  return s.length > n ? s.slice(0, n - 1) + '…' : s;
+};
+const ENDED = { done: 'Shipped', failed: 'Hit a wall on', stopped: 'Stopped' };
+
+// What each agent can honestly report since the last standup.
+function standupFacts(who, since) {
+  return who.map((s) => {
+    const mine = state.jobs.filter((j) => j.agentId === s.id);
+    return {
+      s,
+      finished: mine.filter((j) => ENDED[j.status] && j.endedAt > since).sort((a, b) => a.endedAt - b.endedAt),
+      now: mine.find((j) => j.status === 'working'),
+      next: state.jobs.filter((j) => j.status === 'queued' && j.wantAgent === s.id),
+    };
+  });
+}
+
+function standupContext(facts) {
+  const lines = [`Last standup: ${state.lastStandup ? `${ago(state.lastStandup)} ago` : 'none yet (covering the last day)'}.`, ''];
+  for (const { s, finished, now, next } of facts) {
+    lines.push(`${s.name} (id ${s.id}):`);
+    for (const j of finished) {
+      const said = j.status === 'done' ? j.log.findLast((e) => e.kind === 'result')?.summary : j.error;
+      lines.push(`- Finished (${j.status}) in ${j.repo}: "${j.title}". ${said ? `Outcome: ${clip(said, 400)}` : ''}`);
+      if (j.denials?.length) lines.push(`  Blocked from using ${j.denials.join(', ')} on that job.`);
+    }
+    if (now) {
+      const last = now.log.findLast((e) => e.kind === 'tool' || e.kind === 'text');
+      lines.push(`- Now: working on "${now.title}" in ${now.repo}${now.waiting ? ', waiting on a colleague' : ''}. Latest: ${last ? clip(last.summary, 160) : 'just starting'}`);
+    }
+    for (const j of next) lines.push(`- Queued for them: "${j.title}" in ${j.repo}`);
+    if (!finished.length && !now && !next.length) lines.push('- Nothing since last standup; free.');
+  }
+  const open = state.jobs.filter((j) => j.status === 'queued' && !j.wantAgent);
+  if (open.length) lines.push('', `Queued for whoever is free: ${open.map((j) => `"${j.title}" in ${j.repo}`).join('; ')}`);
+  return lines.join('\n');
+}
+
+// The same updates from the facts alone, for when the model can't help.
+function plainStandup(facts) {
+  const updates = facts.map(({ s, finished, now, next }) => ({
+    agentId: s.id,
+    done: finished.length ? `${finished.map((j) => `${ENDED[j.status]} "${j.title}" in ${j.repo}`).join('; ')}.` : 'Nothing shipped since last standup.',
+    today: now ? `Still on "${now.title}" in ${now.repo}.` : next.length ? `Picking up "${next[0].title}" in ${next[0].repo}.` : "I'm free, happy to take something.",
+    blockers: [
+      ...finished.filter((j) => j.status === 'failed').map((j) => `"${j.title}" failed: ${clip(j.error, 120)}`),
+      ...(now?.waiting ? ['Waiting on a colleague.'] : []),
+    ].join(' '),
+  }));
+  const busy = facts.filter((f) => f.now).map((f) => f.s.name);
+  const free = facts.filter((f) => !f.now && !f.next.length).map((f) => f.s.name);
+  const wrap = ["That's standup.", busy.length ? `${names(busy)} ${busy.length === 1 ? 'is' : 'are'} heads down.` : '',
+    free.length ? `${names(free)} ${free.length === 1 ? 'is' : 'are'} free for new work.` : ''].filter(Boolean).join(' ');
+  return { updates, wrap };
+}
+
+async function runStandup(byBoss) {
+  if (standupNow) { if (byBoss) post('chief', "We're mid-standup already."); return; }
+  const who = onFloor();
+  if (!who.length) { if (byBoss) post('chief', "Nobody's on the floor to stand up."); return; }
+  const facts = standupFacts(who, state.lastStandup || Date.now() - DAY_MS);
+  const context = standupContext(facts);
+  const plain = plainStandup(facts);
+  const quiet = facts.every((f) => !f.finished.length && !f.now && !f.next.length);
+
+  standupNow = { who: who.map((s) => s.id) };
+  state.lastStandup = Date.now();
+  send({ t: 'standup', phase: 'start', who: standupNow.who });
+  post('chief', "Morning, everyone. Standup: what you got done, what's next, and anything in your way.", { kind: 'standup' });
+  try {
+    // A quiet office has nothing worth a model call. Otherwise it writes
+    // while everyone walks over.
+    const writing = quiet ? null : writeStandup(context, { bin: CLAUDE, model: CHIEF_MODEL }).catch(() => null);
+    await sleep(GATHER_MS);
+    const written = writing && (await writing);
+    if (written) {
+      state.chiefCost += written.cost || 0;
+      send({ t: 'chief', busy: false, cost: state.chiefCost });
+      nudgeUsage();
+    }
+    const said = [];
+    for (const f of facts) {
+      if (!onFloor().some((s) => s.id === f.s.id)) continue;
+      const u = written?.updates?.find((x) => x.agentId === f.s.id) || plain.updates.find((x) => x.agentId === f.s.id);
+      const blockers = clip(u.blockers, 300);
+      post(f.s.id, `**Done:** ${clip(u.done, 500)}\n\n**Today:** ${clip(u.today, 300)}\n\n**Blockers:** ${blockers || 'none'}`,
+        { kind: 'standup', say: clip(u.today, 90) });
+      said.push({ agentId: f.s.id, today: clip(u.today, 200), blockers });
+      await sleep(SPEAK_MS);
+    }
+    const wrap = clip(written?.wrap, 600) || plain.wrap;
+    post('chief', wrap, { kind: 'standup' });
+    state.standupNotes = { ts: state.lastStandup, said, wrap };
+    save();
+    await sleep(4000);
+  } finally {
+    standupNow = null;
+    send({ t: 'standup', phase: 'end' });
+  }
+}
+
+// Checked every minute. Missed standups still happen later that day, but
+// not after 6pm, and a day with nothing to talk about is skipped.
+function standupDue() {
+  if (STANDUP_AT === 'off' || standupNow) return;
+  const due = dueToday(STANDUP_AT, STANDUP_WEEKENDS);
+  const now = Date.now();
+  if (!due || now < due || (state.lastStandup || 0) >= due || new Date().getHours() >= 18) return;
+  const since = state.lastStandup || now - DAY_MS;
+  const active = state.jobs.some((j) => j.status === 'working' || j.status === 'queued' || (j.endedAt || 0) > since);
+  if (!active) { state.lastStandup = now; save(); return; }
+  runStandup(false);
+}
+
+// Agents starting work later in the day know what the team said.
+function standupBrief(agentId) {
+  const n = state.standupNotes;
+  if (!n || Date.now() - n.ts > 18 * 3600 * 1000) return '';
+  const lines = n.said.filter((x) => x.agentId !== agentId).map((x) => `${nameOf(x.agentId)}: ${x.today}${x.blockers ? ` (blocked: ${x.blockers})` : ''}`);
+  return ` From today's standup: ${[...lines, `Chief: ${n.wrap}`].join(' | ')}`;
+}
+
 // ---------- agents talking to each other ----------
+
+// Who they are, from the Team tab. It shapes their voice, never the work.
+function persona(agentId) {
+  const s = STAFF.find((x) => x.id === agentId);
+  const bits = [
+    s?.role && `Your role: ${s.role}.`,
+    s?.personality && `Your personality: ${s.personality}`,
+    s?.background && `Your background: ${s.background}`,
+  ].filter(Boolean);
+  if (!bits.length) return '';
+  return `${bits.join(' ')} Let this colour how you write to the boss and colleagues; it never lowers the bar on the work itself. `;
+}
+
+function updateProfile(id, body) {
+  const s = STAFF.find((x) => x.id === id);
+  if (!s) return null;
+  const p = {};
+  for (const [k, max] of Object.entries(PROFILE)) p[k] = String(body[k] ?? s[k] ?? '').trim().slice(0, max);
+  Object.assign(s, p);
+  state.profiles[id] = p;
+  save();
+  send({ t: 'profile', id, profile: p });
+  return p;
+}
 
 function officePrompt(agentId) {
   const me = nameOf(agentId);
-  const others = STAFF.slice(0, capacity()).filter((s) => s.id !== agentId).map((s) => s.name).join(', ');
-  return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` +
+  const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
+  return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `The office tools let you see what colleagues are doing (office_roster), message a colleague mid-task (message_colleague), ` +
     `and hand work to a free colleague, in this project or another (hand_off). Use them when a colleague's work or another project matters to yours, ` +
     `or to split independent work. Keep messages short and specific. Messages from colleagues reach you as user messages starting "Message from". ` +
-    `When a colleague asks you something, answer with message_colleague.`;
+    `When a colleague asks you something, answer with message_colleague.` + standupBrief(agentId);
 }
 
 const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2;
@@ -584,17 +939,25 @@ function caller(req) {
 }
 
 function colleague(name) {
-  return STAFF.slice(0, capacity()).find((s) => norm(s.name) === norm(name));
+  return hired().find((s) => norm(s.name) === norm(name));
 }
 const workingJobOf = (agentId) => state.jobs.find((j) => j.status === 'working' && j.agentId === agentId);
+const RESUME_WINDOW_MS = 6 * 3600 * 1000;
+// A free, in-office agent's last job, if it ended cleanly not long ago.
+function recentJobOf(agentId) {
+  if (state.dismissed.includes(agentId) || state.jobs.some((j) => j.status === 'queued' && j.agentId === agentId)) return null;
+  const last = state.jobs.filter((j) => j.agentId === agentId && j.endedAt).sort((a, b) => b.endedAt - a.endedAt)[0];
+  return last?.status === 'done' && Date.now() - last.endedAt < RESUME_WINDOW_MS ? last : null;
+}
 
 const agentApi = {
   office_roster(me) {
     const lines = [`You are ${nameOf(me.agentId)}.`, 'Colleagues:'];
-    for (const s of STAFF.slice(0, capacity())) {
+    for (const s of onFloor()) {
       if (s.id === me.agentId) continue;
       const j = workingJobOf(s.id);
-      lines.push(j ? `- ${s.name}: ${j.waiting ? 'waiting on a colleague' : 'working'} on "${j.title}" in ${j.repo}` : `- ${s.name}: free`);
+      const who = s.role ? `${s.name} (${s.role})` : s.name;
+      lines.push(j ? `- ${who}: ${j.waiting ? 'waiting on a colleague' : 'working'} on "${j.title}" in ${j.repo}` : `- ${who}: free`);
     }
     lines.push('', `Projects: ${listRepos().join(', ')}`);
     return lines.join('\n');
@@ -607,8 +970,11 @@ const agentApi = {
     if (target.id === me.agentId) throw new Error("That's you.");
     if (!message) throw new Error('The message is empty.');
     if ((me.sent = (me.sent || 0) + 1) > MAX_MESSAGES) throw new Error("You've sent a lot of messages on this job. Finish the work with what you have.");
-    const theirs = workingJobOf(target.id);
-    if (!theirs || !running.has(theirs.id)) throw new Error(`${target.name} isn't on a job right now. Use hand_off to give them work.`);
+    // Someone free may have ended their turn expecting this, so it resumes their latest job.
+    const theirs = workingJobOf(target.id) || recentJobOf(target.id);
+    if (!theirs || (theirs.status === 'working' && !running.has(theirs.id))) {
+      throw new Error(`${target.name} isn't on a job right now. Use hand_off to give them work.`);
+    }
 
     const myName = nameOf(me.agentId);
     deliver(theirs, `Message from ${myName} (working on "${me.title}" in ${me.repo}): ${message}` +
@@ -644,10 +1010,11 @@ const agentApi = {
       target = colleague(to);
       if (!target) throw new Error(`Nobody called ${to} works here. Check office_roster.`);
       if (target.id === me.agentId) throw new Error("That's you.");
+      if (state.dismissed.includes(target.id)) throw new Error(`${target.name} has gone home for now. Pick someone else or do it yourself.`);
       const busy = workingJobOf(target.id);
       if (busy) throw new Error(`${target.name} is busy with "${busy.title}". Pick someone free or do it yourself.`);
     } else {
-      target = STAFF.slice(0, capacity()).find((s) => s.id !== me.agentId && !workingJobOf(s.id));
+      target = onFloor().find((s) => s.id !== me.agentId && !workingJobOf(s.id));
       if (!target) throw new Error('Nobody is free right now. Do it yourself, or check office_roster later.');
     }
 
@@ -661,13 +1028,80 @@ const agentApi = {
     job.title = brief.split('\n')[0].slice(0, 90);
     pushJob(job);
     if (wait) addWait(me, { kind: 'job', id: job.id });
-    post(me.agentId, brief, { to: target.id, kind: 'handoff', jobId: job.id, project: repo });
+    job.thread = post(me.agentId, brief, { to: target.id, kind: 'handoff', jobId: job.id, project: repo }).id;
     send({ t: 'visit', from: me.agentId, to: target.id });
     return wait
       ? `${target.name} has it (job ${job.id}, ${repo}). Wrap up this step and end your turn; their result will come to you.`
       : `${target.name} has it (job ${job.id}, ${repo}). Their result will reach you if you're still working.`;
   },
 };
+
+// ---------- attachments ----------
+
+// Each upload gets its own folder, so the original file name survives.
+const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+const uploadDir = (id) => (typeof id === 'string' && /^[a-f0-9]{12}$/.test(id) ? path.join(UPLOADS, id) : null);
+
+function upload(req) {
+  let name = 'file';
+  try { name = decodeURIComponent(String(req.headers['x-file-name'] || 'file')); } catch {}
+  name = path.basename(name).replace(/[\x00-\x1f\/\\:*?"<>|]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file';
+  const size = Number(req.headers['content-length'] || 0);
+  if (size > MAX_UPLOAD) throw new Error('That file is over 25 MB.');
+  const id = crypto.randomBytes(6).toString('hex');
+  const dir = uploadDir(id);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, name);
+  return new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(file);
+    let got = 0;
+    const fail = (err) => { out.destroy(); fs.rmSync(dir, { recursive: true, force: true }); reject(err); };
+    req.on('data', (c) => {
+      got += c.length;
+      if (got > MAX_UPLOAD) { req.destroy(); fail(new Error('That file is over 25 MB.')); }
+    });
+    req.on('error', fail);
+    out.on('error', fail);
+    out.on('finish', () => resolve(attachments([id])[0]));
+    req.pipe(out);
+  });
+}
+
+// Ids from the browser become files on disk; anything unknown is dropped.
+function attachments(ids) {
+  if (!Array.isArray(ids)) return [];
+  const out = [];
+  for (const id of ids.slice(0, 20)) {
+    const dir = uploadDir(id);
+    let name;
+    try { [name] = fs.readdirSync(dir); } catch {}
+    if (!name) continue;
+    const file = path.join(dir, name);
+    out.push({ id, name, size: fs.statSync(file).size, image: !!IMAGE_TYPES[path.extname(name).toLowerCase()], path: file });
+  }
+  return out;
+}
+
+function withFiles(text, files) {
+  text = String(text || '').trim();
+  if (!files?.length) return text;
+  const list = files.map((f) => `- ${f.path}`).join('\n');
+  return `${text}\n\nAttached ${files.length === 1 ? 'file' : 'files'} (open with the Read tool, which shows images too):\n${list}`.trim();
+}
+
+function serveUpload(res, id, name) {
+  const [f] = attachments([id]);
+  if (!f || f.name !== name) return json(res, 404, { error: 'No such file.' });
+  const type = IMAGE_TYPES[path.extname(f.name).toLowerCase()];
+  // Only plain images show inline; anything else downloads, so an
+  // uploaded page can't run on this origin.
+  res.writeHead(200, {
+    'content-type': type || 'application/octet-stream',
+    'x-content-type-options': 'nosniff',
+    ...(type ? {} : { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(f.name)}` }),
+  });
+  fs.createReadStream(f.path).pipe(res);
+}
 
 // ---------- http ----------
 
@@ -730,6 +1164,25 @@ const server = http.createServer(async (req, res) => {
       if (!me) return json(res, 403, { error: 'Not on the clock.' });
       return json(res, 200, { text: agentApi[parts[2]](me, await readBody(req)) });
     }
+    if (req.method === 'POST' && url.pathname === '/api/uploads') {
+      const { path: _, ...f } = await upload(req);
+      return json(res, 201, f);
+    }
+    if (req.method === 'GET' && parts[1] === 'uploads' && parts.length === 4) return serveUpload(res, parts[2], decodeURIComponent(parts[3]));
+    if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && ['dismiss', 'recall'].includes(parts[3]) && !parts[4]) {
+      const text = parts[3] === 'dismiss' ? dismiss([parts[2]]) : recall([parts[2]]);
+      if (parts[3] === 'dismiss' && !state.dismissed.includes(parts[2])) return json(res, 400, { error: text });
+      return json(res, 200, { text });
+    }
+    if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && parts[3] === 'profile' && !parts[4]) {
+      const p = updateProfile(parts[2], await readBody(req));
+      return p ? json(res, 200, p) : json(res, 404, { error: 'No such agent.' });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/standup') { runStandup(true); return json(res, 202, { ok: true }); }
+    if (req.method === 'POST' && parts[1] === 'chat' && parts[2] && parts[3] === 'react' && !parts[4]) {
+      react(parts[2], (await readBody(req)).emoji);
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && url.pathname === '/api/chat') { chat(await readBody(req)); return json(res, 202, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {
@@ -765,6 +1218,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Office open on http://localhost:${PORT}  (projects in ${ROOT})`);
   pump();
   refreshUsage();
+  setInterval(standupDue, 60 * 1000);
+  setTimeout(standupDue, 15 * 1000);
 });
 
 const shutdown = () => {

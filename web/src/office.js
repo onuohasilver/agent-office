@@ -40,18 +40,216 @@ function canvasPlane(parent, w, h, px, py) {
 const FONT = '"Inter Variable", Inter, system-ui, sans-serif';
 const MONO = '"JetBrains Mono", ui-monospace, monospace';
 
-function plant(scene, grid, x, z, s = 1) {
+function cyl(parent, rt, rb, h, color, x, y, z, seg = 16, opts) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), opts instanceof THREE.Material ? opts : mat(color, opts));
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+
+const GREENS = ['#5f9e6e', '#477d55', '#6fae74', '#3f7350', '#7dbb7a'];
+
+// Three kinds of plant so the room doesn't look like it bought in bulk:
+// a leafy bush, a tall fiddle-leaf on a stem, and a spiky snake plant.
+function plant(scene, grid, x, z, s = 1, kind = 'bush') {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
-  const pot = new THREE.Mesh(new THREE.CylinderGeometry(0.35 * s, 0.28 * s, 0.6 * s, 16), mat(C.pot));
-  pot.position.y = 0.3 * s;
-  const leaves = new THREE.Mesh(new THREE.IcosahedronGeometry(0.65 * s, 0), mat(C.plant, { flatShading: true }));
-  leaves.position.y = 1.05 * s;
-  const top = new THREE.Mesh(new THREE.IcosahedronGeometry(0.42 * s, 0), mat(C.plantDark, { flatShading: true }));
-  top.position.set(0.15 * s, 1.55 * s, -0.05 * s);
-  for (const m of [pot, leaves, top]) { m.castShadow = true; g.add(m); }
+  g.rotation.y = x * 1.7 + z;
+  g.scale.setScalar(s);
+  cyl(g, 0.35, 0.27, 0.6, C.pot, 0, 0.3, 0, 18);
+  cyl(g, 0.37, 0.37, 0.06, '#d8c8b0', 0, 0.6, 0, 18);
+  cyl(g, 0.31, 0.31, 0.02, '#5a4130', 0, 0.62, 0, 18);
+  const leaf = (r, px, py, pz, c) => {
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(r, 0), mat(GREENS[c % GREENS.length], { flatShading: true }));
+    m.position.set(px, py, pz);
+    m.rotation.set(px * 3, pz * 5, py);
+    m.castShadow = true;
+    g.add(m);
+  };
+  if (kind === 'tall') {
+    cyl(g, 0.035, 0.05, 1.5, C.woodDark, 0, 1.35, 0, 6);
+    leaf(0.42, 0.12, 1.55, 0.05, 1);
+    leaf(0.48, -0.15, 1.95, -0.08, 0);
+    leaf(0.38, 0.18, 2.3, 0.1, 2);
+    leaf(0.3, -0.05, 2.6, 0, 4);
+  } else if (kind === 'snake') {
+    for (let k = 0; k < 7; k++) {
+      const a = (k / 7) * Math.PI * 2, h = 0.8 + ((k * 37) % 5) * 0.12;
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(0.07, h, 4), mat(k % 2 ? '#4e8a5c' : '#6f9f5a', { flatShading: true }));
+      blade.position.set(Math.cos(a) * 0.12, 0.62 + h / 2, Math.sin(a) * 0.12);
+      blade.rotation.set(Math.sin(a) * 0.18, a, -Math.cos(a) * 0.18);
+      blade.scale.z = 0.35;
+      blade.castShadow = true;
+      g.add(blade);
+    }
+  } else {
+    leaf(0.55, 0, 1.0, 0, 0);
+    leaf(0.4, 0.3, 1.25, 0.1, 1);
+    leaf(0.38, -0.28, 1.2, -0.12, 2);
+    leaf(0.36, 0.05, 1.5, -0.2, 3);
+  }
   scene.add(g);
-  grid.block(x - 0.45, x + 0.45, z - 0.45, z + 0.45);
+  grid.block(x - 0.45 * s, x + 0.45 * s, z - 0.45 * s, z + 0.45 * s);
+  return g;
+}
+
+// A little potted succulent for desks and shelves.
+function succulent(parent, x, y, z) {
+  cyl(parent, 0.09, 0.07, 0.12, '#e8dccb', x, y + 0.06, z, 12);
+  const m = new THREE.Mesh(new THREE.IcosahedronGeometry(0.1, 0), mat('#7aa874', { flatShading: true }));
+  m.position.set(x, y + 0.17, z);
+  m.scale.y = 0.7;
+  m.castShadow = true;
+  parent.add(m);
+}
+
+function bookStack(parent, x, y, z, n = 3) {
+  const cols = ['#e07a5f', '#3d7ea6', '#f2cc8f', '#81b29a', '#9c6ade'];
+  for (let k = 0; k < n; k++) {
+    const b = box(parent, 0.34 - k * 0.03, 0.05, 0.25, cols[(k + Math.round(x * 7)) % cols.length], x, y + 0.025 + k * 0.05, z);
+    b.rotation.y = (k - 1) * 0.15;
+  }
+}
+
+function deskLamp(parent, x, y, z) {
+  const metal = mat('#2f3440', { roughness: 0.5 });
+  cyl(parent, 0.11, 0.12, 0.03, null, x, y + 0.015, z, 16, metal);
+  const arm = box(parent, 0.03, 0.42, 0.03, null, x, y + 0.22, z, metal);
+  arm.rotation.x = -0.25;
+  const fore = box(parent, 0.03, 0.03, 0.3, null, x, y + 0.42, z + 0.13, metal);
+  fore.rotation.x = 0.35;
+  const shade = cyl(parent, 0.05, 0.12, 0.14, null, x, y + 0.36, z + 0.27, 16, mat('#e9b949', { roughness: 0.45 }));
+  shade.rotation.x = 0.4;
+  const bulb = new THREE.Mesh(new THREE.CircleGeometry(0.1, 16), new THREE.MeshBasicMaterial({ color: '#fff3c9' }));
+  bulb.position.set(x, y + 0.3, z + 0.3);
+  bulb.rotation.x = -Math.PI / 2 + 0.4;
+  parent.add(bulb);
+}
+
+// A framed print hung on a wall; paint() draws the picture.
+function framedArt(wall, lx, y, w, h, paint, frame = '#3b3330') {
+  const items = [box(wall.g, w + 0.14, h + 0.14, 0.05, frame, lx, y, 0.18)];
+  const pic = canvasPlane(wall.g, w, h, Math.round(256 * w), Math.round(256 * h));
+  pic.mesh.position.set(lx, y, 0.21);
+  pic.mesh.material = new THREE.MeshStandardMaterial({ map: pic.tex, roughness: 0.9 });
+  paint(pic.ctx, pic.canvas.width, pic.canvas.height);
+  pic.tex.needsUpdate = true;
+  items.push(pic.mesh);
+  wall.attach.push(...items);
+}
+
+const ART = {
+  sunset(g, w, h) {
+    g.fillStyle = '#f4e3c8'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#e9967a'; g.beginPath(); g.arc(w * 0.62, h * 0.45, w * 0.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#8fb0a0'; g.beginPath(); g.moveTo(0, h); g.lineTo(0, h * 0.62); g.quadraticCurveTo(w * 0.35, h * 0.4, w * 0.7, h * 0.66); g.lineTo(w, h * 0.58); g.lineTo(w, h); g.fill();
+    g.fillStyle = '#4f7c74'; g.beginPath(); g.moveTo(0, h); g.lineTo(0, h * 0.8); g.quadraticCurveTo(w * 0.5, h * 0.6, w, h * 0.82); g.lineTo(w, h); g.fill();
+  },
+  blocks(g, w, h) {
+    g.fillStyle = '#f7f1e6'; g.fillRect(0, 0, w, h);
+    const cols = ['#e07a5f', '#3d405b', '#81b29a', '#f2cc8f'];
+    g.fillStyle = cols[0]; g.fillRect(w * 0.12, h * 0.12, w * 0.42, h * 0.4);
+    g.fillStyle = cols[1]; g.fillRect(w * 0.54, h * 0.12, w * 0.34, h * 0.22);
+    g.fillStyle = cols[2]; g.fillRect(w * 0.54, h * 0.34, w * 0.34, h * 0.54);
+    g.fillStyle = cols[3]; g.fillRect(w * 0.12, h * 0.52, w * 0.42, h * 0.36);
+    g.fillStyle = '#3d405b'; g.beginPath(); g.arc(w * 0.33, h * 0.7, w * 0.1, 0, Math.PI * 2); g.fill();
+  },
+  arcs(g, w, h) {
+    g.fillStyle = '#efe6d8'; g.fillRect(0, 0, w, h);
+    const cols = ['#c8553d', '#f28f3b', '#ffd5c2', '#588b8b'];
+    cols.forEach((c, i) => {
+      g.strokeStyle = c; g.lineWidth = w * 0.07;
+      g.beginPath(); g.arc(w / 2, h * 0.85, w * (0.38 - i * 0.09), Math.PI, 0); g.stroke();
+    });
+  },
+  leaf(g, w, h) {
+    g.fillStyle = '#e7ece4'; g.fillRect(0, 0, w, h);
+    g.fillStyle = '#5f8f6b';
+    g.beginPath(); g.ellipse(w / 2, h / 2, w * 0.18, h * 0.36, 0.35, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#e7ece4'; g.lineWidth = w * 0.015;
+    g.beginPath(); g.moveTo(w * 0.38, h * 0.82); g.lineTo(w * 0.62, h * 0.18); g.stroke();
+  },
+};
+
+function wallClock(wall, lx, y) {
+  const face = canvasPlane(wall.g, 0.9, 0.9, 256, 256);
+  face.mesh.geometry = new THREE.CircleGeometry(0.45, 40);
+  face.mesh.position.set(lx, y, 0.22);
+  const rim = cyl(wall.g, 0.5, 0.5, 0.08, '#3b3330', lx, y, 0.17, 40);
+  rim.rotation.x = Math.PI / 2;
+  wall.attach.push(rim, face.mesh);
+  const draw = () => {
+    const { ctx: g, tex } = face;
+    g.fillStyle = '#fbf8f2'; g.fillRect(0, 0, 256, 256);
+    g.translate(128, 128);
+    g.fillStyle = '#3b3330';
+    for (let k = 0; k < 12; k++) {
+      g.save(); g.rotate((k / 12) * Math.PI * 2);
+      g.fillRect(-3, -112, 6, k % 3 ? 12 : 22);
+      g.restore();
+    }
+    const d = new Date(), m = d.getMinutes(), hr = (d.getHours() % 12) + m / 60;
+    const hand = (a, len, wd, col) => { g.save(); g.rotate(a); g.fillStyle = col; g.fillRect(-wd / 2, -len, wd, len + 14); g.restore(); };
+    hand((hr / 12) * Math.PI * 2, 62, 9, '#3b3330');
+    hand((m / 60) * Math.PI * 2, 92, 6, '#3b3330');
+    g.fillStyle = '#e07a5f'; g.beginPath(); g.arc(0, 0, 8, 0, Math.PI * 2); g.fill();
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    tex.needsUpdate = true;
+  };
+  draw();
+  setInterval(draw, 30000);
+}
+
+// Low carpet tiles, each a hair off the next, so the work floor reads as a
+// rug rather than a flat grey slab.
+function carpetTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 512;
+  const g = c.getContext('2d');
+  const n = 8, s = 512 / n;
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++) {
+      g.fillStyle = `hsl(${170 + Math.random() * 8}, ${9 + Math.random() * 4}%, ${82 + Math.random() * 2.5}%)`;
+      g.fillRect(i * s, j * s, s, s);
+      g.globalAlpha = 0.05;
+      for (let k = 0; k < 40; k++) {
+        g.fillStyle = Math.random() < 0.5 ? '#000' : '#fff';
+        g.fillRect(i * s + Math.random() * s, j * s + Math.random() * s, 2, 2);
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = 'rgba(60, 80, 80, 0.09)';
+      g.fillRect(i * s, j * s, s, 1.5);
+      g.fillRect(i * s, j * s, 1.5, s);
+    }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(24.5 / 8, 12.6 / 8);
+  tex.anisotropy = 8;
+  return tex;
+}
+
+// Soft warm patch of daylight on the floor under a window.
+let sunTex;
+function sunPatch(scene, x, z, w, d) {
+  if (!sunTex) {
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d');
+    const grad = g.createLinearGradient(0, 0, 256, 0);
+    grad.addColorStop(0, 'rgba(255, 236, 200, 0.55)');
+    grad.addColorStop(1, 'rgba(255, 236, 200, 0)');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 256, 64);
+    sunTex = new THREE.CanvasTexture(c);
+    sunTex.colorSpace = THREE.SRGBColorSpace;
+  }
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map: sunTex, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.5 }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.set(x, 0.025, z);
+  scene.add(m);
 }
 
 // ---------- desks ----------
@@ -68,6 +266,8 @@ function buildDesk(scene, grid, x, z, index) {
   const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 12), mat(['#e07a5f', '#3d7ea6', '#f2cc8f', '#81b29a'][index % 4]));
   mug.position.set(-0.9, 0.91, 0.1);
   g.add(mug);
+  // Something personal on every desk.
+  [() => deskLamp(g, 0.95, 0.83, -0.35), () => succulent(g, 0.95, 0.83, -0.2), () => bookStack(g, 0.9, 0.83, -0.22)][index % 3]();
 
   // chair
   const chair = new THREE.Group();
@@ -146,7 +346,7 @@ export function buildOffice(scene) {
   catcher.receiveShadow = true;
   scene.add(catcher);
   scene.add(contactShadow(W + 16, D + 16));
-  const carpet = box(scene, 24.5, 0.02, 12.6, '#d2d8da', 0, 0.011, 1.2, { roughness: 1 });
+  const carpet = box(scene, 24.5, 0.02, 12.6, null, 0, 0.011, 1.2, new THREE.MeshStandardMaterial({ map: carpetTexture(), roughness: 1 }));
   carpet.castShadow = false;
 
   // Four walls. The ones between the camera and the room drop to a stub so
@@ -157,7 +357,7 @@ export function buildOffice(scene) {
     buildWall(scene, D, -W / 2 - 0.15, 0, Math.PI / 2, [-1, 0, 0]),
     buildWall(scene, D, W / 2 + 0.15, 0, -Math.PI / 2, [1, 0, 0]),
   ];
-  const [north, , west] = walls;
+  const [north, , west, east] = walls;
   grid.block(-W / 2, W / 2, -D / 2, -D / 2 + 0.2);
   grid.block(-W / 2, -W / 2 + 0.2, -D / 2, D / 2);
 
@@ -171,6 +371,8 @@ export function buildOffice(scene) {
       box(west.g, 0.1, 2.3, 0.14, C.trim, lx, 2.2, 0.2),
     );
   }
+
+  for (const wz of [-6, 0, 6]) sunPatch(scene, -17.4, wz, 5, 3.6);
 
   // desks
   const desks = [];
@@ -258,6 +460,16 @@ export function buildOffice(scene) {
   }
   grid.block(-20, -18.6, 10.4, 13.6);
 
+  // break room: a tall table to stand around with a coffee
+  const bistro = new THREE.Group();
+  bistro.position.set(-11, 0, 12);
+  cyl(bistro, 0.3, 0.34, 0.04, C.metal, 0, 0.02, 0, 20);
+  cyl(bistro, 0.04, 0.04, 1.05, C.metal, 0, 0.55, 0, 10);
+  cyl(bistro, 0.48, 0.48, 0.05, C.wood, 0, 1.08, 0, 28);
+  for (const [cx, cz, color] of [[-0.18, 0.08, '#e07a5f'], [0.2, -0.1, '#3d7ea6']]) cyl(bistro, 0.06, 0.05, 0.13, color, cx, 1.17, cz, 12);
+  scene.add(bistro);
+  grid.block(-11.5, -10.5, 11.5, 12.5);
+
   // kanban wall
   north.attach.push(box(north.g, 9.4, 3.5, 0.08, '#d9cdbb', 0, 2.2, 0.2));
   const board = canvasPlane(north.g, 9, 3.2, 1536, 546);
@@ -292,7 +504,86 @@ export function buildOffice(scene) {
   const mat0 = box(scene, 2.4, 0.02, 1.6, '#b9a58f', 18.2, 0.01, 13.4);
   mat0.castShadow = false;
 
-  for (const [x, z, s] of [[-19, -9.5, 1.1], [10, -14, 1], [-9.8, -14.2, 0.9], [19, -11, 1.2], [-10.3, 14, 1], [6.2, 13.8, 1.1], [19, 8.5, 1]]) plant(scene, grid, x, z, s);
+  // wall art and a clock — they fold away with their wall
+  framedArt(north, -7.6, 2.5, 1.6, 1.1, ART.sunset);
+  wallClock(north, 7.6, 2.7);
+  framedArt(east, 1.4, 2.4, 1.0, 1.4, ART.arcs);
+  framedArt(east, 3.0, 2.4, 1.0, 1.4, ART.blocks);
+  framedArt(east, 4.6, 2.4, 1.0, 1.4, ART.leaf);
+  framedArt(west, 11, 2.5, 1.2, 0.9, ART.blocks, '#c39a6b');
+
+  // east credenza under the prints
+  const cred = new THREE.Group();
+  cred.position.set(19.35, 0, 3);
+  box(cred, 0.7, 0.75, 3.6, C.woodDark, 0, 0.4, 0);
+  box(cred, 0.76, 0.05, 3.7, C.wood, 0, 0.8, 0);
+  for (const cz of [-1.2, 0, 1.2]) box(cred, 0.02, 0.6, 1.1, '#9a7350', -0.36, 0.4, cz);
+  for (const [lz] of [[-1.7], [1.7]]) box(cred, 0.6, 0.06, 0.06, C.metal, 0, 0.03, lz);
+  bookStack(cred, 0, 0.82, -1.1, 4);
+  succulent(cred, 0, 0.82, 0.2);
+  cyl(cred, 0.11, 0.08, 0.38, '#3d7ea6', 0.05, 1.01, 1.2, 14, { roughness: 0.35 });
+  for (let k = 0; k < 3; k++) {
+    const stem = cyl(cred, 0.008, 0.008, 0.5, '#5f8f6b', 0.05 + (k - 1) * 0.04, 1.4, 1.2, 4);
+    stem.rotation.z = (k - 1) * 0.3;
+    const bloom = new THREE.Mesh(new THREE.IcosahedronGeometry(0.06, 0), mat(['#f2cc8f', '#e5989b', '#fff'][k], { flatShading: true }));
+    bloom.position.set(0.05 + (k - 1) * 0.12, 1.64, 1.2);
+    cred.add(bloom);
+  }
+  scene.add(cred);
+  grid.block(18.9, 20, 1.1, 4.9);
+
+  // communal table on the open floor by the front wall
+  const table = new THREE.Group();
+  table.position.set(-1, 0, 11.6);
+  box(table, 5.2, 0.08, 1.4, C.wood, 0, 0.78, 0);
+  for (const lx of [-2.3, 2.3]) {
+    box(table, 0.08, 0.74, 1.1, C.metal, lx, 0.38, 0);
+  }
+  for (const sx of [-1.7, 0, 1.7]) {
+    for (const sz of [-1.05, 1.05]) {
+      cyl(table, 0.24, 0.24, 0.07, ['#e07a5f', '#f2cc8f', '#81b29a'][Math.round(sx + 2) % 3], sx, 0.62, sz, 20);
+      cyl(table, 0.03, 0.03, 0.6, C.metal, sx, 0.3, sz, 8);
+      cyl(table, 0.18, 0.2, 0.03, C.metal, sx, 0.015, sz, 16);
+    }
+  }
+  bookStack(table, -1.4, 0.82, 0.1, 2);
+  cyl(table, 0.06, 0.06, 0.14, '#ffffff', 0.5, 0.89, -0.2, 12);
+  const laptop = new THREE.Group();
+  laptop.position.set(1.3, 0.82, 0.1);
+  box(laptop, 0.5, 0.025, 0.35, '#c7ccd4', 0, 0.012, 0);
+  const lid = box(laptop, 0.5, 0.34, 0.02, '#c7ccd4', 0, 0.17, -0.17);
+  lid.rotation.x = -0.25;
+  table.add(laptop);
+  for (const px of [-1.6, 1.6]) {
+    cyl(table, 0.02, 0.02, 1.6, '#2f3440', px, 3.4, 0, 6);
+    const shade = cyl(table, 0.06, 0.32, 0.28, '#2f3440', px, 2.55, 0, 20, { roughness: 0.5 });
+    shade.castShadow = false;
+    const glow = new THREE.Mesh(new THREE.CircleGeometry(0.29, 20), new THREE.MeshBasicMaterial({ color: '#fff1c4' }));
+    glow.rotation.x = Math.PI / 2;
+    glow.position.set(px, 2.405, 0);
+    table.add(glow);
+  }
+  scene.add(table);
+  grid.block(-3.8, 1.8, 10.3, 12.9);
+
+  // lounge floor lamp
+  const lamp = new THREE.Group();
+  lamp.position.set(-18, 0, 8.2);
+  cyl(lamp, 0.22, 0.24, 0.04, '#2f3440', 0, 0.02, 0, 20);
+  cyl(lamp, 0.025, 0.025, 1.7, '#2f3440', 0, 0.87, 0, 8);
+  const lshade = cyl(lamp, 0.22, 0.3, 0.38, '#f3e7d3', 0, 1.85, 0, 24, { emissive: '#ffe2a8', emissiveIntensity: 0.35, roughness: 0.9 });
+  lshade.castShadow = false;
+  scene.add(lamp);
+  grid.block(-18.4, -17.6, 7.8, 8.6);
+
+  // rug by reception, so the entrance feels like a lobby
+  const lobby = box(scene, 5, 0.02, 3.2, '#c9b79c', 15.5, 0.012, 12.6, { roughness: 1 });
+  lobby.castShadow = false;
+  const lobbyBorder = box(scene, 4.6, 0.022, 2.8, '#ddd0bb', 15.5, 0.013, 12.6, { roughness: 1 });
+  lobbyBorder.castShadow = false;
+
+  const plants = [[-19, -9.5, 1.1, 'tall'], [10, -14, 1, 'snake'], [-9.8, -14.2, 0.9, 'bush'], [19, -11, 1.2, 'tall'], [-10.3, 14, 1, 'bush'], [6.2, 13.8, 1.1, 'tall'], [19, 8.5, 1, 'snake'], [19.2, 0, 0.9, 'bush'], [-19.1, 14.2, 0.8, 'snake'], [11.6, 13.9, 1, 'bush']];
+  for (const [x, z, s, kind] of plants) plant(scene, grid, x, z, s, kind);
 
   const face = { n: Math.PI, s: 0, w: -Math.PI / 2, e: Math.PI / 2 };
   const spots = (list) => list.map(([x, z, f, pose]) => ({ pos: new THREE.Vector3(x, 0, z), face: face[f], pose, taken: null }));
@@ -302,17 +593,27 @@ export function buildOffice(scene) {
     window: { label: 'Research window', spots: spots([[-17.5, -6, 'w', 'gaze'], [-17.5, -2.6, 'w', 'gaze'], [-17.5, 2.6, 'w', 'gaze'], [-17.5, 6, 'w', 'gaze']]) },
     whiteboard: { label: 'Whiteboard', spots: spots([[13.9, -6.4, 'n', 'write'], [15.2, -6.4, 'n', 'write'], [16.5, -6.4, 'n', 'write'], [17.8, -6.4, 'n', 'write']]) },
     lounge: {
-      label: 'Lounge',
+      label: 'Break room',
       spots: spots([
         [-16, 8.55, 's', 'couch'], [-14.5, 8.55, 's', 'couch'], [-13, 8.55, 's', 'couch'],
         [-17.9, 11.4, 'w', 'mug'], [-17.9, 12.8, 'w', 'mug'],
-        [-11, 10.6, 'w', 'stand'], [-15.6, 12.7, 'n', 'stand'], [-13.2, 12.7, 'n', 'stand'],
+        [-11.95, 12, 'e', 'mug'], [-10.05, 12, 'w', 'mug'], [-11, 10.9, 's', 'mug'],
+        [-15.6, 12.7, 'n', 'stand'], [-13.2, 12.7, 'n', 'stand'],
       ]),
     },
   };
 
+  // Standup: a ring on the open floor in front of the whiteboard, everyone
+  // facing the middle. The chief takes the spot nearest the board.
+  const huddle = new THREE.Vector3(15.3, 0, -2.4);
+  const standup = Array.from({ length: 10 }, (_, i) => {
+    const a = Math.PI + (i / 10) * Math.PI * 2;
+    const pos = new THREE.Vector3(huddle.x + Math.sin(a) * 2.3, 0, huddle.z + Math.cos(a) * 2.3);
+    return { pos, face: Math.atan2(huddle.x - pos.x, huddle.z - pos.z) };
+  });
+
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
+  return { grid, desks, stations, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6) } };
 }
 
 

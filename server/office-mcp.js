@@ -16,7 +16,7 @@ const TOOLS = [
   },
   {
     name: 'message_colleague',
-    description: 'Send a short message to a colleague who is working right now. It reaches them mid-task. Use it to ask a question, share something they need, or coordinate. Set wait_for_reply when you cannot continue without their answer; your session then pauses until they reply (up to 10 minutes).',
+    description: 'Send a short message to a colleague. It reaches them mid-task, or picks their last job back up if they finished it in the last few hours (so you can answer someone who is waiting to hear from you). Use it to ask a question, share something they need, or coordinate. Set wait_for_reply when you cannot continue without their answer; your session then pauses until they reply (up to 10 minutes).',
     inputSchema: {
       type: 'object',
       properties: {

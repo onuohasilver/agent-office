@@ -10,6 +10,7 @@ import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildOffice, drawScreen, drawBoard, drawWhiteboard } from './office.js';
 import { Agent } from './agent.js';
+import { BreakRoom } from './breakroom.js';
 import { Confetti } from './fx.js';
 import { Hud } from './hud.js';
 import { sound } from './sound.js';
@@ -137,6 +138,7 @@ const app = {
   progress: null,
   jobs: new Map(),
   agents: new Map(),
+  dismissed: new Set(),
   selected: null,
   job: (id) => app.jobs.get(id),
   staffName: (id) => app.staff.find((s) => s.id === id)?.name || '',
@@ -146,7 +148,8 @@ const app = {
     const s = app.staff.find((x) => x.id === from);
     return { name: s?.name || from, color: s?.shirt || '#999' };
   },
-  roster: () => app.staff.slice(0, app.progress?.capacity || 0).map((s) => {
+  onFloor: () => app.staff.slice(0, app.progress?.capacity || 0).filter((s) => !app.dismissed.has(s.id)),
+  roster: () => app.onFloor().map((s) => {
     const job = [...app.jobs.values()].find((j) => j.status === 'working' && j.agentId === s.id);
     return { name: s.name, color: s.shirt, note: job ? `on ${job.repo}` : 'free' };
   }),
@@ -158,6 +161,7 @@ const app = {
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
+const breakRoom = new BreakRoom();
 chief.want = 'desk';
 chief.teleport('desk');
 
@@ -192,17 +196,33 @@ app.select = (agentId, openJob = true) => {
   const mine = [...app.jobs.values()].filter((j) => j.agentId === agentId);
   const current = mine.find((j) => j.status === 'working') || mine.sort((a, b) => (b.endedAt || 0) - (a.endedAt || 0))[0];
   if (current) hud.openDetail(current.id);
-  else hud.toast(`${agent.name} is between jobs. Press N to give them one.`);
+  if (current?.status !== 'working') hud.toast(`${agent.name} is between jobs. Press N to give them one.`, '', { label: 'Send home', run: () => app.dismiss(agent.id) });
 };
 
-function hire(firstLoad) {
-  app.staff.slice(0, app.progress.capacity).forEach((s) => {
-    if (app.agents.has(s.id)) return;
+app.dismiss = (id) => hud.post(`/api/staff/${id}/dismiss`);
+app.recall = (id) => hud.post(`/api/staff/${id}/recall`);
+
+function hire(firstLoad, greeting) {
+  app.onFloor().forEach((s) => {
+    const here = app.agents.get(s.id);
+    if (here) { if (here.leaving) here.stay(); return; }
     const a = new Agent(s, world, labels);
     app.agents.set(s.id, a);
     if (firstLoad) a.teleport('lounge');
-    else { a.teleport('door'); a.say(`Hi, I'm ${s.name}!`, 'good', 5000); }
+    else { a.teleport('door'); a.say(greeting || `Hi, I'm ${s.name}!`, 'good', 5000); }
   });
+}
+
+// Dismissed agents walk out; recalled ones walk back in.
+function syncStaff(dismissed, firstLoad) {
+  app.dismissed = new Set(dismissed || []);
+  for (const a of app.agents.values()) {
+    if (!app.dismissed.has(a.id) || a.leaving || a.job) continue;
+    if (firstLoad) a.gone = true; else a.leave();
+  }
+  hire(firstLoad, 'Back in!');
+  hud.renderAway(app.staff.filter((s) => app.dismissed.has(s.id)));
+  hud.renderTeam();
 }
 
 function syncAgents(instant) {
@@ -215,6 +235,25 @@ function syncAgents(instant) {
       a.finish(app.jobs.get(a.job.id)?.status || 'stopped');
     }
   }
+}
+
+// ---------- standup ----------
+
+// Everyone named gathers in the ring, spread evenly; the chief takes the
+// spot by the whiteboard.
+function gather(who = [], instant = false) {
+  const ring = office.standup;
+  chief.meet(ring[0], instant);
+  who.forEach((id, i) => app.agents.get(id)?.meet(ring[1 + Math.round((i * (ring.length - 2)) / Math.max(1, who.length - 1))], instant));
+  app.standupOn = true;
+  document.getElementById('standup').disabled = true;
+}
+
+function adjourn() {
+  chief.adjourn();
+  for (const a of app.agents.values()) a.adjourn();
+  app.standupOn = false;
+  document.getElementById('standup').disabled = false;
 }
 
 // ---------- network ----------
@@ -238,11 +277,14 @@ function handle(msg) {
     app.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
     hud.renderChat(msg.chat || []);
     hud.chiefBusy(msg.chiefBusy);
-    hire(firstHello);
+    syncStaff(msg.dismissed, firstHello);
     syncAgents(firstHello);
+    if (msg.standup) gather(msg.standup.who, firstHello);
+    else if (app.standupOn) adjourn();
     firstHello = false;
     hud.renderLevel(app.progress);
     hud.renderUsage(msg.usage);
+    hud.renderProc(msg.procs, msg.machine);
     app.refreshLists();
     const todos = latestTodos();
     drawWhiteboard(office.scribble, todos);
@@ -278,21 +320,39 @@ function handle(msg) {
     for (const a of app.agents.values()) if (a.job?.id === job.id) a.onLog(msg.entry);
     if (msg.entry.todos) drawWhiteboard(office.scribble, msg.entry.todos);
     hud.appendLog(job.id, msg.entry);
+  } else if (msg.t === 'thread') {
+    hud.moveToThread(msg.id, msg.thread);
   } else if (msg.t === 'chat') {
     hud.addMessage(msg.msg);
     const from = app.agents.get(msg.msg.from), to = app.agents.get(msg.msg.to);
     if (from && to) { from.visit(to, msg.msg.text); sound.knock(); }
-    if (msg.msg.from === 'chief') {
+    if (msg.msg.kind === 'standup') {
+      const text = msg.msg.say || msg.msg.text;
+      (msg.msg.from === 'chief' ? chief : from)?.speak(text.length > 90 ? text.slice(0, 89) + '…' : text);
+    } else if (msg.msg.from === 'chief') {
       chief.job = null;
       chief.say(msg.msg.text.length > 90 ? msg.msg.text.slice(0, 89) + '…' : msg.msg.text, '', 6000);
     }
+  } else if (msg.t === 'react') {
+    hud.setReactions(msg.id, msg.reactions);
+  } else if (msg.t === 'standup') {
+    if (msg.phase === 'start') { gather(msg.who); hud.banner('Standup', 'Everyone to the whiteboard.'); sound.knock(); }
+    else adjourn();
   } else if (msg.t === 'chief') {
     hud.chiefBusy(msg.busy);
     if (msg.busy) { chief.job = { id: 'routing' }; chief.say('Reading your message…', 'thinking'); }
     else chief.job = null;
     if (msg.cost !== undefined) { app.chiefCost = msg.cost; app.refreshLists(); }
+  } else if (msg.t === 'staff') {
+    syncStaff(msg.dismissed, false);
+  } else if (msg.t === 'profile') {
+    const s = app.staff.find((x) => x.id === msg.id);
+    if (s) Object.assign(s, msg.profile);
+    hud.renderTeam();
   } else if (msg.t === 'usage') {
     hud.renderUsage(msg.usage);
+  } else if (msg.t === 'proc') {
+    hud.renderProc(msg.procs, msg.machine);
   } else if (msg.t === 'xp') {
     app.progress = msg.progress;
     hud.renderLevel(app.progress);
@@ -394,6 +454,7 @@ controls.addEventListener('start', () => {
 document.getElementById('turnLeft').onclick = () => turn(-1);
 document.getElementById('turnRight').onclick = () => turn(1);
 document.getElementById('recenter').onclick = () => recenter();
+document.getElementById('standup').onclick = () => hud.post('/api/standup');
 
 const held = new Set();
 addEventListener('keydown', (e) => {
@@ -492,11 +553,14 @@ function drawScreens(t) {
       desk.idleKey = null;
       return;
     }
-    const key = agent ? `${staff.name}` : `open`;
+    const away = !agent && staff && app.dismissed.has(staff.id);
+    const key = agent ? `${staff.name}` : away ? `away ${staff.name}` : `open`;
     if (desk.idleKey === key) return;
     desk.idleKey = key;
     const unlock = app.progress ? i - 1 : 0;
-    drawScreen(desk, agent ? { idle: true, title: staff.name, subtitle: 'on a break' } : { idle: true, title: 'Open desk', subtitle: `hires at level ${unlock}` });
+    drawScreen(desk, agent ? { idle: true, title: staff.name, subtitle: 'on a break' }
+      : away ? { idle: true, title: staff.name, subtitle: 'gone home' }
+      : { idle: true, title: 'Open desk', subtitle: `hires at level ${unlock}` });
   });
 }
 
@@ -508,7 +572,14 @@ function frame() {
   steer(dt);
   office.updateWalls(camera, controls.target, dt);
 
-  for (const a of app.agents.values()) a.update(dt, t);
+  for (const a of app.agents.values()) {
+    a.update(dt, t);
+    if (!a.gone) continue;
+    a.dispose();
+    app.agents.delete(a.id);
+    if (app.selected === a.id) app.select(null);
+  }
+  breakRoom.update([...app.agents.values()], t);
   chief.update(dt, t);
   confetti.update(dt);
   office.globe.rotation.y += dt * 0.4;

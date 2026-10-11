@@ -103,6 +103,7 @@ export class Agent {
   resolve(key, fresh = false) {
     if (key === 'desk') return { key, pos: this.desk.seat.clone(), face: this.deskFace, pose: 'desk' };
     if (key === 'visit') return this.visitTarget;
+    if (key === 'standup') return this.meeting;
     if (key === 'door') return { key, pos: this.world.door.clone(), face: Math.PI, pose: 'stand' };
     const station = this.world.stations[key];
     if (!station) return null;
@@ -135,7 +136,7 @@ export class Agent {
     this.pos.set(g.pos.x, 0, g.pos.z);
     this.placeKey = g.key;
     this.pose = g.pose;
-    this.dwellUntil = now + (g.key === 'desk' ? 0.8 : g.key === 'lounge' ? 0 : g.key === 'visit' ? 3.4 : 2.4);
+    this.dwellUntil = now + (g.key === 'desk' ? 0.8 : g.key === 'lounge' ? 0 : g.key === 'visit' ? 3.4 : g.key === 'standup' ? 0.5 : 2.4);
     if (g.key === 'lounge') this.wanderAt = now + rand(18, 40);
   }
 
@@ -167,27 +168,69 @@ export class Agent {
 
   onLog(entry) {
     if (!this.job) return;
+    // At standup, work goes on but doesn't talk over the meeting.
+    const say = (...a) => !this.meeting && this.say(...a);
     const color = { tool: null, text: '#e8edf3', error: '#f87171', thinking: '#64748b', system: '#64748b' }[entry.kind];
     const goTo = (where) => { if (this.want === 'visit') this.afterVisit = where; else this.want = where; };
     if (entry.kind === 'tool') {
-      goTo(entry.station === 'desk' ? 'desk' : entry.station);
-      this.say(entry.summary);
+      // Work happens seated at the desk, whatever the tool.
+      goTo('desk');
+      say(entry.summary);
       this.lines.push({ text: '› ' + entry.summary, color });
     } else if (entry.kind === 'text') {
       goTo('desk');
       const first = entry.summary.split(/(?<=[.!?])\s|\n/)[0];
-      this.say(first.length > 80 ? first.slice(0, 79) + '…' : first);
+      say(first.length > 80 ? first.slice(0, 79) + '…' : first);
       this.lines.push({ text: first, color });
     } else if (entry.kind === 'thinking') {
-      this.say('thinking…', 'thinking');
+      say('thinking…', 'thinking');
     } else if (entry.kind === 'error') {
-      this.say(entry.blocked ? 'Needs clearance' : 'Hm, that failed', 'warn');
+      say(entry.blocked ? 'Needs clearance' : 'Hm, that failed', 'warn');
       this.lines.push({ text: '✕ ' + entry.summary.split('\n')[0], color });
     } else if (entry.kind === 'system') {
       this.lines.push({ text: entry.summary, color });
-      if (entry.wait) { goTo('desk'); this.say(entry.summary + '…', 'thinking'); }
+      if (entry.wait) { goTo('desk'); say(entry.summary + '…', 'thinking'); }
     }
     if (this.lines.length > 40) this.lines.splice(0, this.lines.length - 40);
+  }
+
+  // Standup: head to a spot in the ring until it's over. Work carries on
+  // underneath; they go back to it afterwards.
+  meet(spot, instant = false) {
+    this.meeting = { key: 'standup', pos: spot.pos.clone(), face: spot.face, pose: 'stand' };
+    if (this.spot) { this.spot.taken = null; this.spot = null; }
+    if (instant) return this.teleport('standup');
+    if (this.want !== 'visit') { this.path = []; this.placeKey = null; }
+  }
+
+  adjourn() {
+    this.meeting = null;
+    if (this.placeKey === 'standup') this.placeKey = null;
+  }
+
+  speak(text) {
+    this.say(text, 'talk', 5200);
+    this.anim = { kind: 'talk', until: (this.now || 0) + 4.8 };
+  }
+
+  // Dismissed: walk out the door, then disappear (see main.js).
+  leave() {
+    this.leaving = true;
+    this.want = 'door';
+    if (this.spot) { this.spot.taken = null; this.spot = null; }
+    this.say('Heading home', 'idle', 3000);
+  }
+
+  stay() {
+    this.leaving = false;
+    this.want = 'lounge';
+    this.say('Oh, staying!', 'good', 2500);
+  }
+
+  dispose() {
+    if (this.spot) this.spot.taken = null;
+    this.world.scene.remove(this.root);
+    this.label.remove();
   }
 
   finish(status) {
@@ -206,21 +249,25 @@ export class Agent {
     this.anim = null;
     if (this.bubbleUntil && now > this.bubbleUntil) this.say('');
 
+    // A standup outranks everything but leaving and a conversation.
+    const dest = this.meeting && !this.leaving && this.want !== 'visit' ? 'standup' : this.want;
     if (this.path.length) {
       // Someone handed us a job on the way to the couch: turn around now.
-      if (this.goal?.key === 'lounge' && this.want !== 'lounge') this.goTo(this.want, now);
+      if (this.goal?.key === 'lounge' && dest !== 'lounge') this.goTo(dest, now);
       return;
     }
     if (now < this.dwellUntil) return;
+    if (this.leaving && this.placeKey === 'door') { this.gone = true; return; }
     if (this.placeKey === 'visit' && this.want === 'visit') {
       this.want = this.job ? this.afterVisit || 'desk' : 'lounge';
       this.afterVisit = null;
       if (this.bubbleEl.classList.contains('talk')) this.say('');
     }
-    if (this.want !== this.placeKey) this.goTo(this.want, now);
-    else if (this.want === 'lounge' && now > this.wanderAt) this.goTo('lounge', now, true);
+    const next = this.meeting && !this.leaving && this.want !== 'visit' ? 'standup' : this.want;
+    if (next !== this.placeKey) this.goTo(next, now);
+    else if (next === 'lounge' && now > this.wanderAt) this.goTo('lounge', now, true);
 
-    if (!this.job && now > this.chatAt) {
+    if (!this.job && !this.meeting && !this.chatting && now > this.chatAt) {
       this.chatAt = now + rand(25, 60);
       if (Math.random() < 0.5) this.say(IDLE_LINES[Math.floor(Math.random() * IDLE_LINES.length)], 'idle', 3500);
     }
