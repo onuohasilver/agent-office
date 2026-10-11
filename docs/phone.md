@@ -16,13 +16,13 @@ The supported way is [Tailscale](https://tailscale.com): put the office behind
 
 ```bash
 tailscale serve --bg 4317
-OFFICE_ALLOWED_HOSTS=my-mac.tail1234.ts.net npm start
+OFFICE_ALLOWED_HOSTS=my-mac.tail1234.ts.net agent-office
 ```
 
 `OFFICE_ALLOWED_HOSTS` takes exact hostnames, comma-separated. Every other
 host and origin is still refused.
 
 **Read this first.** Whoever can open that address can run Claude in your
-projects with full autonomy, and — if `OFFICE_TERMINAL=1` — get a shell on
+projects with full autonomy, and — if started with `--terminal` — get a shell on
 this machine. Only expose it on a tailnet that is just you. Never put it on
 the open internet. See [Security](security.md).

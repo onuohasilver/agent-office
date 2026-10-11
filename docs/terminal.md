@@ -10,7 +10,7 @@ the way they do in a terminal app.
 It is off until you ask for it:
 
 ```bash
-OFFICE_TERMINAL=1 npm start
+agent-office --terminal      # or, in a clone: OFFICE_TERMINAL=1 npm start
 ```
 
 That switch exists because shell access is the one door in the building that
@@ -26,8 +26,8 @@ So:
 - **Not for the staff.** No agent can open one. There's no office tool and no
   `/api/agent` route that reaches it, and a shell never inherits the job
   credentials the office gives its own children.
-- **Nothing is kept.** Not in `data/state.json`, not in the chat, not on the
-  main socket. Scrollback lives in the tab and dies with it. `data/terminal.log`
+- **Nothing is kept.** Not in `state.json`, not in the chat, not on the
+  main socket. Scrollback lives in the tab and dies with it. `terminal.log` in the data folder
   records when sessions opened and closed and in which folder — never
   keystrokes, because a log of what you typed into a shell is a file full of
   passwords.

@@ -21,7 +21,8 @@ const APP = path.resolve(HERE, '..');
 const ROOT = path.resolve(process.env.OFFICE_ROOT || path.join(APP, '..'));
 const PORT = Number(process.env.PORT || 4317);
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
-const DATA = path.join(APP, 'data');
+// OFFICE_DATA is set by the agent-office command; a clone keeps it beside the code.
+const DATA = path.resolve(process.env.OFFICE_DATA || path.join(APP, 'data'));
 const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const UPLOADS = path.join(DATA, 'uploads');

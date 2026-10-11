@@ -6,6 +6,16 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+### Added
+- **An npm package.** `npm install -g @onuohasilver/agent-office`, then
+  `agent-office` in the folder that holds your projects. It checks the machine
+  first, uses the next free port if 4317 is taken, opens the browser, and
+  keeps its data in `~/.agent-office`. `agent-office doctor` checks without
+  starting; `agent-office voice` downloads the speech models.
+- `OFFICE_DATA` chooses where the office keeps its data.
+- CI installs the packed package and runs it; pushing a version tag publishes
+  to npm.
+
 ### Security
 - `ws` 8.22.0: fixes a memory-exhaustion denial of service and an
   uninitialised-memory disclosure in the websocket server.

@@ -1,9 +1,27 @@
 # Updating
 
-Your office's state — jobs, chat, channels, XP, team profiles, Claude access —
-lives in `data/`, which updates never touch.
+Your office — jobs, chat, channels, XP, team profiles, Claude access — lives
+in the data folder (`~/.agent-office`), which updates never touch.
 
-## From a git clone
+## The installed command
+
+```bash
+npm install -g @onuohasilver/agent-office@latest
+```
+
+Then stop the office (Ctrl-C) and start it again. Running jobs stop cleanly
+and resume when it comes back.
+
+Read the [changelog](../../CHANGELOG.md) for what changed and anything you
+need to do. `agent-office --version` says what you're on.
+
+### A particular version
+
+```bash
+npm install -g @onuohasilver/agent-office@0.1.0
+```
+
+## A clone
 
 ```bash
 cd agent-office
@@ -12,25 +30,13 @@ npm install
 npm run build
 ```
 
-Then stop the office (Ctrl-C in its terminal) and start it again with
-`npm start`. Running jobs are stopped cleanly and resume when it comes back.
-
-Read [CHANGELOG.md](../../CHANGELOG.md) for what changed, and anything you
-need to do.
-
-## Pinning a version
-
-To stay on a release rather than the latest code:
-
-```bash
-git fetch --tags
-git checkout v0.1.0
-npm install && npm run build
-```
+Then restart it with `npm start`. To stay on a release, check out its tag
+(`git checkout v0.1.0`) instead of pulling. A clone's data is in `data/`.
 
 ## If something breaks
 
-- `npm install` failing on `node-pty` is harmless: it's optional, and only
-  the terminal needs it. See [Troubleshooting](troubleshooting.md#the-terminal-wont-open).
-- To keep a way back, copy `data/` before updating. Going back is then: stop
-  the office, check out the previous tag, restore `data/`, build and start.
+- **Keep a way back:** copy the data folder before updating. Going back is
+  then: stop the office, install the previous version, restore the folder,
+  start.
+- **The terminal stops working after an update:** node-pty needs rebuilding;
+  see [Troubleshooting](troubleshooting.md#the-terminal-wont-open).

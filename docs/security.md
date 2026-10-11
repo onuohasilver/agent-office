@@ -28,13 +28,13 @@ command you could.
   `claude` it starts reads them. The plan meters read the login's access token
   to ask for usage, and nothing else.
 - With an **API key**, the key is checked with Anthropic, stored in
-  `data/auth.json` with mode `0600`, passed only to the `claude` processes the
+  `auth.json` in the data folder with mode `0600`, passed only to the `claude` processes the
   office starts, and never sent to the browser, which sees the last four
   characters.
-- `data/` is git-ignored.
+- The data folder is outside the package (`~/.agent-office`), or git-ignored `data/` in a clone.
 
 ## The terminal
 
-Off unless `OFFICE_TERMINAL=1`. A session needs a single-use ticket from the
+Off unless started with `--terminal` (`OFFICE_TERMINAL=1`). A session needs a single-use ticket from the
 origin-checked API, no agent can open one, and keystrokes are never logged. It
 is not a sandbox. Details in [The terminal](terminal.md).
