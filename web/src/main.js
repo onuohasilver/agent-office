@@ -3,6 +3,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
 import './pwa.js';
 import './theme.js';
+import { setAccess } from './account.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -309,6 +310,7 @@ function handle(msg) {
     firstHello = false;
     hud.renderLevel(app.progress);
     hud.renderUsage(msg.usage);
+    setAccess(msg.auth);
     hud.renderProc(msg.procs, msg.machine);
     app.refreshLists();
     const todos = latestTodos();
@@ -387,6 +389,8 @@ function handle(msg) {
     const s = app.staff.find((x) => x.id === msg.id);
     if (s) Object.assign(s, msg.profile);
     hud.renderTeam();
+  } else if (msg.t === 'auth') {
+    setAccess(msg.auth);
   } else if (msg.t === 'usage') {
     hud.renderUsage(msg.usage);
   } else if (msg.t === 'proc') {

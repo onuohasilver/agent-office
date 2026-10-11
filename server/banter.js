@@ -23,14 +23,14 @@ Write 4 to 6 lines, alternating speakers, starting with the first person named. 
 - Use real names for people. Never "he", "she", "him" or "her" about anyone.
 - Plain words. No markdown, emoji, quotation marks around lines, speaker labels or stage directions.`;
 
-export function writeBanter(context, { bin = 'claude', model = 'haiku', timeoutMs = 15000 } = {}) {
+export function writeBanter(context, { bin = 'claude', model = 'haiku', timeoutMs = 15000, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const args = [
       '-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA),
       '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
       '--system-prompt', SYSTEM,
     ];
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));

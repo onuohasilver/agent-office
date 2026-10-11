@@ -14,6 +14,7 @@ import { sampleProcs, resetProcs, machine } from './procstat.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
 import { Terminals } from './terminal.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
+import { Auth } from './auth.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -24,6 +25,7 @@ const DATA = path.join(APP, 'data');
 const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const UPLOADS = path.join(DATA, 'uploads');
+const auth = new Auth(DATA);
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
@@ -288,6 +290,7 @@ const snapshot = () => ({
   chiefBusy,
   standup: standupNow && { who: standupNow.who },
   usage,
+  auth: auth.status(),
   procs,
   machine,
   dismissed: state.dismissed,
@@ -346,6 +349,14 @@ let usageBackoff = 0;
 async function refreshUsage() {
   clearTimeout(usageTimer);
   usageLast = Date.now();
+  // The plan meters belong to the Claude Code login; on a key, there's no plan.
+  if (auth.mode === 'apikey') {
+    usage = null;
+    usageBackoff = 0;
+    send({ t: 'usage', usage });
+    usageTimer = setTimeout(refreshUsage, USAGE_EVERY);
+    return;
+  }
   let next;
   try { next = await fetchUsage(); } catch { next = { error: 'Usage unavailable right now.' }; }
   // A failed check keeps the last good numbers; the error only shows when
@@ -471,7 +482,7 @@ async function claimBanter(pair, game = false) {
   if (!BANTER_ON || Date.now() - banterAt < BANTER_GAP) return { id: c.id };
   banterAt = Date.now();
   try {
-    const { lines, cost } = await writeBanter(banterContext(pair), { bin: CLAUDE, model: BANTER_MODEL });
+    const { lines, cost } = await writeBanter(banterContext(pair), { bin: CLAUDE, model: BANTER_MODEL, env: auth.env() });
     state.chiefCost += cost || 0;
     send({ t: 'chief', busy: false, cost: state.chiefCost });
     c.at = Date.now();
@@ -595,7 +606,7 @@ function start(job, agentId) {
 
   // stdin stays open for the whole job, so the chief can hand the agent
   // new messages while it works.
-  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...auth.env() }, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
   startProcs();
   child.stdin.on('error', () => {});
@@ -1031,7 +1042,7 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
     const said = files.length
       ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')}${shown.length ? `. ${shown.length === 1 ? 'The image is' : 'The images are'} attached for you to look at.` : ''})`
       : text;
-    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL, images: shown });
+    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL, images: shown, env: auth.env() });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -1195,7 +1206,7 @@ async function runStandup(byBoss) {
   try {
     // A quiet office has nothing worth a model call. Otherwise it writes
     // while everyone walks over.
-    const writing = quiet ? null : writeStandup(context, { bin: CLAUDE, model: CHIEF_MODEL }).catch(() => null);
+    const writing = quiet ? null : writeStandup(context, { bin: CLAUDE, model: CHIEF_MODEL, env: auth.env() }).catch(() => null);
     await sleep(GATHER_MS);
     const written = writing && (await writing);
     if (written) {
@@ -1670,6 +1681,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/uploads') {
       const { path: _, ...f } = await upload(req);
       return json(res, 201, f);
+    }
+    // Which way claude signs in. Only new processes pick it up; a job
+    // already running finishes on whatever it started with.
+    if (url.pathname === '/api/auth' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
+      let status;
+      try { status = req.method === 'GET' ? auth.status() : req.method === 'DELETE' ? auth.forget() : await auth.set(await readBody(req)); }
+      catch (err) { return json(res, err.code || 400, { error: err.message }); }
+      if (req.method !== 'GET') { send({ t: 'auth', auth: status }); refreshUsage(); }
+      return json(res, 200, status);
     }
     if (req.method === 'POST' && url.pathname === '/api/voice/replies') {
       const { on } = await readBody(req);

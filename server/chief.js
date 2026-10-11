@@ -64,7 +64,7 @@ Images. A screenshot or mockup the boss attaches is shown to you with the messag
 // Routing on the boss's words alone, or on the images too. Only streamed
 // input can carry an image, and the CLI answers a stream with a stream, so
 // that path reads one JSON object per line and keeps the last one.
-export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000, images = [] } = {}) {
+export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000, images = [], env = process.env } = {}) {
   const shown = canSee(images);
   if (!shown.length) return ask(context, { bin, model, timeoutMs });
   // An image the API won't take (too many pixels, a .png that isn't one)
@@ -86,7 +86,7 @@ function ask(context, { bin, model, timeoutMs, images }) {
       '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
       '--system-prompt', SYSTEM,
     ];
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));

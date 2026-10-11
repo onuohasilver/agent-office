@@ -39,14 +39,14 @@ Then "wrap": the chief of staff closing the standup in one to three short senten
 
 Use only the facts given; never invent work, results or blockers. Refer to agents by name or as "they"; never "he", "she", "him" or "her". Plain words, no markdown, no emoji.`;
 
-export function writeStandup(context, { bin = 'claude', model = 'sonnet', timeoutMs = 90000 } = {}) {
+export function writeStandup(context, { bin = 'claude', model = 'sonnet', timeoutMs = 90000, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const args = [
       '-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA),
       '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
       '--system-prompt', SYSTEM,
     ];
-    const child = spawn(bin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(bin, args, { env, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
