@@ -9,85 +9,47 @@ const URL_BASE = process.env.OFFICE_URL || 'http://127.0.0.1:4317';
 const JOB = process.env.OFFICE_JOB;
 const TOKEN = process.env.OFFICE_TOKEN;
 
+const NONE = { type: 'object', properties: {}, additionalProperties: false };
+const obj = (properties, required) => ({ type: 'object', properties, required, additionalProperties: false });
+const names = { type: 'array', items: { type: 'string' } };
+
 const TOOLS = [
-  {
-    name: 'office_roster',
-    description: 'See who is in the office right now and what each colleague is working on (project and task), or whether they are free.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-  },
+  { name: 'office_roster', description: 'Who is in the office and what each is working on, or free.', inputSchema: NONE },
   {
     name: 'message_colleague',
-    description: 'Send a short message to a colleague. It reaches them mid-task, or picks their last job back up if they finished it in the last few hours (so you can answer someone who is waiting to hear from you). Use it to ask a question, share something they need, or coordinate. Set wait_for_reply when you cannot continue without their answer; your session then pauses until they reply (up to 10 minutes).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        to: { type: 'string', description: 'Colleague name, e.g. "Ada"' },
-        message: { type: 'string' },
-        wait_for_reply: { type: 'boolean', default: false },
-      },
-      required: ['to', 'message'],
-      additionalProperties: false,
-    },
+    description: 'Short message to a colleague. Reaches them mid-task, or reopens their last job if finished within hours. wait_for_reply pauses you until they answer (10 min max); use only when blocked.',
+    inputSchema: obj({ to: { type: 'string' }, message: { type: 'string' }, wait_for_reply: { type: 'boolean' } }, ['to', 'message']),
   },
   {
     name: 'hand_off',
-    description: 'Hand a piece of work to a free colleague, in this project or another one. Their final answer comes back to you as a message. By default you wait for it; set wait=false to carry on in parallel (their result still reaches you if you are still working). Fails if nobody suitable is free.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        project: { type: 'string', description: 'Project folder name; office_roster lists them' },
-        brief: { type: 'string', description: 'Everything they need to do the work without asking you' },
-        to: { type: 'string', description: 'Colleague name, or omit for whoever is free' },
-        wait: { type: 'boolean', default: true },
-      },
-      required: ['project', 'brief'],
-      additionalProperties: false,
-    },
+    description: 'Give work to a free colleague, in this or another project. Their answer returns as a message. wait=false to carry on meanwhile. Fails if nobody is free.',
+    inputSchema: obj({
+      project: { type: 'string', description: 'Folder name, per office_roster' },
+      brief: { type: 'string', description: 'Everything they need, self-contained' },
+      to: { type: 'string', description: 'Omit for whoever is free' },
+      wait: { type: 'boolean' },
+    }, ['project', 'brief']),
   },
   {
-    name: 'list_channels',
-    description: 'The office chat is split into channels, the way Slack is. This lists them: what each one is for, who is in it, and which one your own work is being discussed in.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    name: 'flag_for_boss',
+    description: 'Surface something in the main chat for the boss: a question, decision, blocker, or work ready to review. Not for routine progress. One or two self-contained sentences.',
+    inputSchema: obj({ kind: { type: 'string', enum: ['question', 'decision', 'blocker', 'review'] }, summary: { type: 'string' } }, ['kind', 'summary']),
   },
+  { name: 'list_channels', description: 'List chat channels: purpose, members, and which one your work is in.', inputSchema: NONE },
   {
     name: 'create_channel',
-    description: 'Open a new channel for a strand of work, and put the colleagues who need to follow it in it. Use it when something deserves its own place to be discussed — a release, an incident, one long-running project — rather than everyday talk, which belongs in #general. The boss sees every channel.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Short channel name, e.g. "releases" (lowercased and hyphenated for you)' },
-        purpose: { type: 'string', description: 'One line on what the channel is for, shown to everyone' },
-        invite: { type: 'array', items: { type: 'string' }, description: 'Colleague names to add, e.g. ["Ada", "Tunde"]' },
-      },
-      required: ['name'],
-      additionalProperties: false,
-    },
+    description: 'Open a channel for a distinct strand of work (release, incident, long project) and invite colleagues. Everyday talk stays in #general.',
+    inputSchema: obj({ name: { type: 'string' }, purpose: { type: 'string' }, invite: names }, ['name']),
   },
   {
     name: 'invite_to_channel',
-    description: 'Add colleagues to a channel that already exists, so they get what is said in it from now on. It does not show them what was said before they joined.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        channel: { type: 'string', description: 'Channel name, with or without the #' },
-        who: { type: 'array', items: { type: 'string' }, description: 'Colleague names, e.g. ["Mira"]' },
-      },
-      required: ['channel', 'who'],
-      additionalProperties: false,
-    },
+    description: 'Add colleagues to a channel; they see it from now on, not earlier history.',
+    inputSchema: obj({ channel: { type: 'string' }, who: names }, ['channel', 'who']),
   },
   {
     name: 'post_to_channel',
-    description: 'Say something in a channel. Everyone in it who is on a job gets it straight away, the way message_colleague reaches one person; anyone free reads it in the channel when they are next working. Posting in a channel also puts you in it. Use it for something the whole group needs; for one person, message_colleague is better.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        channel: { type: 'string', description: 'Channel name, with or without the #' },
-        message: { type: 'string' },
-      },
-      required: ['channel', 'message'],
-      additionalProperties: false,
-    },
+    description: 'Say something to everyone in a channel (you join it). Working members get it at once. For one person use message_colleague.',
+    inputSchema: obj({ channel: { type: 'string' }, message: { type: 'string' } }, ['channel', 'message']),
   },
 ];
 

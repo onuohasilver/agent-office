@@ -66,4 +66,16 @@ export const sound = {
     tone(880, 0, 0.09, { gain: 0.06 });
     tone(1174.7, 0.07, 0.12, { gain: 0.05 });
   },
+  // Pool: ivory on ivory, louder the harder the hit. `power` is 0 to 1.
+  click(power = 0.5) {
+    if (!ready()) return;
+    const g = 0.025 + power * 0.07;
+    tone(1900 + Math.random() * 500, 0, 0.035, { type: 'triangle', gain: g });
+    tone(3100, 0, 0.02, { gain: g * 0.5 });
+  },
+  pocket() {
+    if (!ready()) return;
+    tone(180, 0, 0.18, { type: 'triangle', gain: 0.09 });
+    tone(120, 0.06, 0.22, { type: 'sine', gain: 0.07 });
+  },
 };

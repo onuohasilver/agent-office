@@ -6,3 +6,4 @@ data/uploads
 data/whisper
 data/piper
 data/*.log
+launch/*.mp4

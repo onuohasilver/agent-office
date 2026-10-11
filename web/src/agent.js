@@ -121,7 +121,7 @@ export class Agent {
     if (!station) return null;
     let spot = !fresh && this.spot && station.spots.includes(this.spot) ? this.spot : null;
     if (!spot) {
-      const free = station.spots.filter((s) => !s.taken || s.taken === this.id);
+      const free = station.spots.filter((s) => !s.game && (!s.taken || s.taken === this.id));
       const choices = fresh ? free.filter((s) => s !== this.spot) : free;
       spot = (choices.length ? choices : free)[Math.floor(Math.random() * (choices.length || free.length))];
     }

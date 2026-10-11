@@ -9,9 +9,11 @@ import { summarizeTool, stationFor } from './tools.js';
 import { canSee, route } from './chief.js';
 import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
+import { writeBanter } from './banter.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
 import { Terminals } from './terminal.js';
+import { snapshotTree, summarize, fileDiff } from './changes.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -70,6 +72,44 @@ const STAFF = [
     background: 'Did security audits for years. Reads diffs the way others read novels.' },
 ];
 const PROFILE = { role: 80, personality: 600, background: 600 };
+
+// The office's shared history, and each person's place in it. Kept apart from
+// the editable profile so Team-tab edits and saved profiles never mask it.
+// `ties` is how they feel about specific colleagues; only those on the floor
+// are mentioned (see lore).
+const OFFICE_STORY = 'The Agent Office began as a four-person payments side project that outgrew its garage: ' +
+  'Tunde and Obi built the first ledger, Zola kept the releases from eating themselves, and Ada made it look like a product. ' +
+  'Everyone else arrived in the scramble after the launch that went down for forty minutes, a night the team still calls "the Tuesday". ' +
+  'It left a habit of looking after each other and a few good-natured grudges.';
+const LORE = {
+  ada: { story: 'You joined in the first month and designed the original dashboard on a borrowed monitor. You secretly keep a folder of every loading spinner you have ever liked.',
+    ties: { tunde: 'you trade pixel-perfect mocks for "does it survive a retry?", and you are quietly grateful', mira: 'you love how they ask the question that reshapes a design, even on the day before a deadline', kai: 'you argue the web and the app should feel identical; Kai wins on thumb reach', zola: 'you need reminding to ship, and they do it kindly' } },
+  tunde: { story: 'You were on call the night of "the Tuesday" and fixed it from a train. You never forgave the unlogged retry that caused it, and now you log everything.',
+    ties: { obi: 'your oldest friend here; you finish each other\'s sentences about idempotency', ada: 'you pretend their polish is excessive, but you screenshot their work', lin: 'you defer to them on anything touching secrets, and sleep better for it', mira: 'you are wary of their urge to own everything, and a little proud when it works' } },
+  mira: { story: 'You shut down your startup a year before joining, a lesson in building before asking. You ask first now, and cheerfully remind people to, sometimes too often.',
+    ties: { ada: 'your closest ally on UI; you swap half-finished ideas', tunde: 'you treat their caution as a gift after your startup, and are learning to wait for their green light', zola: 'you spark over how fast is too fast to ship', lin: 'you are a little in awe of them, and ask for review early on purpose' } },
+  kai: { story: 'You once had an app rejected over a single misspelt permission string and have never let it go. Your humour defuses release-day tension.',
+    ties: { zola: 'your running mate on every store submission; you share a ritual checklist and a dislike of provisioning profiles', ada: 'their design instincts translate to touch better than they believe', tunde: 'you swap war stories about payment edge cases at lunch' } },
+  zola: { story: 'You held the pager the first time the release train derailed, and built the checklist that keeps it on the rails. You are quietly the office\'s memory.',
+    ties: { kai: 'the one who actually reads your checklist, which you value more than you let on', mira: 'you enjoy their energy but will say "not yet" to a rushed ship, kindly and firmly', tunde: 'you never argue; you just nod at the same alerts', obi: 'you lean on their pipelines and have promised not to break them again' } },
+  remi: { story: 'You came from support, so you remember each person hurt by a bug nobody tested. Every "it works on my machine" is a personal challenge.',
+    ties: { mira: 'your favourite to test for: they ship fast and never take a found bug personally', ada: 'you find the broken states hidden behind their nicest screens, and they thank you for it', kai: 'you trade device-lab tricks' } },
+  obi: { story: 'You built the first webhook that ever paid someone through the office\'s system. You believe every integration is a promise to another team.',
+    ties: { tunde: 'your oldest friend here; between you, you hold the whole data flow', zola: 'you value that they check your pipelines before release, never after', lin: 'you send them the scary payloads first' } },
+  lin: { story: 'You were hired right after "the Tuesday" so nothing like it could happen quietly again. You have become the person people bring worries to, not just diffs.',
+    ties: { mira: 'you see a founder in them, and gently teach that speed and safety can be friends', tunde: 'the only reviewer whose logs you read before the code', obi: 'you agree every payload is guilty until proven schema-valid', ada: 'you are delighted by how they take review notes and improve the design' } },
+};
+
+function lore(agentId) {
+  const l = LORE[agentId];
+  if (!l) return '';
+  const ids = new Set(onFloor().map((s) => s.id));
+  const ties = Object.entries(l.ties || {}).filter(([id]) => ids.has(id))
+    .map(([id, t]) => `${nameOf(id)}: ${t}`).join('; ');
+  return `Office history: ${OFFICE_STORY} Your story: ${l.story}` +
+    (ties ? ` Your ties with colleagues: ${ties}.` : '') +
+    ' Let this surface now and then in how you talk to them, never forced and never at the expense of the task, and keep it consistent with what you have already said. ';
+}
 
 const MODES = {
   plan: { label: 'Plan only', args: ['--permission-mode', 'plan'] },
@@ -368,14 +408,17 @@ function react(id, emoji, who = 'you') {
 // goes stale on its own if that window is closed mid-sentence.
 
 const CHILL_STALE = 20 * 1000;
+// A game of pool is minutes of play with two lines said; the window pings to
+// say it is still going, and this is how long a missed ping is forgiven.
+const GAME_STALE = 90 * 1000;
 // Small talk is cheap and constant; without a cap of its own it would push
 // the day's actual work out of a shared history of MAX_CHAT.
 const CHILL_KEEP = 60;
 let chill = null;
 
-function claimChill(who) {
-  if (chill && Date.now() - chill.at < CHILL_STALE) return null;
-  chill = { id: crypto.randomUUID().slice(0, 8), who, at: Date.now() };
+function claimChill(who, game = false) {
+  if (chill && Date.now() - chill.at < (chill.game ? GAME_STALE : CHILL_STALE)) return null;
+  chill = { id: crypto.randomUUID().slice(0, 8), who, at: Date.now(), game };
   return chill;
 }
 
@@ -401,6 +444,44 @@ function chillLine(id, from, text) {
 
 const endChill = (id) => { if (chill?.id === id) chill = null; };
 
+// The model writes the small talk, but not for every chat: at most one per
+// BANTER_GAP, and BANTER=off turns it off. Anything else, or any failure,
+// comes back with no script and the browser uses a canned chat instead.
+const BANTER_ON = process.env.BANTER !== 'off';
+const BANTER_GAP = Number(process.env.BANTER_GAP_SECONDS ?? 120) * 1000;
+const BANTER_MODEL = process.env.BANTER_MODEL || 'haiku';
+let banterAt = 0;
+
+function banterContext(pair) {
+  const sheet = (id) => {
+    const s = STAFF.find((x) => x.id === id);
+    const work = state.jobs.filter((j) => j.agentId === id && Date.now() - (j.endedAt || j.createdAt || 0) < DAY_MS)
+      .slice(-3).map((j) => `"${clip(j.title, 80)}" in ${j.repo} (${j.status})`);
+    return `${s.name}: ${persona(id)}${work.length ? `Lately: ${work.join('; ')}.` : 'Nothing on at the moment.'}`;
+  };
+  const recent = state.chat.filter((m) => m.channel === CHILL).slice(-12).map((m) => `${nameOf(m.from)}: ${m.text}`);
+  return [`First to speak: ${nameOf(pair[0])}. Then ${nameOf(pair[1])}.`, '', ...pair.map(sheet), '',
+    recent.length ? `Recent break-room lines (don't repeat these):\n${recent.join('\n')}` : 'Nothing said in the break room lately.'].join('\n');
+}
+
+async function claimBanter(pair, game = false) {
+  const c = claimChill(pair, game);
+  if (!c) return { id: null };
+  if (game) return { id: c.id };
+  if (!BANTER_ON || Date.now() - banterAt < BANTER_GAP) return { id: c.id };
+  banterAt = Date.now();
+  try {
+    const { lines, cost } = await writeBanter(banterContext(pair), { bin: CLAUDE, model: BANTER_MODEL });
+    state.chiefCost += cost || 0;
+    send({ t: 'chief', busy: false, cost: state.chiefCost });
+    c.at = Date.now();
+    return { id: c.id, script: lines };
+  } catch {
+    banterAt = Date.now() - BANTER_GAP + 30 * 1000;
+    return { id: c.id };
+  }
+}
+
 function addLog(job, entry) {
   entry.ts = Date.now();
   const last = job.log[job.log.length - 1];
@@ -421,8 +502,11 @@ const tokens = new Map();
 // jobId -> [{ kind: 'job', id } | { kind: 'reply', from, timer }]
 const waits = new Map();
 const REPLY_WAIT_MS = 10 * 60 * 1000;
+// Long-lived jobs get resumed on every reply and pay for the whole history each
+// turn, so agents auto-compact earlier than the default. AGENT_COMPACT_PCT to tune.
+const AUTOCOMPACT_PCT = process.env.AGENT_COMPACT_PCT || '60';
 const OFFICE_TOOLS = [
-  'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off',
+  'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
 ];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
@@ -505,9 +589,13 @@ function start(job, agentId) {
 
   if (!cwd) return finish(job, 'failed', 'That project folder is gone.');
 
+  // Where the tree stood before this job touched it, for the "what changed"
+  // card. Taken once: a job resumed with a reply keeps its first baseline.
+  if (!job.baseTree) bases.set(job.id, snapshotTree(cwd).then((t) => { job.baseTree = t; }));
+
   // stdin stays open for the whole job, so the chief can hand the agent
   // new messages while it works.
-  const child = spawn(CLAUDE, args, { cwd, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...process.env }, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
   startProcs();
   child.stdin.on('error', () => {});
@@ -652,6 +740,16 @@ function bump(job) {
   return next;
 }
 
+const bases = new Map();
+async function recordChanges(job) {
+  const cwd = repoPath(job.repo);
+  if (!cwd) return;
+  await bases.get(job.id);
+  if (!job.baseTree) return;
+  const changes = await summarize(cwd, job.baseTree, await snapshotTree(cwd));
+  if (changes) { job.changes = changes; pushJob(job); }
+}
+
 function finish(job, status, error) {
   if (job.status !== 'working') return;
   clearWaits(job);
@@ -668,6 +766,7 @@ function finish(job, status, error) {
   state.xp += gained;
   job.xp += gained;
   pushJob(job);
+  recordChanges(job).catch(() => {});
   if (gained) {
     const after = progress();
     send({ t: 'xp', progress: after, gained, jobId: job.id, agentId: job.agentId, levelUp: after.level > before.level });
@@ -676,6 +775,14 @@ function finish(job, status, error) {
     : status === 'stopped' ? 'Stopped, as asked.'
     : `I hit a wall: ${error || 'something went wrong'}`;
   post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
+  // The result lands in the job's thread, which the boss may never open, so
+  // the chief says so in #general. Not for a retry (the work isn't over), a
+  // stop (the boss did that), or a colleague's handed-off piece (their asker
+  // gets it, and the asker's own finish is the one worth announcing).
+  if (!retry && status !== 'stopped' && !job.requestedBy) {
+    const line = status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
+    post('chief', `**${status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, jobId: job.id, thread: null, channel: GENERAL });
+  }
 
   // Hand the result back to whoever delegated this, if they're still at it.
   // Not on a retry: the work isn't finished, it's going up a rung, so whoever
@@ -1148,8 +1255,8 @@ function persona(agentId) {
     s?.personality && `Your personality: ${s.personality}`,
     s?.background && `Your background: ${s.background}`,
   ].filter(Boolean);
-  if (!bits.length) return '';
-  return `${bits.join(' ')} Let this colour how you write to the boss and colleagues; it never lowers the bar on the work itself. `;
+  if (!bits.length) return lore(agentId);
+  return `${bits.join(' ')} Let this colour how you write to the boss and colleagues; it never lowers the bar on the work itself. ` + lore(agentId);
 }
 
 function updateProfile(id, body) {
@@ -1168,17 +1275,13 @@ function officePrompt(agentId, job) {
   const me = nameOf(agentId);
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
-    `The office tools let you see what colleagues are doing (office_roster), message a colleague mid-task (message_colleague), ` +
-    `and hand work to a free colleague, in this project or another (hand_off). Use them when a colleague's work or another project matters to yours, ` +
-    `or to split independent work. Keep messages short and specific. Messages from colleagues reach you as user messages starting "Message from". ` +
-    `When a colleague asks you something, answer with message_colleague. ` +
-    `The office chat is split into channels, the way Slack is, and this job is being discussed in #${channelOf(job?.channel)}. ` +
-    `list_channels shows them all, create_channel opens one and puts colleagues in it, invite_to_channel adds someone later, and ` +
-    `post_to_channel says something to everyone in one. Open a channel when a strand of work deserves its own place to be discussed; ` +
-    `everyday talk stays in #general.` + standupBrief(agentId);
+    `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
+    `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. ` +
+    `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId);
 }
 
-const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2;
+const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2, MAX_FLAGS = 5;
+const FLAGS = { question: 'Question for you', decision: 'Needs your decision', blocker: 'Blocked', review: 'Ready for your review' };
 
 function caller(req) {
   const id = req.headers['x-office-job'];
@@ -1243,6 +1346,22 @@ const agentApi = {
     return wait_for_reply
       ? `Delivered to ${target.name}. Wrap up this step and end your turn; you'll resume when they answer.`
       : `Delivered to ${target.name}.`;
+  },
+
+  flag_for_boss(me, { kind, summary }) {
+    summary = String(summary || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+    if (!summary) throw new Error('Say what the boss needs to know.');
+    if (!FLAGS[kind]) throw new Error(`kind must be one of: ${Object.keys(FLAGS).join(', ')}.`);
+    const flagged = (me.flagged ||= []);
+    if (flagged.includes(summary)) return 'The chief already has that one.';
+    if (flagged.length >= MAX_FLAGS) throw new Error("You've flagged a lot for the boss on this job. Put the rest in your reply.");
+    flagged.push(summary);
+    // Top level in #general on purpose: that is where the boss looks. jobId
+    // keeps the "open job" link, and the explicit null thread keeps post()
+    // from tucking it into the job's thread.
+    post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
+      { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL });
+    return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
   },
 
   list_channels(me) {
@@ -1476,7 +1595,10 @@ function serveUpload(res, id, name) {
 // for why its door is built the way it is.
 const terminals = new Terminals({ root: ROOT, dataDir: DATA, folders: listRepos });
 
-const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
+// OFFICE_ALLOWED_HOSTS adds exact hostnames (comma-separated), e.g. this
+// machine's Tailscale name when `tailscale serve` fronts the office. Everything
+// else is still refused, which is what keeps rebinding sites out.
+const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]', ...String(process.env.OFFICE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
 function trusted(req) {
   // Anything that can spawn claude with full permissions must refuse
   // requests from other websites and from rebinding hostnames.
@@ -1508,7 +1630,7 @@ const json = (res, code, body) => {
   res.end(JSON.stringify(body));
 };
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon' };
 function serveStatic(req, res) {
   const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
   let file = path.join(DIST, path.normalize(url).replace(/^(\.\.[\/\\])+/, ''));
@@ -1518,7 +1640,10 @@ function serveStatic(req, res) {
     res.writeHead(404, { 'content-type': 'text/plain' });
     return res.end('No build yet. Use `npm run dev`, or `npm start` to build and serve.');
   }
-  res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream' });
+  // The page names hashed assets, so it must be re-checked every load or a
+  // phone keeps showing last week's build; the hashed files never change.
+  const cache = file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache';
+  res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': cache });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -1595,14 +1720,18 @@ const server = http.createServer(async (req, res) => {
     // hand the claim back at the end. A refused claim answers with no id,
     // which the browser takes as "another window has this one".
     if (req.method === 'POST' && url.pathname === '/api/chill') {
-      const { who = [] } = await readBody(req);
+      const { who = [], game = false } = await readBody(req);
       const pair = [...new Set(who)].filter((id) => STAFF.some((s) => s.id === id)).slice(0, 2);
       if (pair.length < 2) return json(res, 400, { error: 'Two of the staff, please.' });
-      return json(res, 200, { id: claimChill(pair)?.id || null });
+      return json(res, 200, await claimBanter(pair, !!game));
     }
     if (req.method === 'POST' && parts[1] === 'chill' && parts[2] && parts[3] === 'line') {
       const { from, text } = await readBody(req);
       return json(res, 201, chillLine(parts[2], from, text));
+    }
+    if (req.method === 'POST' && parts[1] === 'chill' && parts[2] && parts[3] === 'ping') {
+      if (chill?.id === parts[2]) chill.at = Date.now();
+      return json(res, 200, { ok: !!chill && chill.id === parts[2] });
     }
     if (req.method === 'DELETE' && parts[1] === 'chill' && parts[2] && !parts[3]) { endChill(parts[2]); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
@@ -1616,6 +1745,11 @@ const server = http.createServer(async (req, res) => {
       const job = state.jobs.find((j) => j.id === parts[2]);
       if (!job) return json(res, 404, { error: 'No such job.' });
       if (req.method === 'GET' && !parts[3]) return json(res, 200, publicJob(job, MAX_LOG));
+      if (req.method === 'GET' && parts[3] === 'diff') {
+        const cwd = repoPath(job.repo);
+        if (!cwd) return json(res, 404, { error: 'That project folder is gone.' });
+        return json(res, 200, { diff: await fileDiff(cwd, job.changes, url.searchParams.get('path') || '') });
+      }
       if (req.method === 'POST' && parts[3] === 'stop') { stopJob(job); return json(res, 200, { ok: true }); }
       if (req.method === 'POST' && parts[3] === 'reply') { replyJob(job, await readBody(req)); return json(res, 200, { ok: true }); }
     }

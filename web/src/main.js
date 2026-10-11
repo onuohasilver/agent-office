@@ -1,6 +1,8 @@
 import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
+import './pwa.js';
+import './theme.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -11,6 +13,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard } from './office.js';
 import { Agent } from './agent.js';
 import { BreakRoom } from './breakroom.js';
+import { PoolRoom } from './pool.js';
 import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
 import { TerminalDrawer } from './terminal.js';
@@ -56,15 +59,18 @@ const controls = new MapControls(camera, renderer.domElement);
 controls.target.copy(HOME.target);
 Object.assign(controls, {
   enableDamping: true, dampingFactor: 0.09, minPolarAngle: 0.25, maxPolarAngle: 1.22,
-  minDistance: 12, maxDistance: 130, zoomToCursor: true, rotateSpeed: 0.55, zoomSpeed: 0.9, panSpeed: 1.1,
+  minDistance: 12, maxDistance: 260, zoomToCursor: true, rotateSpeed: 0.55, zoomSpeed: 0.9, panSpeed: 1.1,
 });
 
 // How far back the camera must sit for the whole office to fit the view.
 const CORNERS = [];
 for (const x of [-20.3, 20.3]) for (const z of [-15.3, 15.3]) for (const y of [-0.7, 3]) CORNERS.push(new THREE.Vector3(x, y, z));
+// On a tall, narrow screen the whole room can only fit very small, so let the
+// sides run off the edge: the room fills the width and you pan to the rest.
 function fitRadius(phi, theta, target) {
+  const limX = camera.aspect < 0.9 ? 1.7 : 0.93;
   const probe = camera.clone();
-  let lo = 15, hi = 130;
+  let lo = 15, hi = 260;
   for (let i = 0; i < 20; i++) {
     const r = (lo + hi) / 2;
     probe.position.setFromSpherical(new THREE.Spherical(r, phi, theta)).add(target);
@@ -72,7 +78,7 @@ function fitRadius(phi, theta, target) {
     probe.updateMatrixWorld();
     const fits = CORNERS.every((c) => {
       const v = c.clone().project(probe);
-      return Math.abs(v.x) < 0.93 && Math.abs(v.y) < 0.88;
+      return Math.abs(v.x) < limX && Math.abs(v.y) < 0.88;
     });
     if (fits) hi = r; else lo = r;
   }
@@ -176,6 +182,7 @@ const hud = new Hud(app);
 const terminal = new TerminalDrawer({ api, toast: (t, k) => hud.toast(t, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
+const poolRoom = new PoolRoom(scene, office);
 chief.want = 'desk';
 chief.teleport('desk');
 
@@ -329,6 +336,7 @@ function handle(msg) {
       if (job.status === 'done' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} shipped “${job.title}”`, 'good');
       if (job.status === 'failed' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} hit a wall on “${job.title}”`, 'bad');
     }
+    else if (hud.openId === job.id && prev?.changes?.end !== job.changes?.end) hud.renderChanges(job);
     app.refreshLists();
   } else if (msg.t === 'log') {
     const job = app.jobs.get(msg.jobId);
@@ -345,6 +353,7 @@ function handle(msg) {
     const from = app.agents.get(msg.msg.from), to = app.agents.get(msg.msg.to);
     if (from && to) { from.visit(to, msg.msg.text); sound.knock(); }
     sayAloud(msg.msg);
+    if (msg.msg.kind === 'flag') { sound.knock(); notify('The boss is needed', msg.msg.text.replace(/\*\*/g, '')); }
     if (msg.msg.kind === 'standup') {
       const text = msg.msg.say || msg.msg.text;
       (msg.msg.from === 'chief' ? chief : from)?.speak(text.length > 90 ? text.slice(0, 89) + '…' : text);
@@ -669,6 +678,7 @@ function frame() {
     if (app.selected === a.id) app.select(null);
   }
   breakRoom.update([...app.agents.values()], t);
+  poolRoom.update([...app.agents.values()], t, dt);
   chief.update(dt, t);
   confetti.update(dt);
   office.globe.rotation.y += dt * 0.4;

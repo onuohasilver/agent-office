@@ -198,7 +198,22 @@ export class Hud {
       const btn = e.target.closest('[data-id]');
       if (btn) this.app.openJob(btn.dataset.id);
     };
+    $('projects').onclick = (e) => {
+      const job = e.target.closest('.job[data-id]');
+      if (job) return this.app.openJob(job.dataset.id);
+      const add = e.target.closest('[data-new]');
+      if (add) return this.focusInput(`#${add.dataset.new.replace(/\s+/g, '-')} `);
+      const head = e.target.closest('.head[data-project]');
+      if (head) {
+        this.projectOpen = this.projectOpen === head.dataset.project ? null : head.dataset.project;
+        this.renderProjects();
+      }
+    };
     document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => this.tab(b.dataset.tab)));
+    document.querySelectorAll('#mnav button').forEach((b) => (b.onclick = () => {
+      if (b.dataset.m === 'office') this.mobile('office');
+      else this.tab(b.dataset.m);
+    }));
     this.bindTeam();
     this.bindChat();
     this.bindChannels();
@@ -300,6 +315,53 @@ export class Hud {
     $('clear').hidden = !list.some((j) => order[j.status] === 2);
     const open = list.filter((j) => order[j.status] < 2).length;
     $('jobCount').textContent = open ? String(open) : '';
+    $('mJobCount').textContent = open ? String(open) : '';
+    this.renderProjects(jobs);
+  }
+
+  // ---------- projects ----------
+
+  // The folder list is fetched when the tab opens, so a new project shows up
+  // without a reload; the jobs half is live and redraws with every job update.
+  async loadProjects() {
+    try { this.repos = (await api('/api/repos')).repos; } catch { this.repos ||= []; }
+    this.renderProjects();
+  }
+
+  renderProjects(jobs = this.lastJobs || []) {
+    this.lastJobs = jobs;
+    if ($('projectsPane').hidden) return;
+    if (!this.repos) {
+      $('projects').innerHTML = `<p class="empty">Looking for projects…</p>`;
+      return;
+    }
+    const by = new Map();
+    for (const j of jobs) (by.get(j.repo) || by.set(j.repo, []).get(j.repo)).push(j);
+    const at = (j) => j.endedAt || j.startedAt || j.queuedAt || 0;
+    const rows = [...by].filter(([name]) => this.repos.includes(name)).map(([name, js]) => {
+      js.sort((a, b) => at(b) - at(a));
+      const live = js.filter((j) => j.status === 'working').length;
+      const queued = js.filter((j) => j.status === 'queued').length;
+      const state = live ? 'working' : queued ? 'queued' : js[0].status === 'failed' ? 'failed' : 'done';
+      const note = live ? esc(this.app.busyIn(name)) : queued ? `${queued} queued` : `Last: ${esc(js[0].title)}`;
+      return { name, js, live, queued, state, note, last: at(js[0]) };
+    }).sort((a, b) => (!!b.live - !!a.live) || b.last - a.last).slice(0, 8);
+    $('projects').innerHTML = rows.length ? rows.map((p) => {
+      const open = this.projectOpen === p.name;
+      return `<div class="project${open ? ' open' : ''}">
+        <button type="button" class="head" data-project="${esc(p.name)}" aria-expanded="${open}">
+          <span class="dot ${p.state}"></span>
+          <span class="n">${esc(p.name)}</span>
+          <span class="c">${p.js.length ? `${p.js.length} job${p.js.length === 1 ? '' : 's'}` : ''}</span>
+          <span class="m">${p.note}</span>
+        </button>
+        ${open ? `<div class="sub">${p.js.length ? p.js.slice(0, 8).map((j) => `
+          <button class="job" data-id="${j.id}"><span class="dot ${j.status}"></span><span class="t">${esc(j.title)}</span>
+            <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${STATUS[j.status]}</span></button>`).join('')
+          : `<p class="none">Nothing has run here yet.</p>`}
+          <button type="button" class="ghost" data-new="${esc(p.name)}">New job in ${esc(p.name)}</button></div>` : ''}
+      </div>`;
+    }).join('') : `<p class="empty">No projects worked on yet. Ask for something in the chat.</p>`;
   }
 
   // ---------- detail drawer ----------
@@ -332,13 +394,61 @@ export class Hud {
       </div>
       <h2>${esc(job.title)}</h2>
       <dl class="meta" id="meta"></dl>
+      <div id="changes"></div>
       <div class="log" id="log">${job.log.map((e, i) => this.entry(e, null, job.log[i - 1])).join('')}</div>
       <div class="d-foot">${this.footer(job)}</div>`;
     el.querySelector('.x').onclick = () => this.closeDetail();
     this.renderMeta(job);
+    this.renderChanges(job);
     const log = $('log');
     log.scrollTop = log.scrollHeight;
     this.bindFooter(job);
+  }
+
+  // "What changed": a one-line summary by default, the file list on a click,
+  // and a file's patch only when asked for. Open state survives re-renders.
+  renderChanges(job) {
+    const box = $('changes');
+    const c = job.changes;
+    if (!box) return;
+    if (!c || !c.count) {
+      box.innerHTML = c ? `<div class="changes none">No files changed.</div>` : '';
+      return;
+    }
+    const open = this.changesOpen === job.id;
+    const status = { added: 'A', modified: 'M', deleted: 'D' };
+    box.innerHTML = `
+      <div class="changes">
+        <button class="c-head" aria-expanded="${open}">
+          <span class="c-title">What changed</span>
+          <span class="c-sum">${c.count} file${c.count === 1 ? '' : 's'} <b class="add">+${c.add}</b> <b class="del">−${c.del}</b></span>
+          <span class="c-caret">${open ? '▾' : '▸'}</span>
+        </button>
+        ${open ? `<ul class="c-files">${c.files.map((f, i) => `
+          <li><button class="c-file" data-i="${i}" aria-expanded="false">
+            <span class="st ${f.status}">${status[f.status]}</span><span class="p" title="${esc(f.path)}">${esc(f.path)}</span>
+            <span class="n">${f.binary ? 'binary' : `<b class="add">+${f.add}</b> <b class="del">−${f.del}</b>`}</span>
+          </button></li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${c.count - c.files.length} more</li>` : ''}</ul>` : ''}
+      </div>`;
+    box.querySelector('.c-head').onclick = () => {
+      this.changesOpen = open ? null : job.id;
+      this.renderChanges(job);
+    };
+    box.querySelectorAll('.c-file').forEach((b) => (b.onclick = async () => {
+      const li = b.parentElement;
+      const shown = li.querySelector('pre');
+      if (shown) { shown.remove(); b.setAttribute('aria-expanded', 'false'); return; }
+      b.setAttribute('aria-expanded', 'true');
+      const pre = document.createElement('pre');
+      pre.className = 'c-diff';
+      pre.textContent = 'Loading…';
+      li.append(pre);
+      try {
+        const { diff } = await api(`/api/jobs/${job.id}/diff?path=${encodeURIComponent(c.files[b.dataset.i].path)}`);
+        pre.innerHTML = diff.split('\n').filter((l) => !/^(diff --git|index |--- |\+\+\+ )/.test(l))
+          .map((l) => `<span class="${l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : l[0] === '@' ? 'hunk' : ''}">${esc(l) || ' '}</span>`).join('\n') || 'No textual changes.';
+      } catch (err) { pre.textContent = err.message; }
+    }));
   }
 
   renderMeta(job) {
@@ -546,13 +656,25 @@ export class Hud {
 
   // ---------- chat ----------
 
+  // On a phone the office and the sidebar take turns on one screen; the
+  // bottom bar picks which, and any tab() call (a thread, the chief) brings
+  // the sidebar forward. On a wide screen data-m does nothing.
+  mobile(m) {
+    $('app').dataset.m = m === 'office' ? 'office' : 'side';
+    if (m === 'chat') $('mChatDot').hidden = true;
+    document.querySelectorAll('#mnav button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+  }
+
   tab(name) {
+    this.mobile(name);
     document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
     $('chatPane').hidden = name !== 'chat' || !!this.thread;
     $('threadPane').hidden = name !== 'chat' || !this.thread;
     $('jobsPane').hidden = name !== 'jobs';
     $('teamPane').hidden = name !== 'team';
+    $('projectsPane').hidden = name !== 'projects';
     if (name === 'team') this.renderTeam();
+    if (name === 'projects') this.loadProjects();
     if (name === 'chat') this.scrollChat(true);
   }
 
@@ -807,6 +929,7 @@ export class Hud {
 
   addMessage(m) {
     this.chat.set(m.id, m);
+    if (m.from !== 'you' && $('app').dataset.m === 'office') $('mChatDot').hidden = false;
     if (!this.here(m)) {
       const id = m.channel || 'general';
       this.unread.set(id, (this.unread.get(id) || 0) + 1);

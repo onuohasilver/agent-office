@@ -2,16 +2,43 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#fbf9f5" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Office" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <script>
+      // Before first paint, so a saved theme never flashes the default. theme.js owns it after that.
+      (function () {
+        try {
+          var t = localStorage.getItem('office.theme') || 'paper';
+          var m = localStorage.getItem('office.mode') || 'auto';
+          var d = m === 'dark' || (m === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+          var r = document.documentElement;
+          r.dataset.theme = t;
+          r.dataset.mode = d ? 'dark' : 'light';
+        } catch (e) {}
+      })();
+    </script>
     <title>Agent Office</title>
   </head>
   <body>
-    <div class="app">
+    <div class="app" id="app" data-m="office">
       <aside class="side">
         <header class="brand">
           <div class="title">
             <h1>Agent Office</h1>
-            <span class="lv" id="lv">Lv 1</span>
+            <span class="title-end">
+              <span class="lv" id="lv">Lv 1</span>
+              <button type="button" class="theme-btn" id="themeBtn" aria-label="Appearance" aria-haspopup="true" aria-expanded="false" title="Appearance">
+                <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-.9 2-1.8 0-.9-.6-1.3-.6-2.2 0-1 .8-1.6 1.8-1.6H17a4 4 0 0 0 4-4C21 6.7 17 3 12 3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/></svg>
+              </button>
+            </span>
+            <div class="theme-pop" id="themePop" role="dialog" aria-label="Appearance" hidden></div>
           </div>
           <div class="level">
             <div class="xpbar"><i id="xpbar"></i></div>
@@ -50,6 +77,7 @@
         <nav class="tabs">
           <button type="button" data-tab="chat" class="on">Chat</button>
           <button type="button" data-tab="jobs">Jobs <span id="jobCount"></span></button>
+          <button type="button" data-tab="projects">Projects</button>
           <button type="button" data-tab="team">Team</button>
         </nav>
         <section class="pane" id="chatPane">
@@ -117,6 +145,9 @@
         <section class="pane" id="teamPane" hidden>
           <div class="team" id="team"></div>
         </section>
+        <section class="pane" id="projectsPane" hidden>
+          <div class="projects" id="projects"></div>
+        </section>
         <section class="pane" id="jobsPane" hidden>
           <div class="jobs" id="jobs"></div>
           <button class="ghost" id="clear" hidden>Clear finished</button>
@@ -176,6 +207,24 @@
       </main>
 
       <aside class="detail" id="detail" hidden></aside>
+
+      <nav class="mnav" id="mnav" aria-label="Sections">
+        <button type="button" data-m="office" class="on">
+          <svg viewBox="0 0 24 24"><path d="M3 10.5L12 4l9 6.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>Office
+        </button>
+        <button type="button" data-m="chat">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat<i class="dot" id="mChatDot" hidden></i>
+        </button>
+        <button type="button" data-m="jobs">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>Jobs<b id="mJobCount"></b>
+        </button>
+        <button type="button" data-m="projects">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects
+        </button>
+        <button type="button" data-m="team">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.4"/><path d="M17 14.5a4.6 4.6 0 0 1 4 5.5"/></svg>Team
+        </button>
+      </nav>
     </div>
     <script type="module" src="/src/main.js"></script>
   </body>

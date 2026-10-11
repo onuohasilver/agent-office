@@ -3,6 +3,8 @@ import { Grid } from './nav.js';
 import { SEAT } from './figure.js';
 
 export const W = 40, D = 30;
+// Where the pool table stands, and how high its cloth is.
+export const POOL = { x: 7.6, z: 10.9, felt: 0.84 };
 
 const C = {
   floor: '#ece3d4', wall: '#f5f0e8', trim: '#d9cdbb', wood: '#c39a6b', woodDark: '#8c6440',
@@ -938,6 +940,35 @@ export function buildOffice(scene) {
   scene.add(table);
   grid.block(-3.8, 1.8, 10.3, 12.9);
 
+  // pool table on the open floor beside the lobby. Table space is the sim's
+  // (cloth middle at the origin, long side along x), so the balls can be
+  // placed straight from it.
+  const pool = new THREE.Group();
+  pool.position.set(POOL.x, 0, POOL.z);
+  const FELT = 0.84;
+  box(pool, 3.7, 0.22, 2.1, C.woodDark, 0, 0.71, 0);
+  for (const [lx, lz] of [[-1.55, -0.85], [1.55, -0.85], [-1.55, 0.85], [1.55, 0.85]]) box(pool, 0.2, 0.62, 0.2, C.woodDark, lx, 0.31, lz);
+  box(pool, 3.5, 0.03, 1.9, '#2f7a57', 0, FELT - 0.015, 0, { roughness: 1 });
+  const rails = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) rails.push([1.32, 0.1, 0.25, sx * 0.82, sz * 0.925]);
+    rails.push([0.25, 0.1, 1.36, sx * 1.725, 0]);
+  }
+  for (const [w, h, d, x, z] of rails) box(pool, w, h, d, C.wood, x, FELT + 0.05, z);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) box(pool, 0.3, 0.1, 0.3, C.wood, sx * 1.83, FELT + 0.05, sz * 0.98);
+  for (const [w, d, x, z] of [[1.28, 0.06, 0.82, 0.83], [1.28, 0.06, 0.82, -0.83], [1.28, 0.06, -0.82, 0.83], [1.28, 0.06, -0.82, -0.83]]) {
+    box(pool, w, 0.05, d, '#256646', x, FELT + 0.025, z).castShadow = false;
+  }
+  for (const sx of [-1, 1]) box(pool, 0.06, 0.05, 1.3, '#256646', sx * 1.57, FELT + 0.025, 0).castShadow = false;
+  const hole = new THREE.MeshBasicMaterial({ color: '#0c0d10' });
+  for (const [hx, hz] of [[-1.6, -0.8], [1.6, -0.8], [-1.6, 0.8], [1.6, 0.8], [0, -0.835], [0, 0.835]]) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.02, 20), hole);
+    m.position.set(hx, FELT + 0.002, hz);
+    pool.add(m);
+  }
+  scene.add(pool);
+  grid.block(POOL.x - 1.95, POOL.x + 1.95, POOL.z - 1.15, POOL.z + 1.15);
+
   // lounge floor lamp
   const lamp = new THREE.Group();
   lamp.position.set(-18, 0, 8.2);
@@ -991,8 +1022,15 @@ export function buildOffice(scene) {
     return { pos, face: Math.atan2(huddle.x - pos.x, huddle.z - pos.z) };
   });
 
+  // Two places at the pool table. Nobody is sent to these by chance (see
+  // resolve in agent.js); a game hands them out.
+  stations.lounge.spots.push(
+    { pos: new THREE.Vector3(POOL.x - 0.9, 0, POOL.z - 1.65), face: face.s, pose: 'stand', taken: null, game: true },
+    { pos: new THREE.Vector3(POOL.x + 0.9, 0, POOL.z + 1.65), face: face.n, pose: 'stand', taken: null, game: true },
+  );
+
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6), seatY: SEAT } };
+  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6), seatY: SEAT } };
 }
 
 

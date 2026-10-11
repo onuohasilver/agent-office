@@ -337,6 +337,11 @@ export class Figure {
         headX = sip ? -0.15 : 0.02; headY = sip ? 0 : Math.sin(t * 0.4) * 0.3;
         break;
       }
+      case 'cue':
+        // Bent over the rail, one hand bridging, the other drawing the cue back.
+        lean = 0.62; shL = -1.5; elL = -0.12; outL = -0.12; shR = -0.95; elR = -1.35; outR = 0.14;
+        headX = -0.5; hipL = hipR = -0.12; kneeL = kneeR = 0.14; headY = Math.sin(t * 0.8) * 0.05;
+        break;
       case 'talk':
         shR = -0.55 + Math.sin(t * 4) * 0.2; elR = -1.1 + Math.sin(t * 5.3) * 0.2; outR = 0.2;
         shL = -0.1; elL = -0.4; headZ = Math.sin(t * 2.2) * 0.06; headX = -0.04;
