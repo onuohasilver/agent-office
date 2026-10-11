@@ -30,7 +30,12 @@ jobs:
       - run: npm test
       - run: sh scripts/pack-smoke.sh
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        # A version published by hand already is left alone.
+        run: |
+          name=$(node -p "require('./package.json').name")
+          v=$(node -p "require('./package.json').version")
+          if npm view "$name@$v" version > /dev/null 2>&1; then echo "$name@$v is already on npm"; exit 0; fi
+          npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: GitHub release

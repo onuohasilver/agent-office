@@ -18,7 +18,7 @@ need to do. `agent-office --version` says what you're on.
 ### A particular version
 
 ```bash
-npm install -g agent-office-studio@0.1.0
+npm install -g agent-office-studio@0.2.0
 ```
 
 ## A clone
@@ -31,7 +31,7 @@ npm run build
 ```
 
 Then restart it with `npm start`. To stay on a release, check out its tag
-(`git checkout v0.1.0`) instead of pulling. A clone's data is in `data/`.
+(`git checkout v0.2.0`) instead of pulling. A clone's data is in `data/`.
 
 ## If something breaks
 

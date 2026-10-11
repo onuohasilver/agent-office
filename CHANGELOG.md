@@ -6,6 +6,8 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-11
+
 ### Added
 - **An npm package, `agent-office-studio`.** `npm install -g agent-office-studio`, then
   `agent-office` in the folder that holds your projects. It checks the machine
@@ -23,8 +25,8 @@ Notable changes to Agent Office. The format follows
   `server.fs.deny` bypasses and the dev server answering other sites.
 
 ### Changed
-- three.js r186, xterm.js 6, and minor updates to the fonts and the
-  terminal's fit add-on.
+- three.js r186, xterm.js 6, marked 18 (chat renders the same), and minor
+  updates to the fonts and the terminal's fit add-on.
 - node-pty stays on 1.0.0: 1.1.0 can't start a shell on macOS.
 
 ## 0.1.0 — 2026-10-11
