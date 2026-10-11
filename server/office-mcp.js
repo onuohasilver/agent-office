@@ -1,6 +1,7 @@
 // A tiny MCP server (stdio, JSON-RPC) that gives an agent the office: who's
-// around, messaging colleagues, and handing work off. It just relays to the
-// office server, which knows which job is calling from OFFICE_JOB/OFFICE_TOKEN.
+// around, messaging colleagues, handing work off, and the chat channels. It
+// just relays to the office server, which knows which job is calling from
+// OFFICE_JOB/OFFICE_TOKEN.
 
 import readline from 'node:readline';
 
@@ -40,6 +41,51 @@ const TOOLS = [
         wait: { type: 'boolean', default: true },
       },
       required: ['project', 'brief'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'list_channels',
+    description: 'The office chat is split into channels, the way Slack is. This lists them: what each one is for, who is in it, and which one your own work is being discussed in.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
+    name: 'create_channel',
+    description: 'Open a new channel for a strand of work, and put the colleagues who need to follow it in it. Use it when something deserves its own place to be discussed — a release, an incident, one long-running project — rather than everyday talk, which belongs in #general. The boss sees every channel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Short channel name, e.g. "releases" (lowercased and hyphenated for you)' },
+        purpose: { type: 'string', description: 'One line on what the channel is for, shown to everyone' },
+        invite: { type: 'array', items: { type: 'string' }, description: 'Colleague names to add, e.g. ["Ada", "Tunde"]' },
+      },
+      required: ['name'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'invite_to_channel',
+    description: 'Add colleagues to a channel that already exists, so they get what is said in it from now on. It does not show them what was said before they joined.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name, with or without the #' },
+        who: { type: 'array', items: { type: 'string' }, description: 'Colleague names, e.g. ["Mira"]' },
+      },
+      required: ['channel', 'who'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'post_to_channel',
+    description: 'Say something in a channel. Everyone in it who is on a job gets it straight away, the way message_colleague reaches one person; anyone free reads it in the channel when they are next working. Posting in a channel also puts you in it. Use it for something the whole group needs; for one person, message_colleague is better.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel name, with or without the #' },
+        message: { type: 'string' },
+      },
+      required: ['channel', 'message'],
       additionalProperties: false,
     },
   },

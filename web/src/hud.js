@@ -25,6 +25,10 @@ md.use({
 });
 const rich = (s) => md.parse(String(s ?? ''));
 const STATUS = { queued: 'Queued', working: 'Working', done: 'Shipped', failed: 'Failed', stopped: 'Stopped' };
+// A job's model as a person would say it: the chief's rungs by name, anything
+// picked by hand by its label in the picker.
+const TIERS = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
+const modelLabel = (m) => TIERS[m] || [...($('model')?.options || [])].find((o) => o.value === m)?.text || m || 'Default';
 const STATION = { library: 'Library', servers: 'Server room', window: 'Research', whiteboard: 'Whiteboard', desk: 'Desk' };
 
 const store = (k, v) => {
@@ -345,6 +349,9 @@ export class Hud {
       ['Project', job.repo],
       ['Agent', job.agentId ? this.app.staffName(job.agentId) : 'Unassigned'],
       ['Clearance', this.app.modes[job.mode] || job.mode],
+      ['Model', [modelLabel(job.model), job.autoModel && 'chief’s pick',
+        job.escalations ? `moved up ${job.escalations}×` : ''].filter(Boolean).join(' · ')],
+      ['Context', job.context ? `${(job.context / 1000).toFixed(1)}k tokens` : '—'],
       ['Time', job.startedAt ? duration(end - job.startedAt) : '—'],
       ['Cost', `$${(job.cost || 0).toFixed(3)}`],
       ['XP', job.xp ? `+${job.xp}` : '—'],
@@ -850,6 +857,7 @@ export class Hud {
     const root = this.chat.get(this.thread);
     if (!root) return this.closeThread();
     const replies = this.replies(root.id);
+    $('threadWhere').textContent = `Thread on ${this.app.person(root.from).name}'s message · #${root.channel || 'general'}`;
     const box = $('threadMsgs');
     box.innerHTML = this.message(root, true) +
       `<p class="thread-count">${this.countLabel(replies.length)}</p>` +
@@ -859,17 +867,6 @@ export class Hud {
 
   countLabel(n) {
     return n ? `${n} ${n === 1 ? 'reply' : 'replies'}` : 'No replies yet';
-  }
-
-  // A message typed in the main chat that the server filed under a job's thread.
-  moveToThread(id, thread, channel) {
-    const m = this.chat.get(id);
-    if (!m) return;
-    m.thread = thread;
-    if (channel) m.channel = channel;
-    $('msgs').querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
-    this.updateThreadSum(thread);
-    if (this.thread === thread) this.renderThread();
   }
 
   updateThreadSum(id) {
@@ -921,6 +918,7 @@ export class Hud {
     const extras = [
       long ? `<button type="button" class="icon" data-more aria-label="Show all" title="Show all">${ICONS.more}</button>` : '',
       m.jobId && m.from !== 'you' ? `<button type="button" class="icon" data-open="${m.jobId}" aria-label="Open job" title="Open job">${ICONS.open}</button>` : '',
+      !inThread && m.threadOf && this.chat.has(m.threadOf) ? `<button type="button" class="link" data-thread="${esc(m.threadOf)}">Updates are in this thread →</button>` : '',
       inThread ? '' : `<button type="button" class="icon quiet" data-thread="${esc(m.id)}" aria-label="Reply in thread" title="Reply in thread">${ICONS.reply}</button>`,
       m.from !== 'you' && m.text && speech.supported ? `<button type="button" class="icon quiet" data-say aria-label="Read aloud" title="Read aloud">${ICONS.speak}</button>` : '',
       m.denials?.length ? `<button type="button" class="primary small" data-grant="${m.jobId}">Grant full autonomy and continue</button>` : '',
@@ -996,6 +994,15 @@ export class Hud {
 
   recentEmoji() {
     try { return JSON.parse(localStorage.getItem('office.recentEmoji')) || DEFAULT_EMOJI; } catch { return DEFAULT_EMOJI; }
+  }
+
+  // The server caps how much small talk it keeps; these are the lines that
+  // fell off the end, so they go from the map and the screen too.
+  forget(ids = []) {
+    for (const id of ids) {
+      this.chat?.delete(id);
+      for (const box of [$('msgs'), $('threadMsgs')]) box.querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
+    }
   }
 
   setReactions(id, reactions) {

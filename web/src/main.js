@@ -325,8 +325,6 @@ function handle(msg) {
     hud.appendLog(job.id, msg.entry);
   } else if (msg.t === 'channels') {
     hud.renderChannels(msg.channels);
-  } else if (msg.t === 'thread') {
-    hud.moveToThread(msg.id, msg.thread, msg.channel);
   } else if (msg.t === 'chat') {
     hud.addMessage(msg.msg);
     const from = app.agents.get(msg.msg.from), to = app.agents.get(msg.msg.to);
@@ -339,6 +337,8 @@ function handle(msg) {
       chief.job = null;
       chief.say(msg.msg.text.length > 90 ? msg.msg.text.slice(0, 89) + '…' : msg.msg.text, '', 6000);
     }
+  } else if (msg.t === 'forget') {
+    hud.forget(msg.ids);
   } else if (msg.t === 'react') {
     hud.setReactions(msg.id, msg.reactions);
   } else if (msg.t === 'standup') {
@@ -439,7 +439,7 @@ paintSpeak();
 // Agent-to-agent asides already have their own knock, and talking over your
 // own recording would only feed the microphone.
 function sayAloud(m) {
-  if (!speech.on || m.from === 'you' || m.to || recorder.active) return;
+  if (!speech.on || m.from === 'you' || m.to || m.kind === 'chill' || recorder.active) return;
   speech.speak(m.text, m.from);
 }
 
@@ -627,12 +627,55 @@ function frame() {
   composer.render(dt);
   // Zoomed far out, names stay but speech bubbles step back.
   const isFar = camera.position.distanceTo(controls.target) > 74;
+  const onScreen = [];
   for (const a of [...app.agents.values(), chief]) {
+    if (isFar !== far) { a.label.classList.toggle('far', isFar); a.labelDirty = true; }
     a.placeLabel(camera, viewW, viewH);
-    if (isFar !== far) a.label.classList.toggle('far', isFar);
+    if (a.onScreen) onScreen.push(a);
   }
+  declutter(onScreen, dt, t);
   far = isFar;
   requestAnimationFrame(frame);
+}
+
+// Agents bunch up — on the couch, round the standup ring — and their labels
+// land on top of each other. Walk them nearest-first and lift anyone who
+// lands on a label already placed; whoever still can't fit loses their bubble.
+const GAP = 4;
+const hits = (a, b) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+
+function declutter(list, dt, now) {
+  const placed = [];
+  // Nearest first, but whoever is selected always gets their pick of the space.
+  const order = (x) => (x.id === app.selected ? -1 : x.depth);
+  for (const a of [...list].sort((x, y) => order(x) - order(y))) {
+    let lift = 0;
+    let crowded = false;
+    for (let pass = 0; pass < 2; pass++) {
+      // Lift far enough and a label stops reading as that agent's, so cap it —
+      // a bare name can ride higher than a bubble — and never lift one off the
+      // top of the view.
+      const ceiling = Math.max(0, Math.min(crowded ? 140 : 80, a.anchorY - a.labelH - 6));
+      lift = 0;
+      for (let i = 0; i < 10 && lift <= ceiling; i++) {
+        const box = a.labelBox(lift);
+        const hit = placed.find((p) => hits(p, box));
+        if (!hit) break;
+        lift += box.bottom - hit.top + GAP;
+      }
+      if (lift <= ceiling || crowded) { lift = Math.min(lift, ceiling); break; }
+      crowded = true;
+      a.setCrowded(true, now);
+    }
+    if (!crowded) a.setCrowded(false, now);
+    a.setLift(lift, dt);
+    // Out of room even as a bare name: they're standing behind someone, so
+    // their label waits its turn rather than printing over the one in front.
+    const box = a.labelBox(a.lift);
+    const buried = placed.some((p) => hits(p, box));
+    a.setBuried(buried);
+    if (!buried) placed.push(box);
+  }
 }
 
 drawBoard(office.board, []);

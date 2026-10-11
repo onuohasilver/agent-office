@@ -83,6 +83,19 @@ const MODELS = new Set([
   'claude-sonnet-5-5', 'claude-sonnet-5', 'claude-sonnet-4-6',
   'claude-haiku-5-5', 'claude-haiku-4-5',
 ]);
+// Most work doesn't need the best model, so the chief sizes each job to one of
+// these rungs and a job that fails climbs one (see bump). Family aliases, so
+// each rung follows whatever is current. DEFAULT_TIER is for work that skips
+// the chief, which can't be sized by anyone.
+const LADDER = ['haiku', 'sonnet', 'opus'];
+const DEFAULT_TIER = 'sonnet';
+const TIER_LABEL = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
+const tierOf = (model) => LADDER.find((t) => String(model || '').includes(t)) || '';
+// The boss's picker wins; "Chief picks" (empty) hands the choice over, and only
+// a job sized that way is allowed to climb on its own.
+const sized = (model, tier) => (model
+  ? { model, auto: false }
+  : { model: LADDER.includes(tier) ? tier : DEFAULT_TIER, auto: true });
 
 // ---------- state ----------
 
@@ -93,6 +106,13 @@ const MODELS = new Set([
 // belongs to exactly one, and a reply stays in its thread's channel.
 
 const GENERAL = 'general';
+// Where the agents talk to each other about something other than the work.
+// The break room in the browser posts its small talk here as it is spoken.
+const CHILL = 'chill-room';
+// Channels the whole office is in by definition. They keep no member list,
+// nobody joins or leaves them, and there is nobody to invite. Add a reserved
+// channel here and the rest of the channel code treats it that way.
+const OPEN_TO_ALL = new Set([GENERAL, CHILL]);
 const MAX_CHANNELS = 40;
 const slug = (name) => String(name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
 
@@ -101,6 +121,12 @@ try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
 if (!state.channels.some((c) => c.id === GENERAL)) state.channels.unshift({ id: GENERAL, name: GENERAL, createdAt: Date.now() });
+// Sat next to #general, and described even if someone had already opened a
+// channel by that name by hand. An explanation they wrote themselves stays.
+const CHILL_PURPOSE = 'Whatever the office talks about that is not the work.';
+const chillChannel = state.channels.find((c) => c.id === CHILL);
+if (!chillChannel) state.channels.splice(1, 0, { id: CHILL, name: CHILL, purpose: CHILL_PURPOSE, createdAt: Date.now() });
+else if (!chillChannel.purpose) chillChannel.purpose = CHILL_PURPOSE;
 
 const hasChannel = (id) => state.channels.some((c) => c.id === id);
 const channelOf = (id) => (hasChannel(id) ? id : GENERAL);
@@ -121,12 +147,40 @@ function createChannel(name, { by = 'you', purpose = '' } = {}) {
 
 // Only an empty channel can go, so no conversation disappears with it.
 function deleteChannel(id) {
-  if (id === GENERAL) throw new Error('#general stays.');
+  if (OPEN_TO_ALL.has(id)) throw new Error(`#${id} stays.`);
   if (!hasChannel(id)) throw new Error('No such channel.');
   if (state.chat.some((m) => channelOf(m.channel) === id)) throw new Error('That channel has messages in it.');
   state.channels = state.channels.filter((c) => c.id !== id);
   send({ t: 'channels', channels: state.channels });
   save();
+}
+
+// ---------- who is in a channel ----------
+//
+// #general is everyone's. Every other channel keeps a list of who is in it,
+// and that list is who gets told when something is said there. It isn't a
+// lock on the door: anyone may post anywhere, and posting puts them in it.
+
+const MAX_MEMBERS = 12;
+const membersOf = (id) => state.channels.find((c) => c.id === id)?.members || [];
+
+function joinChannel(id, agentId) {
+  const c = state.channels.find((x) => x.id === id);
+  if (!c || OPEN_TO_ALL.has(id) || !STAFF.some((s) => s.id === agentId)) return false;
+  c.members ||= [];
+  if (c.members.includes(agentId)) return false;
+  if (c.members.length >= MAX_MEMBERS) throw new Error(`#${id} already has a lot of people in it.`);
+  c.members.push(agentId);
+  send({ t: 'channels', channels: state.channels });
+  save();
+  return true;
+}
+
+// Agents write "#releases" or "releases" and mean the same channel.
+function theChannel(name) {
+  const id = slug(String(name || '').replace(/^#/, ''));
+  if (!hasChannel(id)) throw new Error(`No channel called #${id || name}. list_channels shows them all.`);
+  return id;
 }
 for (const s of STAFF) Object.assign(s, state.profiles[s.id]);
 // A restart shouldn't cost anyone their work: jobs that were mid-session
@@ -136,7 +190,9 @@ for (const j of state.jobs) {
   if (j.sessionId) {
     Object.assign(j, {
       status: 'queued', queuedAt: Date.now(), wantAgent: j.agentId, waiting: false,
-      pending: 'The office restarted while you were working, which interrupted you. Pick up exactly where you left off.',
+      // An unread message stashed by deliver() comes along too, rather than
+      // being written over by the notice about the restart.
+      pending: [j.pending, 'The office restarted while you were working, which interrupted you. Pick up exactly where you left off.'].filter(Boolean).join('\n\n'),
     });
     j.log.push({ kind: 'system', summary: 'Office restarted. Picking up where I left off.', ts: Date.now() });
   } else {
@@ -267,8 +323,10 @@ function nudgeUsage() {
 
 function post(from, text, extra = {}) {
   const msg = { id: crypto.randomUUID().slice(0, 8), from, text, ts: Date.now(), ...extra };
-  // Anything about a job goes in that job's thread, and in the channel the
-  // job was asked for in.
+  // An agent's updates on a job collect in that job's thread, in the channel
+  // the job was asked for in. Anyone answering the boss directly passes an
+  // explicit `thread` instead, because an answer belongs where the question
+  // was asked. Nothing is ever moved once it has been posted.
   const job = msg.jobId && state.jobs.find((j) => j.id === msg.jobId);
   if (job?.thread && extra.thread === undefined) msg.thread = job.thread;
   const root = msg.thread && state.chat.find((m) => m.id === msg.thread);
@@ -295,6 +353,51 @@ function react(id, emoji, who = 'you') {
   save();
 }
 
+// ---------- the break room ----------
+//
+// Two idle agents trading small talk is acted out in the browser, which is
+// the only place the floor and who is standing on it exist. The lines are
+// office history though, so the browser claims a conversation here and the
+// server writes each line into #chill-room as it is spoken.
+//
+// The claim is what stops two open windows from talking over each other:
+// only one gets it, and it is handed back when the conversation ends, or
+// goes stale on its own if that window is closed mid-sentence.
+
+const CHILL_STALE = 20 * 1000;
+// Small talk is cheap and constant; without a cap of its own it would push
+// the day's actual work out of a shared history of MAX_CHAT.
+const CHILL_KEEP = 60;
+let chill = null;
+
+function claimChill(who) {
+  if (chill && Date.now() - chill.at < CHILL_STALE) return null;
+  chill = { id: crypto.randomUUID().slice(0, 8), who, at: Date.now() };
+  return chill;
+}
+
+function chillLine(id, from, text) {
+  if (!chill || chill.id !== id) throw new Error('That conversation has ended.');
+  if (!chill.who.includes(from)) throw new Error('Not one of the two talking.');
+  const line = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (!line) throw new Error('Nothing said.');
+  chill.at = Date.now();
+  const msg = post(from, line, { channel: CHILL, kind: 'chill' });
+  const said = state.chat.filter((m) => m.channel === CHILL);
+  if (said.length > CHILL_KEEP) {
+    const old = said.slice(0, said.length - CHILL_KEEP).map((m) => m.id);
+    const gone = new Set(old);
+    state.chat = state.chat.filter((m) => !gone.has(m.id));
+    // Told, not just dropped: a window left open all day would otherwise hold
+    // every line it had ever seen, and the cap would only be true on reload.
+    send({ t: 'forget', ids: old });
+    save();
+  }
+  return msg;
+}
+
+const endChill = (id) => { if (chill?.id === id) chill = null; };
+
 function addLog(job, entry) {
   entry.ts = Date.now();
   const last = job.log[job.log.length - 1];
@@ -315,7 +418,10 @@ const tokens = new Map();
 // jobId -> [{ kind: 'job', id } | { kind: 'reply', from, timer }]
 const waits = new Map();
 const REPLY_WAIT_MS = 10 * 60 * 1000;
-const OFFICE_TOOLS = ['mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off'];
+const OFFICE_TOOLS = [
+  'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off',
+  'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
+];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
 function repoPath(name) {
@@ -332,7 +438,7 @@ function listRepos() {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
-function createJob({ repo, prompt, mode = 'edit', model = '', agentId = '' }) {
+function createJob({ repo, prompt, mode = 'edit', model = '', auto = false, agentId = '' }) {
   if (!repoPath(repo)) throw new Error('Unknown project folder.');
   prompt = String(prompt || '').trim();
   if (!prompt) throw new Error('Give the job a brief.');
@@ -341,7 +447,7 @@ function createJob({ repo, prompt, mode = 'edit', model = '', agentId = '' }) {
   const now = Date.now();
   const job = {
     id: crypto.randomUUID().slice(0, 8),
-    repo, prompt, mode, model,
+    repo, prompt, mode, model, autoModel: !!auto, escalations: 0,
     title: prompt.split('\n')[0].slice(0, 90),
     status: 'queued', createdAt: now, queuedAt: now, startedAt: null, endedAt: null,
     sessionId: null, agentId: null, cost: 0, turns: 0, tools: 0, xp: 0,
@@ -383,7 +489,9 @@ function start(job, agentId) {
   // Attachments live outside the project, so agents need leave to read them.
   fs.mkdirSync(UPLOADS, { recursive: true });
   args.push('--add-dir', UPLOADS);
-  args.push('--mcp-config', JSON.stringify(mcp), '--allowedTools', OFFICE_TOOLS.join(','), '--append-system-prompt', officePrompt(agentId));
+  args.push('--mcp-config', JSON.stringify(mcp), '--allowedTools', OFFICE_TOOLS.join(','), '--append-system-prompt', officePrompt(agentId, job));
+  // Being given work in a channel is how you end up in it.
+  try { joinChannel(channelOf(job.channel), agentId); } catch {}
   const first = job.pending;
 
   Object.assign(job, {
@@ -438,12 +546,18 @@ function write(child, text) {
 
 // Hand a message to a job, whatever state it is in.
 function deliver(job, text) {
-  if (job.status === 'working' && running.has(job.id)) {
+  if (job.status === 'working') {
+    const child = running.get(job.id);
     endGrace(job);
     job.lastTurn = null;
     if (job.waiting) { job.waiting = false; pushJob(job); }
     addLog(job, { kind: 'user', summary: text });
-    if (write(running.get(job.id), text)) return 'live';
+    if (child && write(child, text)) return 'live';
+    // The session ended between the check and the write, so there is nobody
+    // to hand it to. Hold it for the next turn: passing it to replyJob would
+    // only hand it straight back here, for as long as the stack allows.
+    job.pending = job.pending ? `${job.pending}\n\n${text}` : text;
+    return 'queued';
   }
   if (job.status === 'queued') {
     job.pending = `${job.pending}\n\n${text}`;
@@ -493,6 +607,10 @@ function onLine(job, line) {
   } else if (e.type === 'result') {
     job.cost += e.total_cost_usd || 0;
     job.turns++;
+    // The input side of the last turn is how much context this session is
+    // carrying. Worth seeing: a long-resumed job pays it on every turn.
+    const u = e.usage || {};
+    job.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     nudgeUsage();
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
@@ -517,6 +635,20 @@ function onLine(job, line) {
   }
 }
 
+// One rung up the ladder, for a job the chief sized. A job that never got a
+// turn out of the model didn't fail at the work — the folder was gone, the
+// binary wouldn't start — so a stronger model would fail the same way and it
+// stays where it is. Returns the new rung, or null if it isn't moving.
+function bump(job) {
+  if (!job.autoModel || !job.turns) return null;
+  const at = LADDER.indexOf(tierOf(job.model));
+  const next = at >= 0 ? LADDER[at + 1] : null;
+  if (!next) return null;
+  job.model = next;
+  job.escalations = (job.escalations || 0) + 1;
+  return next;
+}
+
 function finish(job, status, error) {
   if (job.status !== 'working') return;
   clearWaits(job);
@@ -526,6 +658,9 @@ function finish(job, status, error) {
   job.status = status;
   job.error = error;
   job.endedAt = Date.now();
+  // Capture the rung it failed on before bump() moves it.
+  const was = TIER_LABEL[tierOf(job.model)] || job.model || 'the default model';
+  const retry = status === 'failed' ? bump(job) : null;
   const gained = status === 'done' ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
   state.xp += gained;
   job.xp += gained;
@@ -540,7 +675,9 @@ function finish(job, status, error) {
   post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
 
   // Hand the result back to whoever delegated this, if they're still at it.
-  const asker = job.requestedBy && state.jobs.find((j) => j.id === job.requestedBy);
+  // Not on a retry: the work isn't finished, it's going up a rung, so whoever
+  // handed it over keeps waiting for the real answer.
+  const asker = !retry && job.requestedBy && state.jobs.find((j) => j.id === job.requestedBy);
   if (asker?.status === 'working' && running.has(asker.id)) {
     settle(asker, (w) => w.kind === 'job' && w.id === job.id);
     deliver(asker, `${nameOf(job.agentId)} finished the work you handed off ("${job.title}"), status: ${status}.\n\n${text}`);
@@ -550,6 +687,42 @@ function finish(job, status, error) {
     if (other.status === 'working' && running.has(other.id) && settle(other, (w) => w.kind === 'reply' && w.from === job.agentId)) {
       deliver(other, `${nameOf(job.agentId)} finished their job without replying to you. Carry on without their answer.`);
     }
+  }
+  // A message can land in the gap between the session closing and here, in
+  // which case deliver() left it in `pending` and nothing has read it. Put the
+  // job back in the queue so somebody does. A stopped job stays stopped — the
+  // boss pulled it on purpose — so say out loud that it went unread instead of
+  // dropping it quietly.
+  if (job.pending) {
+    if (status === 'stopped') {
+      post('chief', `A message for ${nameOf(job.agentId)} landed just as "${job.title}" was stopped, so nobody read it.`, { jobId: job.id });
+      job.pending = null;
+    } else {
+      Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+      addLog(job, { kind: 'system', summary: 'A message landed as this job was closing. Picking it back up.' });
+      pushJob(job);
+    }
+  }
+  // Back in the queue on the stronger model, in a fresh session rather than a
+  // resumed one: the prompt cache belongs to the model that filled it, so
+  // resuming would make the dearer model read the whole failed transcript at
+  // full price. It gets a summary of the attempt instead, and the repo still
+  // holds whatever the first attempt actually changed.
+  if (retry) {
+    const tried = (job.lastTurn?.text || '').trim().slice(0, 1200);
+    // A fresh session knows nothing, so the brief goes in again with it.
+    const note = [
+      job.prompt,
+      `An earlier attempt at this on ${was} ended badly: ${error || 'it did not finish'}.`,
+      tried && `What that attempt reported:\n${tried}`,
+      `You are on ${TIER_LABEL[retry]} now, picking this up fresh. The project still holds any changes that attempt made, so check where the work actually stands before redoing it, then finish the job.`,
+    ].filter(Boolean).join('\n\n');
+    job.sessionId = null;
+    job.pending = job.pending ? `${note}\n\n${job.pending}` : note;
+    if (job.status !== 'queued') Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+    addLog(job, { kind: 'system', summary: `Hit a wall on ${was}; moving up to ${TIER_LABEL[retry]}` });
+    pushJob(job);
+    post('chief', `That hit a wall on ${was}. Running it again on ${TIER_LABEL[retry]}.`, { jobId: job.id, channel: job.channel });
   }
   save();
   setImmediate(pump);
@@ -682,20 +855,21 @@ function chiefContext(text, agent, repo, channel = GENERAL) {
     if (!j && state.dismissed.includes(s.id)) { lines.push(`- ${s.name} (${id}): dismissed, gone home`); continue; }
     if (!j) { lines.push(`- ${s.name} (${id}): free`); continue; }
     const last = [...j.log].reverse().find((e) => e.kind === 'tool' || e.kind === 'text');
-    lines.push(`- ${s.name} (${id}): working on job ${j.id} in ${j.repo}: "${j.title}". Latest: ${last ? last.summary.slice(0, 100).replace(/\n/g, ' ') : 'just starting'}`);
+    lines.push(`- ${s.name} (${id}): working on job ${j.id} in ${j.repo}, asked for in #${channelOf(j.channel)}: "${j.title}". Latest: ${last ? last.summary.slice(0, 100).replace(/\n/g, ' ') : 'just starting'}`);
   }
   const queued = state.jobs.filter((j) => j.status === 'queued');
   if (queued.length) {
     lines.push('Queued:');
-    for (const j of queued) lines.push(`- job ${j.id} in ${j.repo}: "${j.title}"${j.wantAgent ? ` (for ${nameOf(j.wantAgent)})` : ''}`);
+    for (const j of queued) lines.push(`- job ${j.id} in ${j.repo}, asked for in #${channelOf(j.channel)}: "${j.title}"${j.wantAgent ? ` (for ${nameOf(j.wantAgent)})` : ''}`);
   }
   const recent = state.jobs.filter((j) => ['done', 'failed', 'stopped'].includes(j.status)).sort((a, b) => b.endedAt - a.endedAt).slice(0, 6);
   if (recent.length) {
     lines.push('Recently finished:');
-    for (const j of recent) lines.push(`- job ${j.id} by ${nameOf(j.agentId)} in ${j.repo}: "${j.title}" (${j.status}, ${ago(j.endedAt)} ago)`);
+    for (const j of recent) lines.push(`- job ${j.id} by ${nameOf(j.agentId)} in ${j.repo}, asked for in #${channelOf(j.channel)}: "${j.title}" (${j.status}, ${ago(j.endedAt)} ago)`);
   }
   lines.push('', `Projects: ${listRepos().join(', ')}`);
-  lines.push('', `This message is in channel #${channel}. Channels: ${state.channels.map((c) => '#' + c.id).join(', ')}.`, '', `Recent chat in #${channel}:`);
+  lines.push('', `This message is in channel #${channel}. Channels: ${state.channels.map((c) => '#' + c.id).join(', ')}.`);
+  lines.push(`You can only see #${channel}'s history below. A job's own channel is on its line above; never guess where something was discussed.`, '', `Recent chat in #${channel}:`);
   for (const m of state.chat.filter((x) => channelOf(x.channel) === channel).slice(-9, -1)) {
     const who = (m.from === 'you' ? 'Boss' : m.from === 'chief' ? 'Chief' : nameOf(m.from)) + (m.to ? ` → ${nameOf(m.to)}` : '');
     const reacts = Object.keys(m.reactions || {}).join('');
@@ -707,8 +881,8 @@ function chiefContext(text, agent, repo, channel = GENERAL) {
   return lines.join('\n');
 }
 
-function hireWork({ repo, brief, agentId, mode, model, say, files, thread, channel }) {
-  const job = createJob({ repo, prompt: withFiles(brief, files), mode, model, agentId: agentId || '' });
+function hireWork({ repo, brief, agentId, mode, model, auto, say, files, thread, inThread, channel }) {
+  const job = createJob({ repo, prompt: withFiles(brief, files), mode, model, auto, agentId: agentId || '' });
   job.thread = thread;
   job.channel = channel;
   const who = nameOf(job.agentId);
@@ -718,7 +892,11 @@ function hireWork({ repo, brief, agentId, mode, model, say, files, thread, chann
       ? `${nameOf(agentId)} is busy right now, so it's next on their list.`
       : `Everyone's busy, so it's in the queue. First free hand takes it.`;
   }
-  post('chief', line, { jobId: job.id, channel });
+  // A job the chief sized says which rung it went to, so the boss can see the
+  // call being made and send it back up if it was the wrong one.
+  if (job.autoModel) line += ` · ${TIER_LABEL[tierOf(job.model)]}`;
+  // In the thread if that's where this was asked for, in the channel otherwise.
+  post('chief', line, { jobId: job.id, channel, thread: inThread ? thread : null });
 }
 
 // `root` is the thread this conversation lives in: the boss's message, or the
@@ -730,7 +908,7 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
 
   // A named project with nothing open in it can only be new work.
   if (repo && !open.some((j) => j.repo === repo)) {
-    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, model, files, thread: root, channel });
+    return hireWork({ repo, brief: clean, agentId: agent?.id, mode, ...sized(model), files, thread: root, inThread, channel });
   }
 
   chiefBusy = true;
@@ -749,9 +927,22 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
   if (d.action === 'followup') {
     const job = state.jobs.find((j) => j.id === d.jobId);
     if (job) {
-      if (!inThread) fileUnder(job, root);
+      // A job with no thread of its own starts one under the message that
+      // prompted this. One that already has a thread keeps it, and the answer
+      // carries a link there rather than dragging the boss's message over.
+      job.thread ||= root;
+      // A job the boss sends back failed the work just as surely as one that
+      // errored, so the second go gets a stronger model. One still running
+      // keeps its model: its session is mid-flight and nobody is restarting it.
+      const up = d.escalate && job.status !== 'working' ? bump(job) : null;
+      if (up) addLog(job, { kind: 'system', summary: `Sent back by the boss; moving up to ${TIER_LABEL[up]}` });
       deliver(job, withFiles(clean, files));
-      return post('chief', d.say || `Passed to ${nameOf(job.agentId)}.`, { jobId: job.id, ...(inThread && { thread: root }) });
+      return post('chief', (d.say || `Passed to ${nameOf(job.agentId)}.`) + (up ? ` Running it on ${TIER_LABEL[up]} this time.` : ''), {
+        jobId: job.id,
+        channel,
+        thread: inThread ? root : null,
+        ...(job.thread !== root && { threadOf: job.thread }),
+      });
     }
   }
   if (d.action === 'new' || d.action === 'followup') {
@@ -759,26 +950,20 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
     if (!project) return say('Which project is that for? Tag it with #project.');
     const roster = STAFF.slice(0, capacity());
     const agentId = agent?.id || (roster.some((s) => s.id === d.agentId) ? d.agentId : '');
-    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, model, say: d.say, files, thread: root, channel });
+    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, ...sized(model, d.model), say: d.say, files, thread: root, inThread, channel });
   }
   if (d.action === 'dismiss' || d.action === 'recall') {
     const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
     return say(d.action === 'dismiss' ? dismiss(ids) : recall(ids));
   }
   if (d.action === 'standup') return void runStandup(true);
-  say(d.say || 'Could you say a bit more?');
-}
-
-// A follow-up typed in the main chat moves into the thread of the job it's about.
-function fileUnder(job, msgId) {
-  if (!job.thread) { job.thread = msgId; return; }
-  const msg = state.chat.find((m) => m.id === msgId);
-  if (!msg || job.thread === msgId) return;
-  msg.thread = job.thread;
-  // The thread may live in another channel; the message follows it there.
-  msg.channel = channelOf(state.chat.find((m) => m.id === job.thread)?.channel);
-  send({ t: 'thread', id: msg.id, thread: job.thread, channel: msg.channel });
-  save();
+  // An answer that is merely about a job gets the same link a follow-up does.
+  // Asking "how did that go?" from another channel shouldn't dead-end just
+  // because the job has already finished and nothing was passed on.
+  const about = d.jobId && state.jobs.find((j) => j.id === d.jobId);
+  say(d.say || 'Could you say a bit more?', about?.thread && about.thread !== root
+    ? { jobId: about.id, threadOf: about.thread, thread: inThread ? root : null }
+    : {});
 }
 
 // The job a thread is about: one started from it, or the job its first message came from.
@@ -971,14 +1156,18 @@ function updateProfile(id, body) {
   return p;
 }
 
-function officePrompt(agentId) {
+function officePrompt(agentId, job) {
   const me = nameOf(agentId);
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `The office tools let you see what colleagues are doing (office_roster), message a colleague mid-task (message_colleague), ` +
     `and hand work to a free colleague, in this project or another (hand_off). Use them when a colleague's work or another project matters to yours, ` +
     `or to split independent work. Keep messages short and specific. Messages from colleagues reach you as user messages starting "Message from". ` +
-    `When a colleague asks you something, answer with message_colleague.` + standupBrief(agentId);
+    `When a colleague asks you something, answer with message_colleague. ` +
+    `The office chat is split into channels, the way Slack is, and this job is being discussed in #${channelOf(job?.channel)}. ` +
+    `list_channels shows them all, create_channel opens one and puts colleagues in it, invite_to_channel adds someone later, and ` +
+    `post_to_channel says something to everyone in one. Open a channel when a strand of work deserves its own place to be discussed; ` +
+    `everyday talk stays in #general.` + standupBrief(agentId);
 }
 
 const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2;
@@ -1048,6 +1237,81 @@ const agentApi = {
       : `Delivered to ${target.name}.`;
   },
 
+  list_channels(me) {
+    const mine = channelOf(me.channel);
+    const lines = ['Channels:'];
+    for (const c of state.channels) {
+      const who = OPEN_TO_ALL.has(c.id) ? 'everyone' : membersOf(c.id).length ? membersOf(c.id).map(nameOf).join(', ') : 'nobody yet';
+      lines.push(`- #${c.id}${c.purpose ? ` — ${c.purpose}` : ''} (in it: ${who})${c.id === mine ? ' ← this job is being discussed here' : ''}`);
+    }
+    lines.push('', 'Say something in one with post_to_channel; everyone in it who is on a job hears it straight away.');
+    return lines.join('\n');
+  },
+
+  create_channel(me, { name, purpose = '', invite = [] }) {
+    const channel = createChannel(name, { by: me.agentId, purpose });
+    joinChannel(channel.id, me.agentId);
+    const added = [], missing = [];
+    for (const who of [].concat(invite || []).slice(0, MAX_MEMBERS)) {
+      const target = colleague(who);
+      if (!target) { missing.push(String(who)); continue; }
+      if (target.id !== me.agentId && joinChannel(channel.id, target.id)) added.push(target.name);
+    }
+    post(me.agentId, `Opened #${channel.id}${channel.purpose ? ` — ${channel.purpose}` : ''}.${added.length ? ` Added ${names(added)}.` : ''}`,
+      { channel: channel.id, kind: 'channel' });
+    return `#${channel.id} is open${added.length ? `, with ${names(added)} in it` : ''}. Say something in it with post_to_channel.` +
+      (missing.length ? ` Nobody called ${names(missing)} works here, so they weren't added.` : '');
+  },
+
+  invite_to_channel(me, { channel, who }) {
+    const id = theChannel(channel);
+    if (OPEN_TO_ALL.has(id)) throw new Error(`Everyone is in #${id} already.`);
+    const added = [], there = [], missing = [];
+    for (const name of [].concat(who || []).slice(0, MAX_MEMBERS)) {
+      const target = colleague(name);
+      if (!target) { missing.push(String(name)); continue; }
+      if (joinChannel(id, target.id)) added.push(target.name); else there.push(target.name);
+    }
+    if (!added.length && !there.length) throw new Error(`Nobody called ${names(missing) || 'that'} works here. Check office_roster.`);
+    joinChannel(id, me.agentId);
+    if (added.length) post(me.agentId, `Added ${names(added)} to #${id}.`, { channel: id, kind: 'channel' });
+    return [
+      added.length ? `${names(added)} ${added.length === 1 ? 'is' : 'are'} in #${id} now.` : '',
+      there.length ? `${names(there)} ${there.length === 1 ? 'was' : 'were'} already in it.` : '',
+      missing.length ? `Nobody called ${names(missing)} works here.` : '',
+    ].filter(Boolean).join(' ');
+  },
+
+  post_to_channel(me, { channel, message }) {
+    const id = theChannel(channel);
+    message = String(message || '').trim();
+    if (!message) throw new Error('The message is empty.');
+    if ((me.sent = (me.sent || 0) + 1) > MAX_MESSAGES) throw new Error("You've sent a lot of messages on this job. Finish the work with what you have.");
+    joinChannel(id, me.agentId);
+    post(me.agentId, message, { channel: id, kind: 'channel' });
+
+    // Whoever is in the channel and mid-job hears it now. Anyone free is left
+    // alone on purpose: a word in a channel shouldn't pull half the office
+    // back off the bench the way message_colleague deliberately does for one
+    // person. It stays in the channel for the boss to see either way.
+    const myName = nameOf(me.agentId);
+    const reached = [], quiet = [];
+    for (const agentId of membersOf(id)) {
+      if (agentId === me.agentId) continue;
+      const theirs = workingJobOf(agentId);
+      if (!theirs || !running.has(theirs.id)) { quiet.push(nameOf(agentId)); continue; }
+      deliver(theirs, `Message in #${id} from ${myName} (working on "${me.title}" in ${me.repo}): ${message}`);
+      send({ t: 'visit', from: me.agentId, to: agentId });
+      reached.push(nameOf(agentId));
+    }
+    return [
+      `Posted in #${id}.`,
+      reached.length ? `${names(reached)} ${reached.length === 1 ? 'has' : 'have'} it now.` : '',
+      quiet.length ? `${names(quiet)} ${quiet.length === 1 ? 'is' : 'are'} not on a job, so it waits in the channel for them.` : '',
+      !reached.length && !quiet.length ? 'Nobody else is in it yet — invite_to_channel adds people.' : '',
+    ].filter(Boolean).join(' ');
+  },
+
   hand_off(me, { project, brief, to, wait = true }) {
     const repo = listRepos().find((r) => norm(r) === norm(project || ''));
     brief = String(brief || '').trim();
@@ -1072,7 +1336,7 @@ const agentApi = {
 
     const myName = nameOf(me.agentId);
     const job = createJob({
-      repo, mode: me.mode, model: me.model, agentId: target.id,
+      repo, mode: me.mode, model: me.model, auto: me.autoModel, agentId: target.id,
       prompt: `${brief}\n\n(Handed to you by ${myName}, who is working on "${me.title}" in ${me.repo}. Your final reply goes straight back to them, so make it the answer they need.)`,
     });
     job.requestedBy = me.id;
@@ -1265,6 +1529,20 @@ const server = http.createServer(async (req, res) => {
       return json(res, 201, createChannel(name, { by: 'you', purpose }));
     }
     if (req.method === 'DELETE' && parts[1] === 'channels' && parts[2] && !parts[3]) { deleteChannel(parts[2]); return json(res, 200, { ok: true }); }
+    // The break room: claim a conversation, post each line as it is spoken,
+    // hand the claim back at the end. A refused claim answers with no id,
+    // which the browser takes as "another window has this one".
+    if (req.method === 'POST' && url.pathname === '/api/chill') {
+      const { who = [] } = await readBody(req);
+      const pair = [...new Set(who)].filter((id) => STAFF.some((s) => s.id === id)).slice(0, 2);
+      if (pair.length < 2) return json(res, 400, { error: 'Two of the staff, please.' });
+      return json(res, 200, { id: claimChill(pair)?.id || null });
+    }
+    if (req.method === 'POST' && parts[1] === 'chill' && parts[2] && parts[3] === 'line') {
+      const { from, text } = await readBody(req);
+      return json(res, 201, chillLine(parts[2], from, text));
+    }
+    if (req.method === 'DELETE' && parts[1] === 'chill' && parts[2] && !parts[3]) { endChill(parts[2]); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {
       state.jobs = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');

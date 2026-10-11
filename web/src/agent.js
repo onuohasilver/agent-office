@@ -8,6 +8,17 @@ const angleLerp = (a, b, k) => {
 };
 const rand = (a, b) => a + Math.random() * (b - a);
 
+// Overhead bubbles are a glance, not a transcript: one clause, a few words.
+// The full line still goes to the agent's log panel.
+function brief(text, max = 34) {
+  let t = String(text || '').replace(/\s+/g, ' ').trim();
+  const cut = t.search(/[,;:]| \u2014 | - | and | with | so that | in order /i);
+  if (cut > 11) t = t.slice(0, cut);
+  if (t.length <= max) return t;
+  const space = t.lastIndexOf(' ', max);
+  return t.slice(0, space > max * 0.6 ? space : max).replace(/[,.;:]$/, '') + '\u2026';
+}
+
 const IDLE_LINES = ['coffee?', 'anyone seen my mug', 'back in 5', 'nice weather', 'who broke main', 'lunch soon?', 'reading the docs, honestly', 'standup when'];
 
 let blobTex = null;
@@ -80,6 +91,7 @@ export class Agent {
   // ---------- speech ----------
 
   say(text, kind = '', ms = 0) {
+    if (text !== this.bubbleText) this.labelDirty = true;
     this.bubbleText = text;
     this.bubbleEl.textContent = text;
     this.bubbleEl.className = 'bubble' + (kind ? ' ' + kind : '');
@@ -165,7 +177,7 @@ export class Agent {
     this.placeKey = null;
     this.path = [];
     if (this.spot) { this.spot.taken = null; this.spot = null; }
-    this.say(text.length > 90 ? text.slice(0, 89) + '…' : text, 'talk', 0);
+    this.say(brief(text, 52), 'talk', 0);
   }
 
   onLog(entry) {
@@ -177,12 +189,12 @@ export class Agent {
     if (entry.kind === 'tool') {
       // Work happens seated at the desk, whatever the tool.
       goTo('desk');
-      say(entry.summary);
+      say(brief(entry.summary));
       this.lines.push({ text: '› ' + entry.summary, color });
     } else if (entry.kind === 'text') {
       goTo('desk');
       const first = entry.summary.split(/(?<=[.!?])\s|\n/)[0];
-      say(first.length > 80 ? first.slice(0, 79) + '…' : first);
+      say(brief(first, 44));
       this.lines.push({ text: first, color });
     } else if (entry.kind === 'thinking') {
       say('thinking…', 'thinking');
@@ -191,7 +203,7 @@ export class Agent {
       this.lines.push({ text: '✕ ' + entry.summary.split('\n')[0], color });
     } else if (entry.kind === 'system') {
       this.lines.push({ text: entry.summary, color });
-      if (entry.wait) { goTo('desk'); say(entry.summary + '…', 'thinking'); }
+      if (entry.wait) { goTo('desk'); say(brief(entry.summary, 30) + '…', 'thinking'); }
     }
     if (this.lines.length > 40) this.lines.splice(0, this.lines.length - 40);
   }
@@ -319,12 +331,57 @@ export class Agent {
     this.fig.express(mood, dt, t + this.phase);
   }
 
+  // Work out where the label wants to sit. How far it ends up lifted off that
+  // point is settled later, once every label's box is known (see declutter).
   placeLabel(camera, w, h) {
     const v = new THREE.Vector3(this.pos.x, this.body.position.y + 2.5 + (this.fig.look.hair === 'afro' ? 0.2 : 0), this.pos.z).project(camera);
-    if (v.z > 1) { this.label.style.display = 'none'; return; }
+    this.onScreen = v.z <= 1;
+    if (!this.onScreen) { this.label.style.display = 'none'; this.lift = 0; return; }
     this.label.style.display = '';
-    this.label.style.transform = `translate(-50%, -100%) translate(${(v.x * 0.5 + 0.5) * w}px, ${(-v.y * 0.5 + 0.5) * h}px)`;
+    this.anchorX = (v.x * 0.5 + 0.5) * w;
+    this.anchorY = (-v.y * 0.5 + 0.5) * h;
+    this.depth = v.z;
     this.label.style.zIndex = String(Math.round((1 - v.z) * 10000));
+    if (this.labelDirty || !this.labelW) this.measureLabel();
+  }
+
+  measureLabel() {
+    // A hidden label measures zero; keep the last real size rather than a
+    // box that fits anywhere. (Buried labels stay measurable on purpose.)
+    if (!this.label.offsetWidth) return;
+    this.labelDirty = false;
+    this.labelW = this.label.offsetWidth;
+    this.labelH = this.label.offsetHeight;
+  }
+
+  // The label's screen box if it were lifted this far above its anchor.
+  labelBox(lift) {
+    const bottom = this.anchorY - lift;
+    return { left: this.anchorX - this.labelW / 2, right: this.anchorX + this.labelW / 2, top: bottom - this.labelH, bottom };
+  }
+
+  setLift(lift, dt) {
+    const k = this.lift === undefined ? 1 : Math.min(1, dt * 9);
+    this.lift = (this.lift || 0) + (lift - (this.lift || 0)) * k;
+    if (Math.abs(this.lift - lift) < 0.4) this.lift = lift;
+    this.label.style.transform = `translate(-50%, -100%) translate(${this.anchorX}px, ${this.anchorY - this.lift}px)`;
+  }
+
+  // When a label can't find clear air, it drops its bubble and keeps its name.
+  setBuried(on) {
+    if (on === this.buried) return;
+    this.buried = on;
+    this.label.classList.toggle('buried', on);
+  }
+
+  setCrowded(on, now) {
+    if (on) this.uncrowdAt = now + 0.6;
+    else if (this.crowded && now < (this.uncrowdAt || 0)) on = true;
+    if (on !== this.crowded) {
+      this.crowded = on;
+      this.label.classList.toggle('crowded', on);
+      this.measureLabel();
+    }
   }
 
   setSelected(on) {

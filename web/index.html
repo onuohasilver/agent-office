@@ -75,7 +75,7 @@
                 <option value="auto">Full autonomy</option>
               </select>
               <select id="model" aria-label="Model for new work">
-                <option value="">Default model</option>
+                <option value="">Chief picks</option>
                 <optgroup label="Fable">
                   <option value="claude-fable-5-1">Fable 5.1</option>
                   <option value="claude-fable-5">Fable 5</option>
@@ -104,7 +104,7 @@
         <section class="pane" id="threadPane" hidden>
           <header class="thread-head">
             <button type="button" class="link" id="threadBack">← Chat</button>
-            <b>Thread</b>
+            <b id="threadWhere">Thread</b>
           </header>
           <div class="msgs" id="threadMsgs"></div>
           <form class="composer" id="threadComposer">

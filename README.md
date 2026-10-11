@@ -23,7 +23,10 @@ There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
   - if it can't tell which project you mean, it asks.
 - Agents post their results back into the chat.
 
-The clearance and model pickers under the composer apply to new work.
+The clearance and model pickers under the composer apply to new work. The
+model picker starts on **Chief picks**, which hands the choice to the chief
+(see *Sizing the work* below); choosing a model yourself overrides it for
+that job.
 
 ### Channels
 
@@ -37,6 +40,18 @@ reports back there, anything they hand to a colleague stays there too, and
 the chief only reads that channel's history when deciding what you meant.
 Threads live in their channel. A channel you aren't reading shows a count of
 what you've missed.
+
+### Threads
+
+A message stays where you sent it. Type in the main chat and it stays in the
+main chat; reply in a thread and the whole exchange stays in that thread.
+Nothing is ever moved after you have seen it.
+
+What threads collect is an agent's updates on a job, which hang under the
+message that started the job as a summary line you can open. So when you
+follow up on running work from the main chat, your message and the chief's
+answer stay in front of you, and the answer carries a link to the thread the
+updates are collecting in.
 
 ## Talking out loud
 
@@ -140,6 +155,28 @@ turn finishes.
 
 Shipped jobs earn XP. Each level hires one more agent, so more jobs run at
 once (3 at level 1, up to 8).
+
+### Sizing the work
+
+Most jobs don't need the most capable model, so the chief picks one when the
+model picker is left on **Chief picks**: *Haiku* for small mechanical changes,
+*Sonnet* for ordinary work, *Opus* for genuinely hard work. The rung it chose
+is shown beside its reply in the chat, and in the job's drawer.
+
+A job that **fails** on a model the chief picked goes back in the queue one
+rung up — Haiku to Sonnet to Opus — and the chat says so. So does a finished
+job you send back as wrong or incomplete. Escalation stops at Opus, and a job
+that failed before the model ever got a turn (a missing folder, a binary that
+won't start) stays where it is: a dearer model would fail the same way.
+
+The retry starts a fresh session carrying the brief and a summary of what the
+last attempt reported, rather than resuming it. The prompt cache belongs to
+the model that filled it, so resuming would have the dearer model read the
+whole failed transcript at full price. A job you picked the model for yourself
+never moves on its own.
+
+The drawer shows each job's model and how much context its last turn carried,
+so a session that has grown expensive is visible rather than guessed at.
 
 **Clearance** decides what a job may do: *Plan only* changes nothing, *Edit
 files* can edit but shell commands get blocked, *Full autonomy* runs anything.
