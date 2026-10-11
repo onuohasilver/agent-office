@@ -67,7 +67,7 @@ GitHub release from that changelog section. It needs an npm access token in
 the repository secret `NPM_TOKEN`.
 
 To try the package locally without publishing: `sh scripts/pack-smoke.sh`, or
-`npm pack` and `npm install -g ./onuohasilver-agent-office-*.tgz`.
+`npm pack` and `npm install -g ./agent-office-studio-*.tgz`.
 
 ## The launch video
 

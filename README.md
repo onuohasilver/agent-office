@@ -9,7 +9,7 @@ walk to a desk and do it for real, in that project folder, with `claude -p`.
 ![The office: chat on the left, the floor with desks, a break room, a pool table and the chief of staff at reception](docs/images/office.jpg)
 
 ```bash
-npm install -g @onuohasilver/agent-office
+npm install -g agent-office-studio
 cd ~/code            # the folder that holds your projects
 agent-office         # opens http://localhost:4317
 ```

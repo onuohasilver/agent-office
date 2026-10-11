@@ -7,7 +7,7 @@ Notable changes to Agent Office. The format follows
 ## Unreleased
 
 ### Added
-- **An npm package.** `npm install -g @onuohasilver/agent-office`, then
+- **An npm package, `agent-office-studio`.** `npm install -g agent-office-studio`, then
   `agent-office` in the folder that holds your projects. It checks the machine
   first, uses the next free port if 4317 is taken, opens the browser, and
   keeps its data in `~/.agent-office`. `agent-office doctor` checks without
