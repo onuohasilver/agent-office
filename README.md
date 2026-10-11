@@ -53,4 +53,4 @@ folders next to this one — see [Getting started](docs/getting-started.md).
 
 ## Licence
 
-None yet: all rights reserved until one is chosen.
+[MIT](LICENSE).

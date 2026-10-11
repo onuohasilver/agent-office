@@ -1,6 +1,7 @@
 {
   "name": "agent-office",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server/index.js\" \"vite\"",

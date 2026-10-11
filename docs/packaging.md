@@ -28,7 +28,8 @@ if users ask for one; leave hosted until the local version has users.
 
 - [x] **Claude access:** users choose the Claude Code login or an API key
       ([Claude access](claude-access.md)).
-- [ ] **Licence:** choose one and add `LICENSE`; confirm the npm name.
+- [x] **Licence:** MIT ([`LICENSE`](../LICENSE)).
+- [ ] **npm name:** confirm `agent-office` is free, or pick another.
 - [ ] **Data directory:** `~/.agent-office` (or `$XDG_DATA_HOME`) with an
       `OFFICE_DATA` override, migrating an existing `<app>/data` on first run.
 - [ ] **Project root:** default to the current directory, `--root <dir>`,
