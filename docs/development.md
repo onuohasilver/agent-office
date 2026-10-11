@@ -8,6 +8,19 @@ npm run dev          # server with --watch on :4317, Vite with hot reload on :53
 Use <http://localhost:5317> while developing; Vite proxies `/api` and `/ws`
 to the server.
 
+## Checking a change
+
+```bash
+npm run build
+npm test
+```
+
+`npm test` is a smoke test: it starts the office from a temporary copy with
+its own data, against a stand-in `claude`, and checks that it serves the app,
+refuses other sites, runs a job with the right clearance and records what
+changed. It costs no tokens and can't touch an office you're using. CI runs
+it on macOS and Linux for every push and pull request.
+
 ## Shipping a web change
 
 `npm run build` writes `dist/`, which the server reads from disk on every

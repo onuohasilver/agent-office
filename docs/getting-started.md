@@ -44,6 +44,10 @@ the chat with `#`, e.g. `#storefront`.
 | Terminal | a real shell in a drawer under the office | [The terminal](terminal.md) |
 | Phone | the office on your phone, installed like an app | [On your phone](phone.md) |
 
+## Next
+
+Run [your first job](guides/your-first-job.md).
+
 ## Developing
 
 `npm run dev` serves with hot reload on <http://localhost:5317>. See

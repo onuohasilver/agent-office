@@ -1,0 +1,44 @@
+name: Bug report
+description: Something in the office doesn't work the way the docs say it should.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start the office with `npm start`
+        2. Ask "@Ada #storefront ..."
+        3. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server output or browser console
+      description: Anything the terminal running the office printed, or errors in the browser console. Please remove API keys, tokens and private paths.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Office version
+      description: A release tag or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS, Node and Claude Code versions
+      placeholder: macOS 15.4, Node 22.11, claude 2.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: access
+    attributes:
+      label: Claude access
+      options: [Claude Code login, API key]

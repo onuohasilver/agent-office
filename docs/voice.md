@@ -17,8 +17,8 @@ acts on it, and the recording rides along attached so you can hear what you
 actually said. Escape throws a recording away.
 
 The office knows its own vocabulary, so spoken names come back spelled the way
-the chief can route on them: "Ada, check the open PRs in Afriex" arrives as
-*Afriex*, not *a freaks*. Say `@` and `#` tags as plain names — the chief reads
+the chief can route on them: "Ada, check the open PRs in Storefront" arrives as
+*storefront*, not *store front*. Say `@` and `#` tags as plain names — the chief reads
 them either way.
 
 The speaker button in the top right turns on replies in kind. The chief and

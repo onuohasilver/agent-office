@@ -149,8 +149,8 @@ function voiceModel(dataDir, who) {
 
 export function piperReady(dataDir) {
   const bin = piperBin(dataDir);
-  if (!fs.existsSync(bin)) return { ok: false, reason: 'Piper is not installed. See the README.' };
-  if (!voiceModel(dataDir, 'chief')) return { ok: false, reason: 'Piper has no voices downloaded. See the README.' };
+  if (!fs.existsSync(bin)) return { ok: false, reason: 'Piper is not installed. See docs/voice.md.' };
+  if (!voiceModel(dataDir, 'chief')) return { ok: false, reason: 'Piper has no voices downloaded. See docs/voice.md.' };
   return { ok: true };
 }
 

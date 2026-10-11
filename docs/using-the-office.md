@@ -4,7 +4,7 @@
 
 There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
 
-- `@Ada #Afriex check the open PRs` goes straight to Ada.
+- `@Ada #storefront check the open PRs` goes straight to Ada.
 - Untagged messages go to the **chief of staff** at reception (Sonnet by
   default), who decides who should handle them:
   - a message that relates to a running job is handed to that agent *live*,

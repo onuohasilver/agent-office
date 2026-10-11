@@ -1,6 +1,12 @@
 # Agent Office documentation
 
-**Start here**
+**Guides**
+- [Your first job](guides/your-first-job.md) — from a fresh install to a change you've reviewed
+- [Working with the team](guides/working-with-the-team.md) — briefs that work, clearance, channels, cost
+- [Troubleshooting](guides/troubleshooting.md) — common problems and their fixes
+- [Updating](guides/updating.md) — new versions without losing your office
+
+**Reference**
 - [Getting started](getting-started.md) — install, run, point it at your projects
 - [Using the office](using-the-office.md) — the chat, channels, threads, standup, the break room
 - [Jobs](jobs.md) — clearance, which model, what changed

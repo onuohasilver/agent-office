@@ -1,9 +1,16 @@
 # Agent Office
 
+[![CI](https://github.com/onuohasilver/agent-office/actions/workflows/ci.yml/badge.svg)](https://github.com/onuohasilver/agent-office/actions/workflows/ci.yml)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A 3D office where the staff are Claude Code agents. Hand someone a job and they
 walk to a desk and do it for real, in that project folder, with `claude -p`.
 
+![The office: chat on the left, the floor with desks, a break room, a pool table and the chief of staff at reception](docs/images/office.jpg)
+
 ```bash
+git clone https://github.com/onuohasilver/agent-office.git
+cd agent-office
 npm install
 npm start            # builds, then serves on http://localhost:4317
 ```
@@ -34,6 +41,13 @@ folders next to this one — see [Getting started](docs/getting-started.md).
 - **Yours, on your machine.** It listens on localhost only. Use it on your
   Claude plan or with an API key.
 
+## Guides
+
+- [Your first job](docs/guides/your-first-job.md) — from a fresh install to a change you've reviewed
+- [Working with the team](docs/guides/working-with-the-team.md) — briefs that work, clearance, channels, cost
+- [Troubleshooting](docs/guides/troubleshooting.md) — common problems and their fixes
+- [Updating](docs/guides/updating.md) — getting new versions without losing your office
+
 ## Documentation
 
 | | |
@@ -50,6 +64,13 @@ folders next to this one — see [Getting started](docs/getting-started.md).
 | [Security](docs/security.md) | who can reach it and what jobs may do |
 | [Development](docs/development.md) | dev server, shipping, testing safely |
 | [Packaging roadmap](docs/packaging.md) | from a clone to an install |
+
+## Contributing
+
+Bug reports, ideas and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Report security problems privately, as
+described in [SECURITY.md](SECURITY.md). What's changed between versions is in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Licence
 
