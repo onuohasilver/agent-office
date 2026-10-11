@@ -47,13 +47,15 @@ const stub = path.join(tmp, 'claude');
 fs.writeFileSync(stub, `#!${process.execPath}
 const fs = require('fs');
 fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), key: process.env.ANTHROPIC_API_KEY || null }) + '\\n');
-process.stdin.once('data', () => {
+// The office snapshots the tree as the job starts; a real agent takes seconds
+// to make its first edit, so wait like one rather than racing the snapshot.
+process.stdin.once('data', () => setTimeout(() => {
   fs.appendFileSync('README.md', 'edited by the stub\\n');
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
   out({ type: 'system', subtype: 'init', session_id: 'smoke-session', model: 'stub' });
   out({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'smoke-session', total_cost_usd: 0 });
   process.exit(0);
-});
+}, 2000));
 `, { mode: 0o755 });
 
 const env = { ...process.env, PORT: String(PORT), OFFICE_ROOT: root, CLAUDE_BIN: stub, STANDUP_AT: 'off', BANTER: 'off' };
