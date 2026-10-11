@@ -29,7 +29,7 @@ if users ask for one; leave hosted until the local version has users.
 - [x] **Claude access:** users choose the Claude Code login or an API key
       ([Claude access](claude-access.md)).
 - [x] **Licence:** MIT ([`LICENSE`](../LICENSE)).
-- [x] **npm name:** `@onuohasilver/agent-office` (`agent-office` is taken).
+- [x] **npm name:** `agent-office-studio` (`agent-office` is taken); it installs both `agent-office-studio` and `agent-office`.
 - [x] **Data folder:** `~/.agent-office`, `--data` or `OFFICE_DATA` to change it.
 - [x] **Project root:** the folder it's started in, or `agent-office <folder>`.
 - [x] **`bin/agent-office.js`:** `--port`, `--no-open`, `--terminal`, `--data`;

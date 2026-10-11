@@ -86,7 +86,7 @@ It's off by default. Start the office with `agent-office --terminal`.
 It's a native module and needs build tools. On macOS:
 `xcode-select --install`; on Linux, `build-essential` and `python3`. Then
 reinstall — on npm 11 and later, allowing its build script:
-`npm install -g --allow-scripts=node-pty @onuohasilver/agent-office`.
+`npm install -g --allow-scripts=node-pty agent-office-studio`.
 `agent-office doctor` says whether it can start a shell.
 
 ## On a phone

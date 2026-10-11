@@ -1,5 +1,5 @@
 {
-  "name": "@onuohasilver/agent-office",
+  "name": "agent-office-studio",
   "version": "0.1.0",
   "description": "A 3D office where the staff are Claude Code agents.",
   "license": "MIT",
@@ -22,6 +22,7 @@
   },
   "type": "module",
   "bin": {
+    "agent-office-studio": "bin/agent-office.js",
     "agent-office": "bin/agent-office.js"
   },
   "files": [

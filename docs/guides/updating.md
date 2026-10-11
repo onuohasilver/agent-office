@@ -6,7 +6,7 @@ in the data folder (`~/.agent-office`), which updates never touch.
 ## The installed command
 
 ```bash
-npm install -g @onuohasilver/agent-office@latest
+npm install -g agent-office-studio@latest
 ```
 
 Then stop the office (Ctrl-C) and start it again. Running jobs stop cleanly
@@ -18,7 +18,7 @@ need to do. `agent-office --version` says what you're on.
 ### A particular version
 
 ```bash
-npm install -g @onuohasilver/agent-office@0.1.0
+npm install -g agent-office-studio@0.1.0
 ```
 
 ## A clone

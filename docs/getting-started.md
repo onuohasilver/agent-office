@@ -12,11 +12,11 @@
 ## Install
 
 ```bash
-npm install -g @onuohasilver/agent-office
+npm install -g agent-office-studio
 ```
 
-That gives you the `agent-office` command. To try it without installing,
-`npx @onuohasilver/agent-office` works too.
+That gives you the `agent-office` command (`agent-office-studio` works too).
+To try it without installing: `npx agent-office-studio`.
 
 Check the machine is ready — this changes nothing:
 
