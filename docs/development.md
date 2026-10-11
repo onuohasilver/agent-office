@@ -53,6 +53,22 @@ so you can check what a job was started with without spending tokens.
 When you stop a test server, kill it by PID, not with `pkill -f`, which can't
 tell it from the live one.
 
+## Releasing
+
+1. Move the changelog's *Unreleased* entries under a new version heading,
+   `## 0.2.0 — <date>`.
+2. Set the same version in `package.json` (`npm version 0.2.0 --no-git-tag-version`).
+3. Commit, then tag and push: `git tag v0.2.0 && git push origin master v0.2.0`.
+
+The *Release* workflow checks the tag matches `package.json`, runs the build,
+the smoke test and `scripts/pack-smoke.sh` (which installs the packed package
+the way a user would), publishes to npm with provenance, and creates the
+GitHub release from that changelog section. It needs an npm access token in
+the repository secret `NPM_TOKEN`.
+
+To try the package locally without publishing: `sh scripts/pack-smoke.sh`, or
+`npm pack` and `npm install -g ./onuohasilver-agent-office-*.tgz`.
+
 ## The launch video
 
 `launch/` holds the tooling that recorded the launch video: `setup.sh` resets a

@@ -78,7 +78,7 @@ export class Terminals {
 
   async status() {
     if (!this.on) {
-      return { enabled: false, reason: 'The terminal is off. Start the office with OFFICE_TERMINAL=1 to open it.' };
+      return { enabled: false, reason: 'The terminal is off. Start the office with --terminal (or OFFICE_TERMINAL=1) to open it.' };
     }
     if (!(await loadPty())) return { enabled: false, reason: ptyError };
     let folders = [];

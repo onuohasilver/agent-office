@@ -5,8 +5,8 @@ The key button beside Appearance chooses how the office signs in to Claude:
 - **Claude Code login** — the login Claude Code keeps on this machine, so jobs
   run on your Claude plan and the plan meters show how much of it is used.
 - **API key** — an Anthropic API key, billed to that API account. Paste it
-  once; it's checked with Anthropic, kept in `data/auth.json` (readable only by
-  you) and never sent back to the browser. A key already in
+  once; it's checked with Anthropic, kept in `auth.json` in the data folder
+  (readable only by you) and never sent back to the browser. A key already in
   `ANTHROPIC_API_KEY` is used until you paste another. The plan meters hide,
   because there's no plan.
 

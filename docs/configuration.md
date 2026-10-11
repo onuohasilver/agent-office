@@ -1,15 +1,18 @@
 # Configuration
 
-Everything is set with environment variables when the server starts, e.g.
-`PORT=4400 CHIEF_MODEL=haiku npm start`. In-app choices — Claude access, the
+The common choices are options to the command — the projects folder, `--port`,
+`--data`, `--terminal`, `--no-open`; see
+[Getting started](getting-started.md#options). Everything else is an
+environment variable, e.g. `CHIEF_MODEL=haiku agent-office`. In-app choices — Claude access, the
 voice toggle, team profiles, theme — are made in the office and remembered.
 
 ## The office
 
 | Env | Default | |
 |---|---|---|
-| `OFFICE_ROOT` | the folder above this one | its subfolders are the projects |
-| `PORT` | `4317` | |
+| `OFFICE_ROOT` | where you start it (a clone: the folder above it) | its subfolders are the projects |
+| `OFFICE_DATA` | `~/.agent-office` (a clone: `data/`) | where state, attachments and models are kept |
+| `PORT` | `4317`, or the next free one | |
 | `OFFICE_ALLOWED_HOSTS` | none | extra hostnames to accept, comma-separated; see [On your phone](phone.md) |
 
 ## Claude
@@ -37,8 +40,8 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 | Env | Default | |
 |---|---|---|
 | `WHISPER_BIN` | `whisper-cli` | |
-| `WHISPER_MODEL` | the best model in `data/whisper` | point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
-| `PIPER_BIN` | `data/piper/venv/bin/python` | the voices live in `data/piper/voices` |
+| `WHISPER_MODEL` | the best model in `whisper/` in the data folder | point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
+| `PIPER_BIN` | `piper/venv/bin/python` in the data folder | the voices live in `piper/voices` |
 | `FFMPEG_BIN` | `ffmpeg` | |
 
 ## Terminal
