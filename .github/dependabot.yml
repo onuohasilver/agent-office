@@ -7,6 +7,11 @@ updates:
     groups:
       minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # 1.1.0's macOS spawn-helper isn't executable, so no shell can start.
+      # Revisit when a stable release after it is out.
+      - dependency-name: node-pty
+        versions: ["1.1.x"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

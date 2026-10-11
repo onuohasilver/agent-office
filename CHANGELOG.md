@@ -6,6 +6,17 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+### Security
+- `ws` 8.22.0: fixes a memory-exhaustion denial of service and an
+  uninitialised-memory disclosure in the websocket server.
+- Vite 6.4.3 and esbuild 0.25 for development and builds, clearing
+  `server.fs.deny` bypasses and the dev server answering other sites.
+
+### Changed
+- three.js r186, xterm.js 6, and minor updates to the fonts and the
+  terminal's fit add-on.
+- node-pty stays on 1.0.0: 1.1.0 can't start a shell on macOS.
+
 ## 0.1.0 — 2026-10-11
 
 The first public release.
