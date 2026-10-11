@@ -23,6 +23,13 @@ There's no form: you chat. Type `@` to tag an agent and `#` to name a project.
   - if it can't tell which project you mean, it asks.
 - Agents post their results back into the chat.
 
+Attach files with the paperclip, by pasting, or by dropping them on the
+composer. A screenshot is shown to the chief itself, so "this again" over a
+picture of an error is enough to route on: it reads the picture, picks the
+project and the agent from what's in it, and writes the brief in words. Other
+file types (and the audio of a voice note) it can't open, so those go by name
+and the agent reads them with the Read tool — the path travels with the job.
+
 The clearance and model pickers under the composer apply to new work. The
 model picker starts on **Chief picks**, which hands the choice to the chief
 (see *Sizing the work* below); choosing a model yourself overrides it for
@@ -61,7 +68,8 @@ the talking.
 
 ```bash
 brew install ffmpeg whisper-cpp
-npm run voice:model        # ~148 MB, once
+npm run voice:model        # ~148 MB, ears
+npm run voice:piper        # ~700 MB, voices
 ```
 
 The microphone sits next to the paperclip, and `⌥M` works from anywhere.
@@ -75,12 +83,22 @@ the chief can route on them: "Ada, check the open PRs in Afriex" arrives as
 *Afriex*, not *a freaks*. Say `@` and `#` tags as plain names — the chief reads
 them either way.
 
-The speaker button in the top right reads replies aloud as they land: the
-chief, and agents reporting back to you. Everyone has their own voice, so you
-know who's talking without looking, and standup becomes something you can
-listen to while doing something else. Agent-to-agent asides stay quiet; they
-already have their knock. Markdown, code blocks and file paths are stripped
-before anything is spoken, because nobody wants to hear "backtick slash server
+The speaker button in the top right turns on replies in kind. The chief and
+the agents reporting back to you each record a **voice note** in their own
+voice, attached to the message: it plays as it lands and stays there to
+replay. Everyone sounds different, so you know who's talking without looking,
+and standup becomes something you can listen to while doing something else.
+
+The voices are [Piper](https://github.com/OHF-Voice/piper1-gpl), a neural
+text-to-speech model that runs here — Apple's built-in voices are a decade
+older and sound it. A line takes a few seconds to record, which is why agents
+send notes rather than narrating live: the text lands immediately and the
+voice catches up. Without Piper installed the office falls back to the system
+voices, spoken live by the browser.
+
+Agent-to-agent asides and break-room talk stay unspoken; they'd be constant,
+and they aren't for you. Markdown, code blocks and file paths are stripped
+before anything is said, because nobody wants to hear "backtick slash server
 slash index dot j s backtick" — the bubble keeps the detail. The small speaker
 on any message replays just that one.
 
@@ -129,7 +147,54 @@ Drag to move, right-drag (or `Q` / `E`) to turn around what's in the middle
 of the view, scroll to zoom toward the cursor, double-click to glide somewhere.
 `W A S D` pan, `R` recenters. The walls nearest you drop down so you can always
 see in. Chat and job details sit in their own columns and never cover the
-office.
+office, and `⌃`` opens the terminal drawer beneath it.
+
+## A terminal, if you want one
+
+There is a real shell in the drawer under the office: `⌃``, or the terminal
+button in the top right. Tabs across the top, `+` opens another, and the picker
+beside it chooses which project folder the next one starts in. Drag the top
+edge to resize — the office makes room rather than hiding behind it. It is a
+proper pty, so `vim`, `top`, `git add -p`, colours and your own prompt all work
+the way they do in a terminal app.
+
+It is off until you ask for it:
+
+```bash
+OFFICE_TERMINAL=1 npm start
+```
+
+That switch exists because shell access is the one door in the building that
+doesn't care about clearance. A job runs with the mode you picked and leaves a
+log; a shell is you, with everything you can do, and no record of what it did.
+So:
+
+- **Off by default.** No flag, no terminal — the socket won't even open.
+- **This machine's browser only.** The server already refuses any request whose
+  host or origin isn't local. On top of that, a session needs a single-use
+  ticket that expires in ten seconds, and tickets are only handed out on that
+  origin-checked route — the socket accepts nothing else.
+- **Not for the staff.** No agent can open one. There's no office tool and no
+  `/api/agent` route that reaches it, and a shell never inherits the job
+  credentials the office gives its own children.
+- **Nothing is kept.** Not in `data/state.json`, not in the chat, not on the
+  main socket. Scrollback lives in the tab and dies with it. `data/terminal.log`
+  records when sessions opened and closed and in which folder — never
+  keystrokes, because a log of what you typed into a shell is a file full of
+  passwords.
+- **It tidies up.** Closing a tab hangs up the shell, a session with nothing
+  happening closes itself after 30 minutes, and there's a cap on how many can
+  be open at once.
+
+What it is *not* is a sandbox. The shell runs as you and `cd ..` walks out of
+whichever folder it started in; picking the folder is a convenience, not a
+boundary. Leave it off on any machine where "whoever has the browser" isn't
+just you.
+
+The terminal needs [`node-pty`](https://github.com/microsoft/node-pty), which
+builds natively — it's an optional dependency, so `npm install` on a machine
+without build tools still gets you the whole office, just without this. On
+macOS: `xcode-select --install`, then `npm install`.
 
 ## How the office works
 
@@ -194,9 +259,14 @@ same session. A finished plan can be approved and built the same way.
 | `STANDUP_AT` | `09:30` (local time), or `off` |
 | `STANDUP_WEEKENDS` | unset; `1` holds standups on weekends too |
 | `WHISPER_MODEL` | the best model in `data/whisper`; point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
+| `PIPER_BIN` | `data/piper/venv/bin/python`; the voices live in `data/piper/voices` |
 | `WHISPER_BIN` | `whisper-cli` |
 | `FFMPEG_BIN` | `ffmpeg` |
+| `OFFICE_TERMINAL` | unset; `1` opens the in-app terminal |
+| `OFFICE_TERMINAL_SHELL` | your `$SHELL` |
+| `OFFICE_TERMINAL_MAX` | `4` sessions at once |
+| `OFFICE_TERMINAL_IDLE_MIN` | `30`; `0` never closes an idle shell |
 
 The server only listens on 127.0.0.1 and refuses requests from other origins,
-because it can start Claude with full permissions. State lives in
-`data/state.json`.
+because it can start Claude with full permissions — and, if you turned it on,
+hand out a shell. State lives in `data/state.json`.

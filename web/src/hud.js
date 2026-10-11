@@ -64,7 +64,7 @@ const bytes = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : `${Mat
 // Small shares still deserve a digit; "0%" reads as broken.
 const pct = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`;
 
-async function api(path, body, method) {
+export async function api(path, body, method) {
   const init = body === undefined
     ? (method ? { method } : {})
     : { method: method || 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
@@ -1003,6 +1003,25 @@ export class Hud {
       this.chat?.delete(id);
       for (const box of [$('msgs'), $('threadMsgs')]) box.querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
     }
+  }
+
+  // A voice note catching up with its message: slot the player in without
+  // disturbing the rest of the bubble.
+  addVoice(id, file) {
+    const m = this.chat?.get(id);
+    if (m) m.files = [...(m.files || []), file];
+    const files = m ? m.files : [file];
+    let el = null;
+    for (const box of [$('msgs'), $('threadMsgs')]) {
+      const found = box.querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+      if (!found) continue;
+      const frag = document.createRange().createContextualFragment(fileList(files));
+      const had = found.querySelector('.files');
+      if (had) had.replaceWith(frag);
+      else (found.querySelector('.body') || found.querySelector('.who')).after(frag);
+      el = found;
+    }
+    return el?.querySelector('audio.voice') || null;
   }
 
   setReactions(id, reactions) {

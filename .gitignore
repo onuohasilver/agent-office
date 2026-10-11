@@ -4,3 +4,5 @@ data/*.json
 data/*.tmp
 data/uploads
 data/whisper
+data/piper
+data/*.log

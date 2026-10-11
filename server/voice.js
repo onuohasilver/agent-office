@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { spawn } from 'node:child_process';
+import { speakable } from '../shared/speakable.js';
 
 const WHISPER = process.env.WHISPER_BIN || 'whisper-cli';
 const FFMPEG = process.env.FFMPEG_BIN || 'ffmpeg';
@@ -36,11 +37,12 @@ export function modelPath(dataDir) {
   return names.length ? path.join(dir, names[0]) : null;
 }
 
-function run(bin, args, { timeout = TIMEOUT } = {}) {
+function run(bin, args, { timeout = TIMEOUT, stdin = null } = {}) {
   return new Promise((resolve, reject) => {
     let child;
-    try { child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
+    try { child = spawn(bin, args, { stdio: [stdin === null ? 'ignore' : 'pipe', 'pipe', 'pipe'] }); }
     catch (err) { return reject(err); }
+    if (stdin !== null) { child.stdin.on('error', () => {}); child.stdin.end(stdin); }
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error(`${bin} took too long.`)); }, timeout);
     child.stdout.on('data', (c) => { out += c; });
@@ -106,4 +108,65 @@ export function voiceReady(dataDir) {
   return model
     ? { ok: true, model: path.basename(model) }
     : { ok: false, reason: `No speech model installed. ${MODEL_HINT}` };
+}
+
+// ---------- speaking: Piper ----------
+
+// Piper is a local neural text-to-speech engine. It sounds far better than
+// the system voices, but takes a few seconds a line, so agents speak in
+// recorded voice notes rather than live narration: the audio arrives attached
+// to the message, to play when you want it.
+
+const PIPER_DIR = (dataDir) => path.join(dataDir, 'piper');
+const piperBin = (dataDir) => process.env.PIPER_BIN || path.join(PIPER_DIR(dataDir), 'venv', 'bin', 'python');
+
+// One voice each, so you know who is talking before you have read a word.
+const PIPER_VOICES = {
+  chief: 'en_GB-cori-high',
+  ada: 'en_US-amy-medium',
+  tunde: 'en_GB-alan-medium',
+  mira: 'en_US-kristin-medium',
+  kai: 'en_US-ryan-high',
+  zola: 'en_GB-alba-medium',
+  remi: 'en_GB-aru-medium',
+  obi: 'en_US-john-medium',
+  lin: 'en_US-hfc_female-medium',
+};
+
+function voiceModel(dataDir, who) {
+  const dir = path.join(PIPER_DIR(dataDir), 'voices');
+  let have = [];
+  try { have = fs.readdirSync(dir).filter((n) => n.endsWith('.onnx')); } catch {}
+  if (!have.length) return null;
+  const want = PIPER_VOICES[who];
+  if (want && have.includes(`${want}.onnx`)) return path.join(dir, `${want}.onnx`);
+  // Not the voice they were meant to have, but a consistent one: the same
+  // person should never change voice between messages.
+  const ids = Object.keys(PIPER_VOICES);
+  const at = Math.max(0, ids.indexOf(who));
+  return path.join(dir, have.sort()[at % have.length]);
+}
+
+export function piperReady(dataDir) {
+  const bin = piperBin(dataDir);
+  if (!fs.existsSync(bin)) return { ok: false, reason: 'Piper is not installed. See the README.' };
+  if (!voiceModel(dataDir, 'chief')) return { ok: false, reason: 'Piper has no voices downloaded. See the README.' };
+  return { ok: true };
+}
+
+// Writes an m4a next to `out`, and returns its path. The wav Piper produces
+// is ten times the size for no audible gain over a spoken sentence.
+export async function speak(text, who, { dataDir, out }) {
+  const model = voiceModel(dataDir, who);
+  if (!model) throw new Error('Piper has no voices downloaded.');
+  const say = speakable(text);
+  if (!say) return null;
+  const wav = `${out}.wav`;
+  try {
+    await run(piperBin(dataDir), ['-m', 'piper', '-m', model, '-f', wav], { timeout: 180000, stdin: say.slice(0, 2000) });
+    await run(FFMPEG, ['-nostdin', '-loglevel', 'error', '-y', '-i', wav, '-c:a', 'aac', '-b:a', '48k', '-ar', '22050', '-ac', '1', out]);
+    return out;
+  } finally {
+    fs.rm(wav, { force: true }, () => {});
+  }
 }

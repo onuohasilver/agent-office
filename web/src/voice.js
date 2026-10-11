@@ -7,6 +7,9 @@
 // voice, so you can tell who's talking without looking. Agents only ever
 // write text; the speaking happens here.
 
+export { speakable } from '../../shared/speakable.js';
+import { speakable } from '../../shared/speakable.js';
+
 const store = (k, v) => {
   try {
     if (v === undefined) return localStorage.getItem(k);
@@ -82,62 +85,25 @@ export function voiceFile(blob) {
 // One voice each, so you know who's talking before you've read a word. These
 // are preferences in order; whatever the machine actually has gets used.
 const VOICES = {
-  chief: ['Moira', 'Fiona', 'Karen', 'Serena'],
+  chief: ['Moira', 'Fiona', 'Serena', 'Karen'],
   ada: ['Samantha', 'Ava', 'Allison', 'Susan'],
   tunde: ['Daniel', 'Oliver', 'Arthur', 'Alex'],
-  mira: ['Karen', 'Tessa', 'Zoe', 'Fiona'],
-  kai: ['Reed', 'Rocko', 'Alex', 'Tom'],
+  mira: ['Karen', 'Zoe', 'Tessa', 'Fiona'],
+  kai: ['Reed', 'Tom', 'Alex', 'Rocko'],
   zola: ['Tessa', 'Nicky', 'Joelle', 'Samantha'],
-  remi: ['Rishi', 'Eddy', 'Aman', 'Fred'],
-  obi: ['Eddy', 'Albert', 'Ralph', 'Daniel'],
-  lin: ['Flo', 'Sandy', 'Shelley', 'Kathy'],
+  remi: ['Rishi', 'Veena', 'Aman', 'Tara'],
+  obi: ['Flo', 'Eddy', 'Daniel', 'Reed'],
+  lin: ['Sandy', 'Shelley', 'Kathy', 'Moira'],
 };
 
-// Markdown, paths and code read terribly out loud: nobody wants to hear
-// "backtick slash server slash index dot j s backtick". Strip it to the
-// sentence underneath and let the chat bubble keep the detail.
-export function speakable(text) {
-  let s = String(text ?? '');
-  s = s
-    .replace(/```[\s\S]*?```/g, ' (code) ')
-    .replace(/~~~[\s\S]*?~~~/g, ' (code) ')
-    .replace(/`([^`]*)`/g, (m, inner) => (/[\/\\]/.test(inner) ? ' that file ' : /^\W*$/.test(inner) ? ' ' : ` ${inner} `))
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, ' a link ')
-    .replace(/^\s{0,3}#{1,6}\s*/gm, '')
-    .replace(/^\s*>\s?/gm, '')
-    .replace(/^\s*[-*+]\s+/gm, ', ')
-    .replace(/^\s*\d+\.\s+/gm, ', ')
-    .replace(/(\*\*|__|\*|_|~~)/g, '')
-    .replace(/^\s*\|.*\|\s*$/gm, ' ')
-    .replace(/^\s*[-=:|]{3,}\s*$/gm, ' ')
-    // Bare paths and file:line references, which are for clicking, not hearing.
-    .replace(/(?:\.{0,2}\/)?(?:[\w.-]+\/){1,}[\w.-]+(?::\d+)?/g, ' that file ')
-    .replace(/\b[\w-]+\.(?:js|ts|tsx|jsx|css|html|json|md|py|go|rs|sh|yml|yaml)\b(?::\d+)?/gi, ' that file ')
-    .replace(/[#*`_~>|]/g, ' ')
-    .replace(/\s*,\s*,+/g, ', ')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{2,}/g, '. ')
-    .replace(/\n/g, ' ')
-    .replace(/\s+([.,!?;:])/g, '$1')
-    .replace(/([:;,])[.,]+/g, '$1')
-    .replace(/\.{2,}/g, '.')
-    .replace(/\s{2,}/g, ' ')
-    .replace(/^[\s.,;:!?]+/, '')
-    .trim();
-  // Stripped down to punctuation: there was never a sentence in there.
-  if (!/[a-z0-9]/i.test(s)) return '';
-  // A long result post is a wall of text; say the opening and let the eye do
-  // the rest, cutting at a sentence end so it doesn't stop mid-thought.
-  const LIMIT = 460;
-  if (s.length > LIMIT) {
-    const cut = s.slice(0, LIMIT);
-    const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
-    s = (end > 160 ? cut.slice(0, end + 1) : cut.replace(/\s+\S*$/, '') + '…');
-  }
-  return s;
-}
+// macOS ships every voice in a compact form and offers far better "enhanced"
+// and "premium" downloads under the same name. The Web Speech API exposes no
+// quality field, but the identifier gives it away — so when both are
+// installed, take the good one. Without this the download changes nothing.
+const tier = (v) => {
+  const uri = `${v.voiceURI || ''} ${v.name || ''}`.toLowerCase();
+  return uri.includes('premium') ? 3 : uri.includes('enhanced') ? 2 : uri.includes('compact') ? 0 : 1;
+};
 
 class Speech {
   constructor() {
@@ -167,8 +133,8 @@ class Speech {
     const en = this.voices.filter((v) => /^en\b/i.test(v.lang) || /^en[-_]/i.test(v.lang));
     const pool = en.length ? en : this.voices;
     for (const want of VOICES[id] || []) {
-      const hit = pool.find((v) => v.name.toLowerCase().startsWith(want.toLowerCase()));
-      if (hit) return hit;
+      const hits = pool.filter((v) => v.name.toLowerCase().startsWith(want.toLowerCase()));
+      if (hits.length) return hits.sort((a, b) => tier(b) - tier(a))[0];
     }
     // Nothing from the wish list: spread whoever is left across the roster so
     // two agents still don't sound alike.

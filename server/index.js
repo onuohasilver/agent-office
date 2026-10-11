@@ -6,11 +6,12 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
-import { route } from './chief.js';
+import { canSee, route } from './chief.js';
 import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
-import { transcribe, vocabulary, voiceReady } from './voice.js';
+import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
+import { Terminals } from './terminal.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -251,6 +252,7 @@ const snapshot = () => ({
   machine,
   dismissed: state.dismissed,
   voice: voiceReady(DATA),
+  tts: { ...piperReady(DATA), replies: voiceOn() },
 });
 
 // ---------- what the agents are costing this machine ----------
@@ -335,6 +337,7 @@ function post(from, text, extra = {}) {
   if (state.chat.length > MAX_CHAT) state.chat.splice(0, state.chat.length - MAX_CHAT);
   send({ t: 'chat', msg });
   save();
+  voiceNote(msg);
   return msg;
 }
 
@@ -915,8 +918,13 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
   send({ t: 'chief', busy: true });
   let d;
   try {
-    const said = files.length ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')})` : text;
-    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL });
+    // Images ride along with the message so the chief can route on what the
+    // boss is pointing at; everything else it knows only by name.
+    const shown = canSee(files);
+    const said = files.length
+      ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')}${shown.length ? `. ${shown.length === 1 ? 'The image is' : 'The images are'} attached for you to look at.` : ''})`
+      : text;
+    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL, images: shown });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -1412,6 +1420,42 @@ function withFiles(text, files) {
   return `${text}\n\nAttached ${files.length === 1 ? 'file' : 'files'} (open with the Read tool, which shows images too):\n${list}`.trim();
 }
 
+// ---------- agents speaking ----------
+
+// An agent's reply, recorded in their own voice and attached to the message.
+// Piper takes a few seconds a line, so this never blocks the message from
+// appearing: the text lands now and the voice note catches up.
+let voiceQueue = Promise.resolve();
+const voiceOn = () => (state.voiceReplies === null ? piperReady(DATA).ok : !!state.voiceReplies);
+
+function voiceNote(msg) {
+  // Only what is said to you: agent-to-agent asides already have their knock.
+  // Break-room small talk stays unspoken: it would be constant, and it isn't for you.
+  if (!voiceOn() || msg.from === 'you' || msg.to || msg.kind === 'chill' || !String(msg.text || '').trim()) return;
+  if (!piperReady(DATA).ok) return;
+  voiceQueue = voiceQueue.then(async () => {
+    // It may have scrolled out of the chat while it waited its turn.
+    const live = state.chat.find((m) => m.id === msg.id);
+    if (!live) return;
+    const id = crypto.randomBytes(6).toString('hex');
+    const dir = path.join(UPLOADS, id);
+    const who = msg.from === 'chief' ? 'Chief' : nameOf(msg.from);
+    const name = `${who}-${msg.id}.m4a`.replace(/[^\w.-]/g, '');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      if (!(await speak(live.text, msg.from, { dataDir: DATA, out: path.join(dir, name) }))) throw new Error('nothing worth saying');
+      const [f] = attachments([id]);
+      if (!f) throw new Error('the recording went missing');
+      const { path: _, ...meta } = f;
+      live.files = [...(live.files || []), meta];
+      send({ t: 'voice', id: live.id, file: meta });
+      save();
+    } catch {
+      fs.rm(dir, { recursive: true, force: true }, () => {});
+    }
+  }).catch(() => {});
+}
+
 function serveUpload(res, id, name) {
   const [f] = attachments([id]);
   if (!f || f.name !== name) return json(res, 404, { error: 'No such file.' });
@@ -1427,6 +1471,10 @@ function serveUpload(res, id, name) {
 }
 
 // ---------- http ----------
+
+// The in-app terminal. Off unless OFFICE_TERMINAL=1; see server/terminal.js
+// for why its door is built the way it is.
+const terminals = new Terminals({ root: ROOT, dataDir: DATA, folders: listRepos });
 
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
 function trusted(req) {
@@ -1482,6 +1530,13 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    // The terminal. Both of these ran the host and origin checks above, which
+    // is the whole reason the socket can trust a ticket that came from here.
+    if (req.method === 'GET' && url.pathname === '/api/terminal') return json(res, 200, await terminals.status());
+    if (req.method === 'POST' && url.pathname === '/api/terminal/ticket') {
+      try { return json(res, 201, await terminals.ticket(await readBody(req))); }
+      catch (err) { return json(res, err.code || 400, { error: err.message }); }
+    }
     if (req.method === 'POST' && parts[1] === 'agent' && agentApi[parts[2]]) {
       const me = caller(req);
       if (!me) return json(res, 403, { error: 'Not on the clock.' });
@@ -1490,6 +1545,13 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/uploads') {
       const { path: _, ...f } = await upload(req);
       return json(res, 201, f);
+    }
+    if (req.method === 'POST' && url.pathname === '/api/voice/replies') {
+      const { on } = await readBody(req);
+      state.voiceReplies = !!on;
+      save();
+      send({ t: 'tts', ...piperReady(DATA), replies: voiceOn() });
+      return json(res, 200, { ok: true, replies: voiceOn() });
     }
     if (req.method === 'POST' && url.pathname === '/api/voice') {
       const f = await upload(req);
@@ -1564,17 +1626,33 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
+// A keystroke at a time, so nothing here needs a big frame; a terminal that
+// could be fed a megabyte per message is just a memory hole.
+const termWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 server.on('upgrade', (req, socket, head) => {
-  if (new URL(req.url, 'http://x').pathname !== '/ws' || !trusted(req)) return socket.destroy();
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    clients.add(ws);
-    ws.on('close', () => clients.delete(ws));
-    ws.send(JSON.stringify(snapshot()));
-  });
+  const url = new URL(req.url, 'http://x');
+  if (!trusted(req)) return socket.destroy();
+  if (url.pathname === '/ws') {
+    return wss.handleUpgrade(req, socket, head, (ws) => {
+      clients.add(ws);
+      ws.on('close', () => clients.delete(ws));
+      ws.send(JSON.stringify(snapshot()));
+    });
+  }
+  // No terminal, no socket: with the door shut there is nothing to hold open
+  // while someone guesses at tickets.
+  if (url.pathname === '/ws/terminal' && terminals.on) {
+    return termWss.handleUpgrade(req, socket, head, (ws) => terminals.open(ws, url.searchParams.get('ticket')));
+  }
+  socket.destroy();
 });
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Office open on http://localhost:${PORT}  (projects in ${ROOT})`);
+  // Shell access being open is not something to find out by accident.
+  terminals.status().then((t) => console.log(t.enabled
+    ? `Terminal ON — anything in this browser gets a shell as ${process.env.USER || 'you'}. Up to ${t.max}, ${t.idleMinutes} min idle.`
+    : `Terminal off. ${t.reason}`));
   pump();
   refreshUsage();
   setInterval(standupDue, 60 * 1000);
@@ -1583,6 +1661,7 @@ server.listen(PORT, '127.0.0.1', () => {
 
 const shutdown = () => {
   for (const child of running.values()) child.kill('SIGTERM');
+  terminals.killAll();
   clearTimeout(saveTimer);
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));

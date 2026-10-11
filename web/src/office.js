@@ -255,32 +255,254 @@ function sunPatch(scene, x, z, w, d) {
 
 // ---------- desks ----------
 
+// One sheet of grain, shared by every desktop: the tops read as real wood
+// instead of flat tan, and it costs a single texture for the whole room.
+let topMat;
+function deskTopMaterial() {
+  if (!topMat) {
+    const tex = plankTexture();
+    tex.repeat.set(0.5, 0.22);
+    topMat = new THREE.MeshStandardMaterial({ map: tex, color: '#f0d6b4', roughness: 0.52 });
+  }
+  return topMat;
+}
+
+// Keycaps, drawn once and laid over the keyboard as a texture. Modelling
+// sixty keys per desk would be sixty meshes nobody can see from the camera.
+let keyTex;
+function keycapTexture() {
+  if (keyTex) return keyTex;
+  const c = document.createElement('canvas');
+  c.width = 384;
+  c.height = 128;
+  const g = c.getContext('2d');
+  const cols = 15, rows = 5, cw = c.width / cols, ch = c.height / rows, pad = 3;
+  g.fillStyle = '#cfcac1';
+  g.fillRect(0, 0, c.width, c.height);
+  const cap = (x, y, w, h) => {
+    g.fillStyle = '#f7f5f1';
+    g.fillRect(x, y, w, h);
+    g.fillStyle = 'rgba(88, 84, 78, 0.22)';
+    g.fillRect(x, y + h - 2, w, 2);
+  };
+  for (let r = 0; r < rows - 1; r++)
+    for (let i = 0; i < cols; i++) cap(i * cw + pad, r * ch + pad, cw - pad * 2, ch - pad * 2);
+  // bottom row: modifiers either side of one long space bar
+  const last = (rows - 1) * ch;
+  for (const i of [0, 1, 2, 11, 12, 13, 14]) cap(i * cw + pad, last + pad, cw - pad * 2, ch - pad * 2);
+  cap(3 * cw + pad, last + pad, cw * 8 - pad * 2, ch - pad * 2);
+  keyTex = new THREE.CanvasTexture(c);
+  keyTex.colorSpace = THREE.SRGBColorSpace;
+  keyTex.anisotropy = 4;
+  return keyTex;
+}
+
+// A flat screen: dark shell, thin bezel, canvas face. Returns the group so
+// the caller can tilt the whole thing, face and all.
+function flatPanel(parent, w, h, px, py, pz, pxPerM = 500) {
+  const g = new THREE.Group();
+  g.position.set(px, py, pz);
+  parent.add(g);
+  // The back of a monitor is what most of the room sees, so it gets the
+  // lighter graphite shell and the bezel keeps the near-black.
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(w + 0.08, h + 0.12, 0.05),
+    ['#272d38', '#272d38', '#272d38', '#272d38', '#1e232c', '#3c4352'].map((c) => mat(c)));
+  shell.position.set(0, -0.015, -0.03);
+  shell.castShadow = true;
+  shell.receiveShadow = true;
+  g.add(shell);
+  box(g, (w + 0.08) * 0.55, 0.035, 0.012, '#323a47', 0, -h * 0.34, -0.056).castShadow = false;
+  const face = canvasPlane(g, w, h, Math.round(w * pxPerM), Math.round(h * pxPerM));
+  face.mesh.position.set(0, 0.015, 0.002);
+  return { g, face };
+}
+
+// Headphones resting on a little hook stand.
+function headphones(parent, x, y, z) {
+  const dark = mat('#23272f', { roughness: 0.6 });
+  cyl(parent, 0.11, 0.13, 0.025, '#2f3440', x, y + 0.012, z, 14);
+  cyl(parent, 0.022, 0.022, 0.3, '#2f3440', x, y + 0.16, z, 10);
+  const band = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 6, 16, Math.PI), dark);
+  band.position.set(x, y + 0.3, z);
+  band.castShadow = true;
+  parent.add(band);
+  for (const ex of [-0.11, 0.11]) {
+    const cup = cyl(parent, 0.065, 0.065, 0.05, null, x + ex, y + 0.28, z, 14, dark);
+    cup.rotation.z = Math.PI / 2;
+    cup.castShadow = true;
+  }
+}
+
+// The rubber duck. Every office has one; it listens better than most.
+function duck(parent, x, y, z) {
+  const yellow = mat('#f4c430', { roughness: 0.45 });
+  const bodyM = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), yellow);
+  bodyM.position.set(x, y + 0.06, z);
+  bodyM.scale.set(1, 0.85, 1.25);
+  bodyM.castShadow = true;
+  parent.add(bodyM);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), yellow);
+  head.position.set(x, y + 0.15, z - 0.05);
+  head.castShadow = true;
+  parent.add(head);
+  const beak = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.06, 8), mat('#e8833a', { roughness: 0.5 }));
+  beak.position.set(x, y + 0.14, z - 0.11);
+  beak.rotation.x = -Math.PI / 2;
+  parent.add(beak);
+  for (const ex of [-0.02, 0.02]) {
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.008, 6, 6), mat('#1a1a1a'));
+    eye.position.set(x + ex, y + 0.17, z - 0.085);
+    parent.add(eye);
+  }
+}
+
+// A small framed photo, angled towards whoever is sitting there.
+function photoFrame(parent, x, y, z, index) {
+  const g = new THREE.Group();
+  g.position.set(x, y, z);
+  g.rotation.y = -0.4 + (index % 2) * 0.8;
+  parent.add(g);
+  box(g, 0.26, 0.21, 0.02, '#3b3330', 0, 0.12, 0);
+  const pic = canvasPlane(g, 0.21, 0.16, 84, 64);
+  pic.mesh.position.set(0, 0.125, 0.012);
+  const { ctx: p, canvas } = pic;
+  p.fillStyle = '#cfe3ef';
+  p.fillRect(0, 0, canvas.width, canvas.height);
+  p.fillStyle = '#8fb0a0';
+  p.beginPath();
+  p.moveTo(0, canvas.height);
+  p.quadraticCurveTo(canvas.width * 0.5, canvas.height * 0.35, canvas.width, canvas.height);
+  p.fill();
+  p.fillStyle = '#f2cc8f';
+  p.beginPath();
+  p.arc(canvas.width * 0.72, canvas.height * 0.3, 7, 0, Math.PI * 2);
+  p.fill();
+  pic.tex.needsUpdate = true;
+  const foot = box(g, 0.02, 0.1, 0.02, '#3b3330', 0, 0.05, -0.04);
+  foot.rotation.x = 0.35;
+}
+
+// A notebook with a pen laid across it.
+function notebook(parent, x, y, z) {
+  const b = box(parent, 0.3, 0.035, 0.38, '#44506b', x, y + 0.018, z);
+  b.rotation.y = 0.18;
+  const pages = box(parent, 0.27, 0.02, 0.35, '#f6f2e8', x, y + 0.028, z + 0.01);
+  pages.rotation.y = 0.18;
+  const pen = cyl(parent, 0.009, 0.009, 0.24, '#e07a5f', x + 0.04, y + 0.045, z, 8);
+  pen.rotation.set(0, 0.5, Math.PI / 2);
+}
+
 function buildDesk(scene, grid, x, z, index) {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
-  box(g, 2.5, 0.1, 1.15, C.wood, 0, 0.78, 0);
-  for (const [lx, lz] of [[-1.15, -0.48], [1.15, -0.48], [-1.15, 0.48], [1.15, 0.48]]) box(g, 0.07, 0.76, 0.07, C.metal, lx, 0.38, lz);
-  box(g, 0.12, 0.32, 0.12, C.metal, 0, 0.98, -0.3);
-  box(g, 1.42, 0.86, 0.06, C.metal, 0, 1.45, -0.32);
-  box(g, 0.75, 0.03, 0.26, '#e9e6e1', 0, 0.845, 0.15);
-  box(g, 0.14, 0.03, 0.2, '#e9e6e1', 0.58, 0.845, 0.17);
-  const mug = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.16, 12), mat(['#e07a5f', '#3d7ea6', '#f2cc8f', '#81b29a'][index % 4]));
-  mug.position.set(-0.9, 0.91, 0.1);
-  g.add(mug);
-  // Something personal on every desk.
-  [() => deskLamp(g, 0.95, 0.83, -0.35), () => succulent(g, 0.95, 0.83, -0.2), () => bookStack(g, 0.9, 0.83, -0.22)][index % 3]();
 
-  // chair
+  // top: 2.5 x 1.15, surface at 0.83, with a darker lip so the edge catches
+  const top = box(g, 2.5, 0.1, 1.15, null, 0, 0.78, 0, deskTopMaterial());
+  top.receiveShadow = true;
+  box(g, 2.54, 0.03, 1.19, C.woodDark, 0, 0.742, 0);
+
+  // a steel T-frame, a tie beam between the legs, and a modesty panel
+  for (const lx of [-1.08, 1.08]) {
+    box(g, 0.09, 0.72, 0.16, C.metal, lx, 0.37, 0);
+    box(g, 0.13, 0.06, 1.0, C.metal, lx, 0.03, 0);
+    box(g, 0.13, 0.05, 0.86, C.metal, lx, 0.715, 0);
+  }
+  box(g, 1.95, 0.07, 0.08, C.metal, 0, 0.67, -0.18);
+  box(g, 2.0, 0.3, 0.04, C.woodDark, 0, 0.57, -0.5);
+  const tray = box(g, 1.3, 0.05, 0.12, '#2a2e38', 0, 0.5, -0.3);
+  tray.castShadow = false;
+
+  // drawer pedestal, handles and all
+  box(g, 0.58, 0.62, 0.56, '#e6ded0', 0.78, 0.31, -0.2);
+  for (const dy of [0.17, 0.45]) {
+    box(g, 0.5, 0.24, 0.02, '#f1ebe0', 0.78, dy, 0.09);
+    const pull = cyl(g, 0.013, 0.013, 0.16, '#8d94a3', 0.78, dy, 0.105, 8);
+    pull.rotation.z = Math.PI / 2;
+  }
+
+  // monitor on an arm, clamped to the back edge and tilted down a touch
+  box(g, 0.17, 0.07, 0.2, C.metal, 0, 0.87, -0.47);
+  cyl(g, 0.03, 0.035, 0.52, C.metal, 0, 1.12, -0.47, 12);
+  const upper = box(g, 0.055, 0.055, 0.32, C.metal, 0, 1.35, -0.38);
+  upper.rotation.x = 0.3;
+  box(g, 0.14, 0.14, 0.05, C.metal, 0, 1.42, -0.31);
+  const main = flatPanel(g, 1.5, 0.84, 0, 1.46, -0.295);
+  main.g.rotation.x = 0.05;
+  const ledMat = new THREE.MeshBasicMaterial({ color: '#2a3442', toneMapped: false });
+  const led = new THREE.Mesh(new THREE.CircleGeometry(0.014, 12), ledMat);
+  led.position.set(0.68, -0.47, 0.03);
+  main.g.add(led);
+  // a couple of stickies on the bezel, on some desks
+  if (index % 3 === 1)
+    [['#f6d365', -0.04, 0.09], ['#f3a6b2', -0.19, -0.06]].forEach(([c, sy, rot]) => {
+      const note = box(main.g, 0.11, 0.11, 0.004, c, 0.8, sy, 0.02);
+      note.rotation.z = rot;
+      note.castShadow = false;
+    });
+
+  // second screen, angled in towards the chair
+  const side = flatPanel(g, 0.6, 0.36, -0.99, 1.08, -0.02, 500);
+  side.g.rotation.y = 0.62;
+  box(side.g, 0.3, 0.03, 0.2, C.metal, 0, -0.25, 0);
+  box(side.g, 0.06, 0.2, 0.06, C.metal, 0, -0.14, 0);
+
+  // desk mat, keyboard, mouse
+  const padM = box(g, 1.18, 0.008, 0.42, '#454d5e', 0, 0.834, 0.16);
+  padM.castShadow = false;
+  box(g, 0.8, 0.022, 0.27, '#e9e6e1', -0.02, 0.849, 0.15);
+  const caps = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 0.23), new THREE.MeshStandardMaterial({ map: keycapTexture(), roughness: 0.7 }));
+  caps.rotation.x = -Math.PI / 2;
+  caps.position.set(-0.02, 0.861, 0.15);
+  caps.receiveShadow = true;
+  g.add(caps);
+  const mouse = new THREE.Mesh(new THREE.SphereGeometry(0.055, 12, 8), mat('#e9e6e1'));
+  mouse.position.set(0.52, 0.843, 0.18);
+  mouse.scale.set(1, 0.6, 1.45);
+  mouse.castShadow = true;
+  g.add(mouse);
+  box(g, 0.012, 0.004, 0.05, '#9aa3b2', 0.52, 0.874, 0.15).castShadow = false;
+
+  // mug, with a handle this time
+  const mugColor = ['#e07a5f', '#3d7ea6', '#f2cc8f', '#81b29a'][index % 4];
+  const mug = cyl(g, 0.07, 0.065, 0.16, mugColor, 0.66, 0.91, -0.08, 14);
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 6, 12, Math.PI * 1.2), mat(mugColor));
+  handle.position.set(0.73, 0.92, -0.08);
+  handle.rotation.y = Math.PI / 2;
+  handle.rotation.z = -0.3;
+  g.add(handle);
+  const coffee = new THREE.Mesh(new THREE.CircleGeometry(0.062, 14), mat('#4a3328', { roughness: 0.3 }));
+  coffee.rotation.x = -Math.PI / 2;
+  coffee.position.set(0.66, 0.985, -0.08);
+  g.add(coffee);
+
+  // Something personal on every desk, so no two look the same.
+  [() => deskLamp(g, 0.98, 0.83, -0.38),
+   () => succulent(g, 1.0, 0.83, -0.3),
+   () => bookStack(g, 0.98, 0.83, -0.32),
+   () => headphones(g, 1.0, 0.83, -0.3),
+   () => duck(g, 1.0, 0.83, -0.28),
+   () => photoFrame(g, 1.0, 0.83, -0.3, index)][index % 6]();
+  if (index % 4 === 2) notebook(g, -0.55, 0.835, -0.18);
+
+  // the nameplate, on the front edge where the room can read it
+  const plateG = new THREE.Group();
+  plateG.position.set(0.86, 0.835, 0.44);
+  g.add(plateG);
+  box(plateG, 0.46, 0.022, 0.1, '#2f343f', 0, 0.011, 0);
+  const plate = canvasPlane(plateG, 0.42, 0.11, 256, 67);
+  plate.mesh.position.set(0, 0.07, 0.015);
+  plate.mesh.rotation.x = -0.42;
+  plate.mesh.material = new THREE.MeshStandardMaterial({ map: plate.tex, roughness: 0.75 });
+
   const chair = deskChair(C.chair);
   chair.position.set(0, 0, 1.05);
   g.add(chair);
 
-  const screen = canvasPlane(g, 1.3, 0.74, 512, 292);
-  screen.mesh.position.set(0, 1.45, -0.285);
-
   scene.add(g);
   grid.block(x - 1.3, x + 1.3, z - 0.7, z + 0.5);
-  return { index, x, z, seat: new THREE.Vector3(x, 0, z + 1.05), seatY: SEAT, screen, chair };
+  const desk = { index, x, z, seat: new THREE.Vector3(x, 0, z + 1.05), seatY: SEAT, screen: main.face, side: side.face, plate, led: ledMat, chair };
+  dressDesk(desk, {});
+  return desk;
 }
 
 // ---------- seating ----------
@@ -289,21 +511,41 @@ function buildDesk(scene, grid, x, z, index) {
 // sit-down spot carries that height with it, so the figures rest on top of
 // the cushion instead of sinking through it.
 
-// A swivel chair, seat facing +z.
+// A swivel chair, seat facing +z: mesh back, headrest, padded arms, casters.
 function deskChair(color) {
   const chair = new THREE.Group();
-  box(chair, 0.62, 0.08, 0.6, color, 0, SEAT - 0.04, 0);
-  box(chair, 0.62, 0.58, 0.08, color, 0, SEAT + 0.29, 0.3);
+  const pad = mat('#3c4250', { roughness: 0.9 });
+  box(chair, 0.6, 0.07, 0.58, color, 0, SEAT - 0.035, 0);
+  const cushion = box(chair, 0.56, 0.05, 0.54, null, 0, SEAT + 0.01, 0.01, pad);
+  cushion.castShadow = false;
+
+  // The back leans away from the desk, in one piece so it tilts together.
+  const back = new THREE.Group();
+  back.position.set(0, SEAT, 0.3);
+  back.rotation.x = 0.12;
+  chair.add(back);
+  box(back, 0.56, 0.3, 0.09, color, 0, 0.19, 0);
+  box(back, 0.52, 0.34, 0.05, null, 0, 0.52, 0.005, pad);
+  for (const sx of [-0.25, 0.25]) box(back, 0.05, 0.36, 0.06, color, sx, 0.52, 0);
+  box(back, 0.34, 0.13, 0.06, color, 0, 0.79, -0.01);
+
   for (const ax of [-0.33, 0.33]) {
-    box(chair, 0.05, 0.2, 0.42, color, ax, SEAT + 0.1, 0.04);
-    box(chair, 0.07, 0.05, 0.46, '#5a5f6b', ax, SEAT + 0.2, 0.04);
+    box(chair, 0.05, 0.22, 0.4, color, ax, SEAT + 0.09, 0.06);
+    const rest = box(chair, 0.09, 0.05, 0.44, null, ax, SEAT + 0.21, 0.04, pad);
+    rest.castShadow = false;
   }
-  cyl(chair, 0.05, 0.05, SEAT - 0.08, C.metal, 0, (SEAT - 0.08) / 2, 0, 10);
+
+  cyl(chair, 0.055, 0.055, 0.18, '#6e7684', 0, SEAT - 0.14, 0, 12);
+  cyl(chair, 0.042, 0.042, SEAT - 0.22, C.metal, 0, (SEAT - 0.22) / 2 + 0.06, 0, 10);
+  cyl(chair, 0.11, 0.13, 0.05, C.metal, 0, 0.08, 0, 14);
   for (let k = 0; k < 5; k++) {
     const a = (k / 5) * Math.PI * 2;
-    const foot = box(chair, 0.07, 0.04, 0.3, C.metal, Math.sin(a) * 0.14, 0.05, Math.cos(a) * 0.14);
+    const foot = box(chair, 0.07, 0.045, 0.3, C.metal, 0, 0.075, 0);
+    foot.position.set(Math.sin(a) * 0.17, 0.075, Math.cos(a) * 0.17);
     foot.rotation.y = a;
-    foot.position.set(Math.sin(a) * 0.15, 0.05, Math.cos(a) * 0.15);
+    const caster = cyl(chair, 0.035, 0.035, 0.025, '#22262e', Math.sin(a) * 0.31, 0.04, Math.cos(a) * 0.31, 10);
+    caster.rotation.z = Math.PI / 2;
+    caster.rotation.y = a;
   }
   return chair;
 }
@@ -331,45 +573,131 @@ function stool(parent, x, z, color) {
   cyl(parent, 0.2, 0.22, 0.03, C.metal, x, 0.015, z, 16);
 }
 
+// Everything on a screen is laid out against a 512-wide reference, so the
+// canvas can get sharper without the type changing size.
 export function drawScreen(desk, { title = '', subtitle = '', lines = [], accent = '#7bd389', idle = false, t = 0 }) {
   const { ctx, canvas, tex } = desk.screen;
-  const W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#10161f';
+  const W = canvas.width, H = canvas.height, u = W / 512;
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, '#141c26');
+  grad.addColorStop(1, '#0d131b');
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, W, H);
   if (idle) {
-    ctx.fillStyle = '#2a3442';
-    ctx.font = `600 34px ${FONT}`;
     ctx.textAlign = 'center';
-    ctx.fillText(title, W / 2, H / 2 + 4);
-    ctx.font = `400 20px ${FONT}`;
-    ctx.fillText(subtitle, W / 2, H / 2 + 36);
+    ctx.fillStyle = '#2f3a49';
+    ctx.font = `600 ${34 * u}px ${FONT}`;
+    ctx.fillText(title, W / 2, H / 2 + 4 * u);
+    ctx.fillStyle = '#263040';
+    ctx.font = `400 ${20 * u}px ${FONT}`;
+    ctx.fillText(subtitle, W / 2, H / 2 + 36 * u);
     ctx.textAlign = 'left';
     tex.needsUpdate = true;
     return;
   }
+  // title bar: accent rule, a live dot, the repo and what it's doing
   ctx.fillStyle = accent;
-  ctx.fillRect(0, 0, W, 6);
-  ctx.fillStyle = '#e8edf3';
-  ctx.font = `650 26px ${FONT}`;
-  ctx.fillText(title, 22, 44);
+  ctx.fillRect(0, 0, W, 5 * u);
+  ctx.globalAlpha = 0.09;
+  ctx.fillRect(0, 5 * u, W, 76 * u);
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(30 * u, 40 * u, 6 * u, 0, Math.PI * 2);
+  ctx.fillStyle = accent;
+  ctx.globalAlpha = 0.55 + 0.45 * Math.sin(t * 3);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#eaeff5';
+  ctx.font = `650 ${26 * u}px ${FONT}`;
+  ctx.fillText(title, 46 * u, 48 * u);
   ctx.fillStyle = '#7d8a9c';
-  ctx.font = `400 18px ${FONT}`;
-  ctx.fillText(subtitle, 22, 70);
-  ctx.font = `400 18px ${MONO}`;
+  ctx.font = `400 ${18 * u}px ${FONT}`;
+  ctx.fillText(subtitle, 46 * u, 73 * u);
+
+  // the log, newest line brightest, with a gutter rule down the left
+  ctx.fillStyle = 'rgba(125, 138, 156, 0.22)';
+  ctx.fillRect(24 * u, 92 * u, 1.5 * u, H - 104 * u);
+  ctx.font = `400 ${18 * u}px ${MONO}`;
   const shown = lines.slice(-8);
   shown.forEach((l, i) => {
     const fresh = i === shown.length - 1;
-    ctx.fillStyle = l.color || (fresh ? '#e8edf3' : '#8b98aa');
+    const y = 116 * u + i * 23 * u;
+    ctx.globalAlpha = fresh ? 1 : 0.45 + i * 0.06;
+    ctx.fillStyle = l.color || (fresh ? '#eaeff5' : '#8b98aa');
     let text = l.text;
-    while (ctx.measureText(text).width > W - 44 && text.length > 4) text = text.slice(0, -2);
+    while (ctx.measureText(text).width > W - 56 * u && text.length > 4) text = text.slice(0, -2);
     if (text !== l.text) text = text.slice(0, -1) + '…';
-    ctx.fillText(text, 22, 104 + i * 23);
+    ctx.fillText(text, 38 * u, y);
+    ctx.globalAlpha = 1;
   });
   if (Math.floor(t * 2) % 2 === 0) {
     ctx.fillStyle = accent;
-    ctx.fillRect(22, 104 + shown.length * 23 - 15, 10, 18);
+    ctx.fillRect(38 * u, 116 * u + shown.length * 23 * u - 14 * u, 9 * u, 17 * u);
   }
   tex.needsUpdate = true;
+}
+
+// The nameplate, the second screen and the monitor's status light all say who
+// is sitting here, so they're drawn together whenever a desk changes hands.
+export function dressDesk(desk, { name = '', accent = '#7d8a9c', state = 'open' } = {}) {
+  const live = state === 'working';
+  if (desk.led) desk.led.color.set(live ? accent : state === 'open' ? '#232a35' : '#39455a');
+
+  const p = desk.plate;
+  if (p) {
+    const { ctx: g, canvas: c, tex } = p;
+    g.fillStyle = '#2c323d';
+    g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = state === 'open' ? '#454c5a' : accent;
+    g.fillRect(0, 0, 9, c.height);
+    g.fillStyle = state === 'open' ? '#8d97a6' : '#f3f1ed';
+    g.font = `650 30px ${FONT}`;
+    g.textBaseline = 'middle';
+    g.fillText(name, 26, c.height / 2 + 1);
+    g.textBaseline = 'alphabetic';
+    tex.needsUpdate = true;
+  }
+
+  const s = desk.side;
+  if (s) {
+    const { ctx: g, canvas: c, tex } = s;
+    const W = c.width, H = c.height;
+    g.fillStyle = state === 'open' ? '#0b0f15' : '#121a24';
+    g.fillRect(0, 0, W, H);
+    if (state === 'open') {
+      g.fillStyle = '#1b2430';
+      g.beginPath();
+      g.arc(W / 2, H / 2, 5, 0, Math.PI * 2);
+      g.fill();
+      tex.needsUpdate = true;
+      return;
+    }
+    g.fillStyle = accent;
+    g.globalAlpha = 0.85;
+    g.fillRect(0, 0, W, 4);
+    g.globalAlpha = 1;
+    g.font = `600 ${Math.round(H * 0.1)}px ${FONT}`;
+    g.fillStyle = '#6f7d8f';
+    g.fillText(name.toUpperCase(), 14, 26);
+    g.textAlign = 'right';
+    g.fillStyle = live ? accent : '#4d5a6b';
+    g.fillText(live ? 'ACTIVE' : state === 'away' ? 'OFFLINE' : 'IDLE', W - 14, 26);
+    g.textAlign = 'left';
+    // a quiet little activity read-out, steady per person
+    let h = 0;
+    for (const ch of name + state) h = (h * 31 + ch.charCodeAt(0)) % 9973;
+    for (let r = 0; r < 6; r++) {
+      const y = 44 + r * Math.round((H - 58) / 6);
+      const bh = Math.max(4, Math.round(H * 0.045));
+      g.fillStyle = '#1b2531';
+      g.fillRect(14, y, W - 28, bh);
+      h = (h * 31 + 17) % 9973;
+      const frac = live ? 0.25 + (h % 70) / 100 : 0.08 + (h % 25) / 100;
+      g.fillStyle = r === 0 && live ? accent : '#35445a';
+      g.fillRect(14, y, Math.round((W - 28) * frac), bh);
+    }
+    tex.needsUpdate = true;
+  }
 }
 
 // ---------- the room ----------

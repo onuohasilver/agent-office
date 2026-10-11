@@ -8,11 +8,12 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildOffice, drawScreen, drawBoard, drawWhiteboard } from './office.js';
+import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard } from './office.js';
 import { Agent } from './agent.js';
 import { BreakRoom } from './breakroom.js';
 import { Confetti } from './fx.js';
-import { Hud } from './hud.js';
+import { Hud, api } from './hud.js';
+import { TerminalDrawer } from './terminal.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -108,8 +109,11 @@ function backdrop() {
 let viewW = 1, viewH = 1;
 let touched = false;
 function resize() {
-  viewW = view.clientWidth;
-  viewH = view.clientHeight;
+  // The stage, not the whole column: the terminal drawer takes a bite out of
+  // the bottom of the view and the camera should be framed for what's left.
+  const prevH = viewH;
+  viewW = stage.clientWidth;
+  viewH = stage.clientHeight;
   renderer.setSize(viewW, viewH, false);
   composer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
   composer.setSize(viewW, viewH);
@@ -120,9 +124,17 @@ function resize() {
     HOME.radius = fitRadius(HOME.phi, HOME.theta, HOME.target);
     camera.position.setFromSpherical(new THREE.Spherical(HOME.radius, HOME.phi, HOME.theta)).add(HOME.target);
     controls.target.copy(HOME.target);
+  } else if (prevH > 1 && viewH > 1 && viewH !== prevH) {
+    // The vertical field of view is fixed, so a shorter stage would shrink the
+    // whole room — open the terminal and the desk you were leaning into halves
+    // in size. Pull the camera in by the same ratio so your zoom survives: the
+    // drawer takes a bite out of the view instead of rescaling it.
+    const off = camera.position.clone().sub(controls.target);
+    const r = THREE.MathUtils.clamp(off.length() * (viewH / prevH), controls.minDistance, controls.maxDistance);
+    camera.position.copy(controls.target).add(off.setLength(r));
   }
 }
-new ResizeObserver(resize).observe(view);
+new ResizeObserver(resize).observe(stage);
 resize();
 
 const office = buildOffice(scene);
@@ -161,6 +173,7 @@ const app = {
 };
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
+const terminal = new TerminalDrawer({ api, toast: (t, k) => hud.toast(t, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
 chief.want = 'desk';
@@ -273,6 +286,8 @@ function handle(msg) {
   if (msg.t === 'hello') {
     app.staff = msg.staff;
     app.voice = msg.voice;
+    tts = msg.tts || tts;
+    paintSpeak();
     app.modes = msg.modes;
     app.progress = msg.progress;
     app.chiefCost = msg.chiefCost || 0;
@@ -339,6 +354,14 @@ function handle(msg) {
     }
   } else if (msg.t === 'forget') {
     hud.forget(msg.ids);
+  } else if (msg.t === 'voice') {
+    const el = hud.addVoice(msg.id, msg.file);
+    // Play it as it lands, the way you'd hear someone speak — but never over
+    // your own recording, and not for a tab you aren't looking at.
+    if (el && tts.replies && !recorder.active && !document.hidden) el.play().catch(() => {});
+  } else if (msg.t === 'tts') {
+    tts = { ...tts, ...msg };
+    paintSpeak();
   } else if (msg.t === 'react') {
     hud.setReactions(msg.id, msg.reactions);
   } else if (msg.t === 'standup') {
@@ -420,18 +443,40 @@ paintSound();
 const VOICE_ON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>';
 const VOICE_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9V6a3 3 0 0 1 5.6-1.5M15 11a3 3 0 0 1-4.5 2.6"/><path d="M5 11a7 7 0 0 0 11 5.7M19 11v0"/><path d="M12 18v3"/><path d="m3 3 18 18"/></svg>';
 const speakBtn = document.getElementById('speak');
+// Piper records the agents in their own voices, which sound far better but
+// take a few seconds. Without it the browser's own voices stand in, instantly
+// and worse. The one button means the same thing either way.
+let tts = { ok: false, replies: false };
+const voiceLive = () => (tts.ok ? tts.replies : speech.on);
 function paintSpeak() {
-  speakBtn.innerHTML = speech.on ? VOICE_ON : VOICE_OFF;
-  speakBtn.classList.toggle('on', speech.on);
-  const label = speech.on ? 'Replies read aloud' : 'Replies not read aloud';
+  const on = voiceLive();
+  speakBtn.innerHTML = on ? VOICE_ON : VOICE_OFF;
+  speakBtn.classList.toggle('on', on);
+  const label = on ? (tts.ok ? 'Agents reply with voice notes' : 'Replies read aloud') : 'Replies are silent';
   speakBtn.title = label;
   speakBtn.setAttribute('aria-label', label);
 }
 if (!speech.supported) speakBtn.hidden = true;
-speakBtn.onclick = () => {
-  speech.setOn(!speech.on);
+speakBtn.onclick = async () => {
+  const want = !voiceLive();
+  if (!tts.ok) {
+    speech.setOn(want);
+    paintSpeak();
+    if (want) speech.speak('Voice on. I will read replies out as they land.', 'chief', { force: true });
+    return;
+  }
+  tts = { ...tts, replies: want };
   paintSpeak();
-  if (speech.on) speech.speak('Voice on. I will read replies out as they land.', 'chief', { force: true });
+  try {
+    const res = await fetch('/api/voice/replies', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ on: want }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `Request failed (${res.status})`);
+  } catch (err) {
+    tts = { ...tts, replies: !want };
+    paintSpeak();
+    hud.toast(err.message, 'bad');
+  }
 };
 paintSpeak();
 
@@ -439,6 +484,7 @@ paintSpeak();
 // Agent-to-agent asides already have their own knock, and talking over your
 // own recording would only feed the microphone.
 function sayAloud(m) {
+  if (tts.ok) return; // the server is recording this one properly
   if (!speech.on || m.from === 'you' || m.to || m.kind === 'chill' || recorder.active) return;
   speech.speak(m.text, m.from);
 }
@@ -582,12 +628,21 @@ function drawScreens(t) {
   office.desks.forEach((desk, i) => {
     const staff = app.staff[i];
     const agent = staff && app.agents.get(staff.id);
+    const away = !agent && staff && app.dismissed.has(staff.id);
+    // The nameplate and second screen only change when the desk changes
+    // hands, so they're redrawn on the state, not on every frame.
+    const state = agent?.job ? 'working' : agent ? 'break' : away ? 'away' : 'open';
+    const owned = state !== 'open';
+    const plateKey = `${staff?.name || ''} ${state}`;
+    if (desk.plateKey !== plateKey) {
+      desk.plateKey = plateKey;
+      dressDesk(desk, { name: owned ? staff.name : 'Open desk', accent: owned ? staff.shirt : '#7d8a9c', state });
+    }
     if (agent?.job) {
       drawScreen(desk, { title: agent.job.repo, subtitle: agent.job.title, lines: agent.lines, accent: staff.shirt, t });
       desk.idleKey = null;
       return;
     }
-    const away = !agent && staff && app.dismissed.has(staff.id);
     const key = agent ? `${staff.name}` : away ? `away ${staff.name}` : `open`;
     if (desk.idleKey === key) return;
     desk.idleKey = key;

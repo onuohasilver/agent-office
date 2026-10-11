@@ -2,7 +2,24 @@
 // who should handle it, and on how capable a model. It never touches a
 // project; it only routes.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
+
+// What the chief can actually look at. The API takes an image up to 5 MB once
+// base64 has made it a third bigger, and a routing call needs a glance rather
+// than a gallery; anything bigger or odder goes by name only, for the agent to
+// open with the Read tool.
+const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+const MAX_IMAGE = 3.5 * 1024 * 1024;
+const MAX_IMAGES = 4;
+
+// The attachments the chief will be shown, in the order they were sent.
+export function canSee(files) {
+  return (files || [])
+    .filter((f) => IMAGE_TYPES[path.extname(f.name || '').toLowerCase()] && f.size <= MAX_IMAGE)
+    .slice(0, MAX_IMAGES);
+}
 
 const SCHEMA = {
   type: 'object',
@@ -40,12 +57,32 @@ A job that fails is retried automatically one rung up the ladder, so starting lo
 
 A message you passed to an agent ("Passed to…", "Adding this to…" in the chat) is now theirs and in hand; don't say it is waiting.
 
+Images. A screenshot or mockup the boss attaches is shown to you with the message, so look at it before you decide: it is usually the whole brief. Let what you see set the project, the agent and the model, and say it in plain words in "brief" — "the usage bar is drawn over the avatar in the sidebar" tells the agent far more than "see the screenshot". The file's path travels with the brief, so the agent can open it themselves. Attachments you were not shown (other file types, and voice notes, which reach you as their transcript) you cannot open: route on the boss's words and leave the reading to the agent.
+
 "say" is one short, warm line for the chat, in plain words, e.g. "Ada's on it." or "Passing that to Tunde, it fits what they're doing." Refer to agents only by name or as "they"; never "he", "she", "him" or "her". Never claim work is done.`;
 
-export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000 } = {}) {
+// Routing on the boss's words alone, or on the images too. Only streamed
+// input can carry an image, and the CLI answers a stream with a stream, so
+// that path reads one JSON object per line and keeps the last one.
+export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000, images = [] } = {}) {
+  const shown = canSee(images);
+  if (!shown.length) return ask(context, { bin, model, timeoutMs });
+  // An image the API won't take (too many pixels, a .png that isn't one)
+  // shouldn't cost the boss their answer, so the words go on their own.
+  return ask(context, { bin, model, timeoutMs, images: shown })
+    .catch(() => ask(context, { bin, model, timeoutMs }));
+}
+
+function ask(context, { bin, model, timeoutMs, images }) {
+  const streamed = !!images?.length;
   return new Promise((resolve, reject) => {
     const args = [
-      '-p', '--model', model, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA),
+      '-p', '--model', model,
+      '--output-format', streamed ? 'stream-json' : 'json',
+      // Streamed output is only allowed with --verbose, and it is the only
+      // output format streamed input is allowed with.
+      ...(streamed ? ['--input-format', 'stream-json', '--verbose'] : []),
+      '--json-schema', JSON.stringify(SCHEMA),
       '--tools', '', '--setting-sources', '', '--strict-mcp-config', '--no-session-persistence',
       '--system-prompt', SYSTEM,
     ];
@@ -58,13 +95,36 @@ export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60
     child.on('close', () => {
       clearTimeout(timer);
       try {
-        const r = JSON.parse(out);
+        const r = streamed ? result(out) : JSON.parse(out);
         const decision = r.structured_output || JSON.parse(r.result);
         resolve({ ...decision, cost: r.total_cost_usd || 0 });
       } catch {
         reject(new Error(err.trim().split('\n').pop() || 'The chief could not decide.'));
       }
     });
-    child.stdin.end(context);
+    child.stdin.on('error', () => {});
+    child.stdin.end(streamed ? JSON.stringify(message(context, images)) + '\n' : context);
   });
+}
+
+// Images first, then the question: the models read a picture better when it
+// comes before what is being asked about it.
+function message(context, images) {
+  const content = images.map((f) => ({
+    type: 'image',
+    source: { type: 'base64', media_type: IMAGE_TYPES[path.extname(f.name).toLowerCase()], data: fs.readFileSync(f.path).toString('base64') },
+  }));
+  content.push({ type: 'text', text: context });
+  return { type: 'user', message: { role: 'user', content } };
+}
+
+// The decision is in the last line of the stream, the one the run ends on.
+function result(out) {
+  for (const line of out.trim().split('\n').reverse()) {
+    try {
+      const o = JSON.parse(line);
+      if (o.type === 'result') return o;
+    } catch {}
+  }
+  throw new Error('The stream carried no result.');
 }
