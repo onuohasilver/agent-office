@@ -4,10 +4,12 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## 0.4.0 — 2026-10-12
+## 0.5.0 — 2026-10-12
 
 ### Removed
-- The in-app terminal: the drawer under the office, its `/api/terminal` and `/ws/terminal` endpoints, and the `OFFICE_TERMINAL*` settings. The `xterm` and `node-pty` dependencies go with it.
+- The in-app browser terminal: the drawer under the office, its `/api/terminal` and `/ws/terminal` endpoints, and the `OFFICE_TERMINAL*` settings. The `xterm` and `node-pty` dependencies go with it, so installing no longer needs `allow-scripts` and npm stops warning about `node-pty`'s install scripts.
+
+## 0.4.0 — 2026-10-12
 
 ### Added
 - Clearing context no longer erases what an agent was doing. The boss's "clear context" keeps a note of each job's last report (or brief), logs it, and feeds it back on the next reply and to the agent's later jobs.
