@@ -740,8 +740,9 @@ function start(job, agentId) {
     // hooks, or memory: at Full autonomy those would all be the guest's.
     args.push('--strict-mcp-config', '--setting-sources', 'project,local', '--settings', JSON.stringify({ autoMemoryEnabled: false }));
   }
-  const allowed = job.guest ? GUEST_TOOLS : job.away ? [...OFFICE_TOOLS, ...awayTools(job)] : OFFICE_TOOLS;
-  args.push('--mcp-config', mcpFile, '--allowedTools', allowed.join(','), '--append-system-prompt', job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job) + awayPrompt(job));
+  // A guest's job can be away too: one of our agents, lent to the guest, in the guest's own project.
+  const allowed = [...(job.guest ? GUEST_TOOLS : OFFICE_TOOLS), ...(job.away ? awayTools(job) : [])];
+  args.push('--mcp-config', mcpFile, '--allowedTools', allowed.join(','), '--append-system-prompt', (job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job)) + awayPrompt(job));
   // Being given work in a channel is how you end up in it.
   try { joinChannel(channelOf(job.channel), agentId); } catch {}
   const first = job.sessionId ? withClearHint(job, job.pending) : job.pending;
@@ -1466,7 +1467,7 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
   if (remote) {
     if (files.length) return void say(`Files can’t go to @${remote.host}’s office. Paste the text instead.`);
     guests.startRemote({ link: remote.link, staff: remote.staff, text: remote.clean, mode, model, thread: root?.id || msg.id, channel: where })
-      .then(({ job, repo, capped }) => say(`${remote.staff.name} at @${remote.host} is on it, in ${repo}.${capped ? ` @${remote.host} allows up to ${MODES[job.mode]?.label || job.mode}, so it runs at that.` : ''}`, { jobId: job.id, thread: root ? root.id : null }))
+      .then(({ job, repo, home, capped }) => say(`${remote.staff.name} at @${remote.host} is on it, in ${home ? `your ${repo}, on @${remote.host}’s account. Their changes go into a copy you review.` : `${repo}.`}${capped ? ` @${remote.host} allows up to ${MODES[job.mode]?.label || job.mode}, so it runs at that.` : ''}`, { jobId: job.id, thread: root ? root.id : null }))
       .catch((err) => say(err.message, { thread: root ? root.id : null }));
     return;
   }

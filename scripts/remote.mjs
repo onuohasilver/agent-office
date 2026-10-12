@@ -63,7 +63,7 @@ guest.remote.get('L1').staff.pop();
 await guest.startRemote({ link: 'L1', staff: t.staff, text: 'tidy it', mode: 'edit', model: '', thread: 'm1', channel: 'general' })
   .then(() => check('two shared projects and none named asks which', false), (e) => check('two shared projects and none named asks which', /api, web/.test(e.message), e.message));
 await guest.startRemote({ link: 'L1', staff: t.staff, text: 'what is #mine about', mode: 'edit', model: '', thread: 'm1', channel: 'general' })
-  .then(() => check('our own #project isn’t quietly swapped for theirs', false), (e) => check('our own #project isn’t quietly swapped for theirs', /one of your own projects/.test(e.message), e.message));
+  .then(() => check('our own #project isn’t quietly swapped for theirs', false), (e) => check('our own #project isn’t quietly swapped for theirs', /make @friend your guest too/.test(e.message), e.message));
 let r = await guest.startRemote({ link: 'L1', staff: t.staff, text: 'tidy the #web header', mode: 'auto', model: '', thread: 'm1', channel: 'general' });
 const hj = hostJobs.at(-1);
 check('a #tag picks the project and leaves the brief', hj.repo === 'web' && hj.prompt === 'tidy the header' && hj.agentId === 'tunde', JSON.stringify(hj));

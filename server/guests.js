@@ -235,6 +235,8 @@ export class Guests {
             repos: p.repos, clearance: p.clearance, tokensPerDay: p.tokensPerDay, tokensToday: this.tokensToday(link.id),
             ourAgents: p.ourAgents !== false, theirAgents: this.copies ? p.theirAgents || 'off' : 'off',
           },
+          // We can run a lent agent in one of the guest's own projects (createJob's `home`).
+          home: true,
         };
       case 'visit.open': case 'visit.fs': case 'visit.close': {
         if (!this.copies) throw fail(400, 'Guests can’t do that here.');
@@ -246,14 +248,18 @@ export class Guests {
       }
       case 'createJob': {
         if (p.ourAgents === false) throw fail(403, 'This office lets your own agents work in its projects, but doesn’t lend its agents. Send one of yours instead.');
-        if (!p.repos.includes(args.repo)) throw fail(403, 'That project isn’t shared with you.');
+        // `home`: the guest's own project, not one of ours. The agent runs here
+        // and its file tools go back to the guest over the link where we are
+        // theirs (an away job), so it needs that link too, and that project shared on it.
+        const home = typeof args.home === 'string' && args.home ? await this.homeFolder(link, args.home) : null;
+        if (!home && !p.repos.includes(args.repo)) throw fail(403, 'That project isn’t shared with you.');
         const mode = this.capMode(p, args.mode);
         this.checkTokens(link, p);
         if (this.jobsOf(link.id, true).length >= MAX_OPEN_JOBS) throw fail(429, `You can have ${MAX_OPEN_JOBS} jobs going at once here. Wait for one to finish.`);
         const prompt = String(args.prompt ?? '').slice(0, MAX_PROMPT);
         const job = this.office.createJob(
-          { repo: args.repo, prompt, mode, model: typeof args.model === 'string' ? args.model : '', agentId: typeof args.agentId === 'string' ? args.agentId : '' },
-          { from: `@${link.peer}`, guest: { link: link.id } },
+          { repo: home ? `${home.repo}@${home.host}` : args.repo, prompt, mode, model: typeof args.model === 'string' ? args.model : '', agentId: typeof args.agentId === 'string' ? args.agentId : '' },
+          { from: `@${link.peer}`, guest: { link: link.id }, ...(home && { away: home }) },
         );
         return { job: guestJob(job) };
       }
@@ -275,6 +281,21 @@ export class Guests {
       default:
         throw fail(400, 'Guests can’t do that here.');
     }
+  }
+
+  // The guest's project `repo`, reached over the link where the guest is our
+  // host, as an away job's `away`. The relay names both ends of a link, so a
+  // guest can only point us at its own office.
+  async homeFolder(link, repo) {
+    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+    let e = [...this.remote.values()].find((x) => norm(x.host) === norm(link.peer));
+    const back = !e && this.links.links.find((l) => l.kind === 'guest' && l.role === 'guest' && norm(l.peer) === norm(link.peer));
+    if (back) e = await this.remoteHello(back).catch(() => null);
+    if (!e) throw fail(403, `To use our agents in your own projects, make @${this.links.status().handle || 'us'} your guest too, with their agents allowed in your projects.`);
+    if (!['read', 'edit'].includes(e.theirAgents)) throw fail(403, `You haven’t let @${this.links.status().handle || 'us'}’s agents work in your projects. Turn that on where we’re your guest.`);
+    const r = e.repos.find((x) => norm(x) === norm(repo));
+    if (!r) throw fail(403, `You haven’t shared ${repo} with @${this.links.status().handle || 'us'}. Add it where we’re your guest.`);
+    return { link: e.link, host: e.host, repo: r, access: e.theirAgents };
   }
 
   // Tokens a guest job used: counted against its guest, and a guest over its
@@ -421,6 +442,7 @@ export class Guests {
         repos: (Array.isArray(policy.repos) ? policy.repos : []).filter((r) => typeof r === 'string' && REPO.test(r)).slice(0, 50),
         clearance, tokensPerDay: count(policy.tokensPerDay), tokensToday: count(policy.tokensToday),
         ourAgents: policy.ourAgents !== false, theirAgents: ['read', 'edit'].includes(policy.theirAgents) ? policy.theirAgents : 'off',
+        home: hello?.home === true,
       },
     };
   }
@@ -463,7 +485,7 @@ export class Guests {
       const hello = this.cleanHello(link, await this.request(link.id, 'hello'));
       const entry = {
         link: link.id, host: link.peer, staff: hello.staff, repos: hello.visiting.repos, clearance: hello.visiting.clearance,
-        ourAgents: hello.visiting.ourAgents, theirAgents: hello.visiting.theirAgents,
+        ourAgents: hello.visiting.ourAgents, theirAgents: hello.visiting.theirAgents, home: hello.visiting.home,
         jobs: new Map(hello.jobs.map((j) => [j.id, j])),
       };
       if (!this.guestLinkOrNull(link.id)) return null; // unlinked while we asked
@@ -609,6 +631,22 @@ export class Guests {
     return null;
   }
 
+  // One of our own projects, for a host's lent agent: the host runs it and its
+  // file tools come back to us over the link where the host is our guest
+  // (visits.js), so that link must let their agents into this project.
+  lentHome(entry, repo) {
+    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const h = entry.host;
+    if (!entry.home) throw fail(400, `@${h}’s office is on an older version that can only run its agents in its own projects. Ask @${h} to update.`);
+    const back = this.links.links.find((l) => l.kind === 'guest' && l.role === 'host' && norm(l.peer) === norm(h));
+    const p = back && this.links.guestPolicy(back.id);
+    if (!p) throw fail(400, `To use @${h}’s agents in #${repo}, make @${h} your guest too, with their agents allowed in your projects.`);
+    if (!['read', 'edit'].includes(p.theirAgents)) throw fail(400, `To use @${h}’s agents in #${repo}, let their agents work in your projects: Change, where @${h} is your guest.`);
+    const r = p.repos.find((x) => norm(x) === norm(repo));
+    if (!r) throw fail(400, `You haven’t shared ${repo} with @${h}. Add it under Change, where @${h} is your guest, and ask again.`);
+    return r;
+  }
+
   // The project a job at a host goes in: the only one it shares, one tagged
   // or named in the brief, or the one used there last time.
   remoteRepo(entry, text) {
@@ -619,7 +657,7 @@ export class Guests {
     // A project of ours, not theirs: their agent would run in their folder
     // and never see ours. Say so, rather than quietly working somewhere else.
     const ours = tags.find((t) => !repos.some((r) => norm(r) === norm(t[2])) && this.office.repoPath?.(t[2]));
-    if (ours) throw fail(400, `#${ours[2]} is one of your own projects, and @${entry.host}’s agents work only in the projects @${entry.host} shares with you (${repos.join(', ')}). To have their agent work in yours, @${entry.host} needs to be invited as a guest of your office with “their agents work in your projects” on, then send it from their side as #${ours[2]}@you.`);
+    if (ours) return { repo: this.lentHome(entry, ours[2]), home: true, text: text.replace(ours[0], ' ').replace(/[ \t]+/g, ' ').trim() };
     if (repos.length === 1) return { repo: repos[0], text };
     for (const t of tags) {
       const repo = repos.find((r) => norm(r) === norm(t[2]));
@@ -688,16 +726,16 @@ export class Guests {
   // Start a job with one of a host's agents, from our chat.
   async startRemote({ link, staff, text, mode, model, thread, channel }) {
     const entry = this.remote.get(link) || await this.remoteHello(this.guestLink(link));
-    const { repo, text: brief } = this.remoteRepo(entry, text);
+    const { repo, home, text: brief } = this.remoteRepo(entry, text);
     if (!brief) throw fail(400, 'Say what the job is, as well as who it’s for.');
     const agentId = staff.id.slice(link.length + 1);
-    const { job } = await this.request(link, 'createJob', { repo, prompt: brief, mode: this.capRemote(entry, mode), model, agentId });
+    const { job } = await this.request(link, 'createJob', { ...(home ? { home: repo } : { repo }), prompt: brief, mode: this.capRemote(entry, mode), model, agentId });
     this.asked.threads[`${link}.${job.id}`] = { thread, channel };
-    this.asked.lastRepo[link] = repo;
+    if (!home) this.asked.lastRepo[link] = repo;
     this.save();
     entry.jobs.set(job.id, job);
     const local = this.localJob(entry, job);
     this.office.send({ t: 'job', job: local });
-    return { job: local, entry, repo, capped: this.capRemote(entry, mode) !== mode };
+    return { job: local, entry, repo, home: !!home, capped: this.capRemote(entry, mode) !== mode };
   }
 }
