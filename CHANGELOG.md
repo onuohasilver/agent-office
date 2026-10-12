@@ -6,6 +6,13 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+## 0.2.0 — 2026-10-12
+
+### Fixed
+- A job whose agent flagged a question, decision or blocker is no longer
+  reported as done when their turn ends. The chief posts "Waiting on you"
+  instead, and no shipped count, XP or celebration is given until it resumes.
+
 ### Leaderboard
 - An optional leaderboard: join under a claimed handle and compare jobs
   finished, tokens used and agent time, weekly and all time. Off until you
