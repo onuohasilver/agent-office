@@ -11,6 +11,9 @@ Notable changes to Agent Office. The format follows
 - Agents can clear their own context. A new `clear_context` tool takes notes to self; once the turn ends, the job restarts in a fresh session with the brief and those notes, so long jobs stop paying for their whole history on every turn. Past `AGENT_CLEAR_TOKENS` of context (default 150,000, `0` to disable) the agent's next message nudges it to do so. The limit can also be set from the office, in the Claude access menu, and takes effect straight away. See [Jobs](docs/jobs.md).
 - The chief of staff can clear context directly. Telling it "clear context" (for everyone, or for named agents) clears their sessions with no job handed out.
 
+### Changed
+- The office header shows whose office it is (`OFFICE_OWNER`, else the first name on the account), your level as a progress ring, and the usage gauges as rings behind a fold button. The glass styling is reworked to match.
+
 ### Fixed
 - An agent whose brief was itself "clear your context" looped on `clear_context`: each fresh session re-read the brief and cleared again until the cap. The restart now says the clear is done and not to repeat it.
 

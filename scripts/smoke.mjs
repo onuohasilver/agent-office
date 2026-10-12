@@ -117,7 +117,7 @@ try {
 
   await check('serves the web app', async () => {
     const html = await (await get('/')).text();
-    assert(html.includes('<title>Agent Office</title>'), 'no app shell');
+    assert(html.includes('<title>Office</title>'), 'no app shell');
   });
   await check('lists projects from OFFICE_ROOT', async () => {
     const { repos } = await (await get('/api/repos')).json();
