@@ -3,6 +3,7 @@
 
 import { Marked } from 'marked';
 import { recorder, voiceFile, speech } from './voice.js';
+import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -30,6 +31,13 @@ const STATUS = { queued: 'Queued', working: 'Working', done: 'Shipped', failed: 
 const TIERS = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 const modelLabel = (m) => TIERS[m] || [...($('model')?.options || [])].find((o) => o.value === m)?.text || m || 'Default';
 const STATION = { library: 'Library', servers: 'Server room', window: 'Research', whiteboard: 'Whiteboard', desk: 'Desk' };
+// A visited host's jobs reach this page too, so a value that lands in markup
+// as a class or a number is held to the ones we know.
+const known = (map, k) => (typeof k === 'string' && Object.hasOwn(map, k) ? k : '');
+const statusText = (s) => STATUS[known(STATUS, s)] || '';
+const num = (n) => (Number.isFinite(n) ? n : 0);
+// Colours go into style attributes, so only a hex colour gets through.
+const hex = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : '#999');
 
 const store = (k, v) => {
   try {
@@ -289,7 +297,7 @@ export class Hud {
   }
 
   renderStats(jobs, extra = 0) {
-    const count = (s) => jobs.filter((j) => j.status === s).length;
+    const count = (s) => jobs.filter((j) => j.status === s && !j.awaitingBoss).length;
     const spent = jobs.reduce((a, j) => a + (j.cost || 0), extra);
     $('stats').innerHTML = [
       `<span><b>${count('working')}</b> working</span>`,
@@ -306,10 +314,10 @@ export class Hud {
     const list = [...jobs].sort((a, b) => order[a.status] - order[b.status] || (b.endedAt || b.queuedAt) - (a.endedAt || a.queuedAt));
     $('jobs').innerHTML = list.length
       ? list.map((j) => `
-        <button class="job ${j.id === this.openId ? 'open' : ''}" data-id="${j.id}">
-          <span class="dot ${j.status}"></span>
+        <button class="job ${j.id === this.openId ? 'open' : ''}" data-id="${esc(j.id)}">
+          <span class="dot ${known(STATUS, j.status)}"></span>
           <span class="t">${esc(j.title)}</span>
-          <span class="m">${esc(j.repo)}${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''} · ${STATUS[j.status]}</span>
+          <span class="m">${j.from ? `<b class="from">from ${esc(j.from)}</b> · ` : ''}${esc(j.repo)}${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''} · ${statusText(j.status)}</span>
         </button>`).join('')
       : `<p class="empty">No jobs yet. Ask for something in the chat.</p>`;
     $('clear').hidden = !list.some((j) => order[j.status] === 2);
@@ -324,7 +332,7 @@ export class Hud {
   // The folder list is fetched when the tab opens, so a new project shows up
   // without a reload; the jobs half is live and redraws with every job update.
   async loadProjects() {
-    try { this.repos = (await api('/api/repos')).repos; } catch { this.repos ||= []; }
+    try { this.repos = allowRepos((await api('/api/repos')).repos); } catch { this.repos ||= []; }
     this.renderProjects();
   }
 
@@ -356,8 +364,8 @@ export class Hud {
           <span class="m">${p.note}</span>
         </button>
         ${open ? `<div class="sub">${p.js.length ? p.js.slice(0, 8).map((j) => `
-          <button class="job" data-id="${j.id}"><span class="dot ${j.status}"></span><span class="t">${esc(j.title)}</span>
-            <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${STATUS[j.status]}</span></button>`).join('')
+          <button class="job" data-id="${esc(j.id)}"><span class="dot ${known(STATUS, j.status)}"></span><span class="t">${esc(j.title)}</span>
+            <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${statusText(j.status)}</span></button>`).join('')
           : `<p class="none">Nothing has run here yet.</p>`}
           <button type="button" class="ghost" data-new="${esc(p.name)}">New job in ${esc(p.name)}</button></div>` : ''}
       </div>`;
@@ -368,8 +376,9 @@ export class Hud {
 
   async openDetail(id) {
     this.openId = id;
-    const job = await api(`/api/jobs/${id}`);
+    let job = await api(jobPath(id));
     if (this.openId !== id) return;
+    if (visiting.on) job = job.job;
     this.app.mergeLog(job);
     this.renderDetail();
     this.app.refreshLists();
@@ -389,7 +398,7 @@ export class Hud {
     el.hidden = false;
     el.innerHTML = `
       <div class="d-head">
-        <span class="pill ${job.status}">${STATUS[job.status]}</span>
+        <span class="pill ${known(STATUS, job.status)}">${statusText(job.status)}</span>
         <button class="x" title="Close (Esc)">×</button>
       </div>
       <h2>${esc(job.title)}</h2>
@@ -421,14 +430,14 @@ export class Hud {
       <div class="changes">
         <button class="c-head" aria-expanded="${open}">
           <span class="c-title">What changed</span>
-          <span class="c-sum">${c.count} file${c.count === 1 ? '' : 's'} <b class="add">+${c.add}</b> <b class="del">−${c.del}</b></span>
+          <span class="c-sum">${num(c.count)} file${c.count === 1 ? '' : 's'} <b class="add">+${num(c.add)}</b> <b class="del">−${num(c.del)}</b></span>
           <span class="c-caret">${open ? '▾' : '▸'}</span>
         </button>
         ${open ? `<ul class="c-files">${c.files.map((f, i) => `
           <li><button class="c-file" data-i="${i}" aria-expanded="false">
-            <span class="st ${f.status}">${status[f.status]}</span><span class="p" title="${esc(f.path)}">${esc(f.path)}</span>
-            <span class="n">${f.binary ? 'binary' : `<b class="add">+${f.add}</b> <b class="del">−${f.del}</b>`}</span>
-          </button></li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${c.count - c.files.length} more</li>` : ''}</ul>` : ''}
+            <span class="st ${known(status, f.status)}">${status[known(status, f.status)] || ''}</span><span class="p" title="${esc(f.path)}">${esc(f.path)}</span>
+            <span class="n">${f.binary ? 'binary' : `<b class="add">+${num(f.add)}</b> <b class="del">−${num(f.del)}</b>`}</span>
+          </button></li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${num(c.count - c.files.length)} more</li>` : ''}</ul>` : ''}
       </div>`;
     box.querySelector('.c-head').onclick = () => {
       this.changesOpen = open ? null : job.id;
@@ -444,7 +453,7 @@ export class Hud {
       pre.textContent = 'Loading…';
       li.append(pre);
       try {
-        const { diff } = await api(`/api/jobs/${job.id}/diff?path=${encodeURIComponent(c.files[b.dataset.i].path)}`);
+        const { diff } = await api(jobPath(job.id, `/diff?path=${encodeURIComponent(c.files[b.dataset.i].path)}`));
         pre.innerHTML = diff.split('\n').filter((l) => !/^(diff --git|index |--- |\+\+\+ )/.test(l))
           .map((l) => `<span class="${l[0] === '+' ? 'add' : l[0] === '-' ? 'del' : l[0] === '@' ? 'hunk' : ''}">${esc(l) || ' '}</span>`).join('\n') || 'No textual changes.';
       } catch (err) { pre.textContent = err.message; }
@@ -457,6 +466,7 @@ export class Hud {
     const end = job.status === 'working' || job.status === 'queued' ? Date.now() : job.endedAt || Date.now();
     const rows = [
       ['Project', job.repo],
+      ...(job.from && !visiting.on ? [['From', `${job.from} (guest)`]] : []),
       ['Agent', job.agentId ? this.app.staffName(job.agentId) : 'Unassigned'],
       ['Clearance', this.app.modes[job.mode] || job.mode],
       ['Model', [modelLabel(job.model), job.autoModel && 'chief’s pick',
@@ -483,10 +493,10 @@ export class Hud {
       case 'user': return `<div class="e user"><span class="who">You</span><p>${esc(e.summary)}</p></div>`;
       case 'system': return `<div class="e sys">${esc(e.summary)}</div>`;
       case 'thinking': return `<div class="e sys">thinking…</div>`;
-      case 'tool': return `<div class="e tool"><span class="st ${e.station}" title="${STATION[e.station] || ''}"></span>${esc(e.summary)}</div>`;
+      case 'tool': return `<div class="e tool"><span class="st ${known(STATION, e.station)}" title="${STATION[known(STATION, e.station)] || ''}"></span>${esc(e.summary)}</div>`;
       case 'text': return `<div class="e text md" data-text="${esc(e.summary)}">${rich(e.summary)}</div>`;
       case 'error': return `<div class="e err">${esc(e.summary)}</div>`;
-      case 'result': return `<div class="e result ${e.ok ? 'ok' : 'bad'}"><span class="who">${e.ok ? 'Result' : 'Ended early'}${e.ms ? ` · ${duration(e.ms)}` : ''}${e.cost ? ` · $${e.cost.toFixed(3)}` : ''}</span>${echo ? '' : `<div class="md">${rich(e.summary)}</div>`}</div>`;
+      case 'result': return `<div class="e result ${e.ok ? 'ok' : 'bad'}"><span class="who">${e.ok ? 'Result' : 'Ended early'}${num(e.ms) ? ` · ${duration(e.ms)}` : ''}${num(e.cost) ? ` · $${e.cost.toFixed(3)}` : ''}</span>${echo ? '' : `<div class="md">${rich(e.summary)}</div>`}</div>`;
       default: return '';
     }
   }
@@ -515,7 +525,7 @@ export class Hud {
         <div class="tray" hidden></div>
         <textarea name="message" rows="2" placeholder="Follow up with ${esc(this.app.staffName(job.agentId) || 'them')}…"></textarea>
         <div class="row">
-          <select name="mode">${Object.entries(this.app.modes).map(([k, v]) => `<option value="${k}" ${k === job.mode ? 'selected' : ''}>${v}</option>`).join('')}</select>
+          <select name="mode">${Object.entries(this.app.modes).map(([k, v]) => `<option value="${esc(k)}" ${k === job.mode ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
           <button type="button" class="attach" title="Attach files or images" aria-label="Attach files">
             <svg viewBox="0 0 24 24"><path d="M21 11.5l-8.6 8.6a5.5 5.5 0 0 1-7.8-7.8l8.6-8.6a3.7 3.7 0 0 1 5.2 5.2l-8.6 8.6a1.8 1.8 0 0 1-2.6-2.6l7.9-7.9"/></svg>
           </button>
@@ -530,13 +540,10 @@ export class Hud {
     const act = async (fn) => {
       try { await fn(); } catch (err) { this.toast(err.message, 'bad'); }
     };
-    foot.querySelectorAll('[data-act="stop"]').forEach((b) => (b.onclick = () => act(() => api(`/api/jobs/${job.id}/stop`, {}))));
-    foot.querySelectorAll('[data-act="grant"]').forEach((b) => (b.onclick = () => act(() => api(`/api/jobs/${job.id}/reply`, {
-      message: 'You now have permission to run the commands that were blocked. Carry on from where you stopped.', mode: 'auto',
-    }))));
-    foot.querySelectorAll('[data-act="approve"]').forEach((b) => (b.onclick = () => act(() => api(`/api/jobs/${job.id}/reply`, {
-      message: 'Approved. Go ahead and implement the plan.', mode: 'edit',
-    }))));
+    foot.querySelectorAll('[data-act="stop"]').forEach((b) => (b.onclick = () => act(() => api(jobPath(job.id, '/stop'), {}))));
+    foot.querySelectorAll('[data-act="grant"]').forEach((b) => (b.onclick = () => act(() => api(jobPath(job.id, '/reply'),
+      replyBody('You now have permission to run the commands that were blocked. Carry on from where you stopped.', 'auto')))));
+    foot.querySelectorAll('[data-act="approve"]').forEach((b) => (b.onclick = () => act(() => api(jobPath(job.id, '/reply'), replyBody('Approved. Go ahead and implement the plan.', 'edit')))));
     const form = foot.querySelector('form.reply');
     if (form) {
       const tray = new Tray(form.querySelector('.tray'), (m) => this.toast(m, 'bad'));
@@ -546,7 +553,7 @@ export class Hud {
         const fd = new FormData(form);
         act(async () => {
           const files = await tray.ids();
-          await api(`/api/jobs/${job.id}/reply`, { message: fd.get('message'), mode: fd.get('mode'), files });
+          await api(jobPath(job.id, '/reply'), replyBody(fd.get('message'), fd.get('mode'), files));
           tray.clear();
         });
       };
@@ -594,7 +601,8 @@ export class Hud {
   }
 
   setPlaceholder() {
-    $('input').placeholder = `Message #${this.channel} · @agent #project`;
+    // While visiting, links.js words it as starting a job at the host.
+    if (!visiting.on) $('input').placeholder = `Message #${this.channel} · @agent #project`;
   }
 
   selectChannel(id) {
@@ -692,7 +700,9 @@ export class Hud {
     const input = $('input');
     for (const id of ['mode', 'model']) {
       const saved = store(`office.${id}`);
-      if (saved !== null) $(id).value = saved;
+      // Only a value the picker offers: anything else leaves it blank and
+      // the server turns the message away.
+      if (saved !== null && [...$(id).options].some((o) => o.value === saved)) $(id).value = saved;
       $(id).onchange = () => store(`office.${id}`, $(id).value);
     }
     $('composer').onsubmit = (e) => { e.preventDefault(); this.send(); };
@@ -843,6 +853,11 @@ export class Hud {
     try {
       const files = await this.tray.ids();
       if (!text && !files.length) return;
+      if (visiting.on) {
+        const job = await visitJob({ text, mode: $('mode').value, model: $('model').value });
+        if (job) { this.app.jobs.set(job.id, job); this.app.refreshLists(); this.app.openJob(job.id); }
+        return;
+      }
       await api('/api/chat', { text, files, channel: this.channel, mode: $('mode').value, model: $('model').value });
       this.tray.clear();
     } catch (err) {
@@ -867,7 +882,7 @@ export class Hud {
       items = this.app.roster().map((a) => ({ insert: `@${a.name}`, label: a.name, note: a.note, dot: a.color }));
     } else {
       if (!this.repos) {
-        try { this.repos = (await api('/api/repos')).repos; } catch { this.repos = []; }
+        try { this.repos = allowRepos((await api('/api/repos')).repos); } catch { this.repos = []; }
       }
       items = this.repos.map((r) => ({ insert: `#${r.replace(/\s+/g, '-')}`, label: r, note: this.app.busyIn(r) }));
     }
@@ -877,7 +892,7 @@ export class Hud {
     if (!items.length) { ac.hidden = true; return; }
     ac.innerHTML = items.map((i, k) => `
       <div class="item ${k === 0 ? 'on' : ''}" data-insert="${esc(i.insert)}" data-len="${typed.length + 1}">
-        ${i.dot ? `<i style="background:${i.dot}"></i>` : '<i class="hash">#</i>'}
+        ${i.dot ? `<i style="background:${hex(i.dot)}"></i>` : '<i class="hash">#</i>'}
         <span>${esc(i.label)}</span>${i.note ? `<em>${esc(i.note)}</em>` : ''}
       </div>`).join('');
     ac.hidden = false;
@@ -907,7 +922,9 @@ export class Hud {
     const roots = [...this.chat.values()].filter((m) => this.here(m) && !this.inThread(m));
     $('msgs').innerHTML = roots.length
       ? roots.map((m) => this.message(m)).join('')
-      : `<p class="empty">${this.channel === 'general'
+      : `<p class="empty">${visiting.on
+        ? `Start a job${visiting.host ? ` at @${esc(visiting.host)}` : ''}: say what you need and tag ${visiting.repos?.length === 1 ? 'the project' : 'one of your projects'} with #${visiting.repos?.length ? ` (${visiting.repos.map((r) => esc(`#${r.replace(/\s+/g, '-')}`)).join(', ')})` : ''}. Only your own jobs show here.`
+        : this.channel === 'general'
         ? 'Tell the office what you need. Tag someone with @, or a project with #. The chief of staff hands everything else to whoever fits.'
         : `Nothing in #${esc(this.channel)} yet. Whatever you ask for here stays here.`}</p>`;
     this.scrollChat(true);
@@ -1004,7 +1021,7 @@ export class Hud {
     if (!replies.length) return '';
     const last = replies.at(-1);
     const faces = [...new Set(replies.map((r) => r.from))].slice(-3)
-      .map((p) => `<i style="background:${this.app.person(p).color}"></i>`).join('');
+      .map((p) => `<i style="background:${hex(this.app.person(p).color)}"></i>`).join('');
     const said = last.text.replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
     return `
       <button type="button" class="thread-sum" data-thread="${esc(m.id)}">
@@ -1048,7 +1065,7 @@ export class Hud {
     ].filter(Boolean).join('');
     return `
       <div data-id="${esc(m.id)}" class="msg from-${m.from === 'you' ? 'you' : m.from === 'chief' ? 'chief' : 'agent'} ${m.kind || ''} ${m.status || ''} ${long ? 'clamp' : ''}">
-        <div class="who"><i style="background:${who.color}"></i><b>${esc(who.name)}</b>${to ? `<span class="arrow">→</span><i style="background:${to.color}"></i><b>${esc(to.name)}</b>` : ''}<time>${time}</time></div>
+        <div class="who"><i style="background:${hex(who.color)}"></i><b>${esc(who.name)}</b>${to ? `<span class="arrow">→</span><i style="background:${hex(to.color)}"></i><b>${esc(to.name)}</b>` : ''}<time>${time}</time></div>
         ${m.kind === 'handoff' ? `<p class="kind">Handed off · ${esc(m.project || '')}</p>` : ''}
         ${m.kind === 'standup' && m.from !== 'chief' ? '<p class="kind">Standup</p>' : ''}
         ${m.text ? `<div class="body md">${body}</div>` : ''}
@@ -1245,7 +1262,7 @@ export class Hud {
       const status = i >= cap ? 'Not hired yet' : dismissed.has(s.id) ? 'Gone home' : '';
       const open = this.editing === s.id;
       const head = `<button type="button" class="head" data-member="${esc(s.id)}" aria-expanded="${open}">
-          <i style="background:${esc(s.shirt)}"></i>
+          <i style="background:${hex(s.shirt)}"></i>
           <span class="n">${esc(s.name)}${status ? ` <em>${status}</em>` : ''}</span>
           <span class="r">${esc(s.role || 'No role yet')}</span>
         </button>`;
@@ -1267,7 +1284,7 @@ export class Hud {
     const el = $('away');
     el.hidden = !staff.length;
     el.innerHTML = staff.length
-      ? `<span>Gone home</span>${staff.map((s) => `<button type="button" data-recall="${esc(s.id)}" title="Call ${esc(s.name)} back"><i style="background:${esc(s.shirt)}"></i>${esc(s.name)}</button>`).join('')}`
+      ? `<span>Gone home</span>${staff.map((s) => `<button type="button" data-recall="${esc(s.id)}" title="Call ${esc(s.name)} back"><i style="background:${hex(s.shirt)}"></i>${esc(s.name)}</button>`).join('')}`
       : '';
   }
 

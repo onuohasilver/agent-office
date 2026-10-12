@@ -5,13 +5,13 @@ Find the message you're seeing, or the symptom.
 ## The office won't start
 
 **`Error: listen EADDRINUSE: address already in use 127.0.0.1:4317`**
-Something is already on that port — usually another office. The
-`agent-office` command moves to the next free port by itself unless you gave
-`--port`; pick another, or find what's there with `lsof -i :4317`.
+Something is already on that port — usually another office. `agentoffice`
+picks a free port on its own; to choose, use `agentoffice --port 4400`. With
+`npm start`, find the other one with `lsof -i :4317` or set `PORT=4400`.
 
 **The page says "No build yet."**
-In a clone: the server is running but `dist/` is empty. Run `npm run build`,
-or use `npm start`, which builds first. The installed package ships built.
+The server is running but `dist/` is empty. Run `npm run build`, or use
+`npm start`, which builds first.
 
 **The page loads but the office is blank.**
 Open the browser console. The office needs WebGL; if it's disabled (some
@@ -19,11 +19,20 @@ remote desktops and VMs), the 3D view can't draw.
 
 ## Jobs don't run
 
+**Every message gets "I couldn't route that one".**
+The chief is a short `claude -p` call, and it failed. The words after the colon
+say why: an error from `claude` itself (signed out, out of credit, a model your
+plan can't use), a timeout, or `claude` exiting without answering. To see the
+same thing yourself, run this in the terminal you start the office from:
+`claude -p --model sonnet "hi"`. It should answer within a few seconds. Fix
+whatever it complains about, then send the message again. Versions before
+0.3.0 only ever said "The chief could not decide"; update to see the reason.
+`/standup` and `/restart` don't go through the chief.
+
 **A job fails with "Could not start claude: spawn claude ENOENT".**
 Claude Code isn't on the `PATH` the office was started with. Check
 `which claude` in the same terminal. If it lives somewhere unusual, point the
-office at it: `CLAUDE_BIN=/path/to/claude agent-office`.
-`agent-office doctor` shows what it finds.
+office at it: `CLAUDE_BIN=/path/to/claude npm start`.
 
 **Jobs fail straight away with an authentication error.**
 On the **Claude Code login**: run `claude` in a terminal and sign in, then
@@ -32,12 +41,12 @@ which key is in use; paste a new one if it was revoked.
 
 **"That project folder is gone."**
 The project was moved or renamed after the job was created. Projects are the
-folders directly inside the one the office was started in; see
+folders directly inside `OFFICE_ROOT`; see
 [Getting started](../getting-started.md#where-your-projects-are).
 
 **A project doesn't show up.**
-It must be a folder directly inside the one the office was started in — not
-nested deeper. The server prints that folder when it starts: *"projects in …"*.
+It must be a folder directly inside `OFFICE_ROOT` — not nested deeper. The
+server prints `OFFICE_ROOT` when it starts: *"projects in …"*.
 
 **A job keeps getting blocked.**
 Its clearance doesn't allow what it's trying to do — *Edit files* refuses
@@ -67,10 +76,10 @@ your Anthropic Console.
 
 **The microphone does nothing, or "No speech model installed."**
 Install the listening side: `brew install ffmpeg whisper-cpp`, then
-`agent-office voice`. See [Talking out loud](../voice.md).
+`npm run voice:model`. See [Talking out loud](../voice.md).
 
 **"Piper is not installed" or "Piper has no voices downloaded."**
-Run `agent-office voice` (needs Python 3). Until then, replies use the
+Run `npm run voice:piper` (needs Python 3). Until then, replies use the
 browser's built-in voices.
 
 **The browser won't allow the microphone.**
@@ -80,20 +89,18 @@ Browsers only allow it on `localhost` or HTTPS. Open the office at
 ## The terminal won't open
 
 **There's no terminal button, or it says the terminal is off.**
-It's off by default. Start the office with `agent-office --terminal`.
+It's off by default. Start the office with `OFFICE_TERMINAL=1 npm start`.
 
 **"node-pty is not installed."**
 It's a native module and needs build tools. On macOS:
-`xcode-select --install`; on Linux, `build-essential` and `python3`. Then
-reinstall — on npm 11 and later, allowing its build script:
-`npm install -g --allow-scripts=node-pty agent-office-studio`.
-`agent-office doctor` says whether it can start a shell.
+`xcode-select --install`, then `npm install`. On Linux: install
+`build-essential` and `python3`, then `npm install`.
 
 ## On a phone
 
 **"Local only." (HTTP 403)**
 The office only accepts its own hostnames. Add the one you're using:
-`OFFICE_ALLOWED_HOSTS=my-mac.tail1234.ts.net agent-office`. See
+`OFFICE_ALLOWED_HOSTS=my-mac.tail1234.ts.net npm start`. See
 [On your phone](../phone.md).
 
 ## Still stuck?

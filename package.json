@@ -1,8 +1,22 @@
 {
   "name": "agent-office-studio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A 3D office where the staff are Claude Code agents.",
   "license": "MIT",
+  "files": [
+    "bin",
+    "dist",
+    "server",
+    "shared",
+    "docs",
+    "!docs/proposals",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/onuohasilver/agent-office.git"
@@ -22,22 +36,17 @@
   },
   "type": "module",
   "bin": {
-    "agent-office-studio": "bin/agent-office.js",
-    "agent-office": "bin/agent-office.js"
+    "agentoffice": "bin/agentoffice.js",
+    "agentstudio": "bin/agentoffice.js"
   },
-  "files": [
-    "bin/",
-    "server/",
-    "shared/",
-    "dist/"
-  ],
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "vite build && node server/index.js",
-    "test": "node scripts/smoke.mjs",
-    "voice": "node bin/agent-office.js voice --data data",
-    "prepack": "npm run build"
+    "start": "vite build && node server/supervise.js",
+    "voice:model": "mkdir -p data/whisper && curl -L --progress-bar -o data/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
+    "voice:piper": "python3 -m venv data/piper/venv && data/piper/venv/bin/pip install -q piper-tts && data/piper/venv/bin/python -m piper.download_voices --data-dir data/piper/voices en_GB-cori-high en_US-amy-medium en_GB-alan-medium en_US-kristin-medium en_US-ryan-high en_GB-alba-medium en_GB-aru-medium en_US-john-medium en_US-hfc_female-medium",
+    "test": "node scripts/smoke.mjs && node scripts/guests.mjs",
+    "prepack": "vite build"
   },
   "dependencies": {
     "ws": "8.22.0"
@@ -54,8 +63,5 @@
   },
   "optionalDependencies": {
     "node-pty": "1.0.0"
-  },
-  "publishConfig": {
-    "access": "public"
   }
 }

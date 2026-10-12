@@ -82,7 +82,16 @@ export class Agent {
 
     this.label = document.createElement('div');
     this.label.className = 'agent-label';
-    this.label.innerHTML = `<div class="bubble"></div><div class="name"><i style="background:${staff.shirt}"></i>${staff.name}</div>`;
+    // Built from nodes, not HTML: when visiting a linked office, staff come
+    // from another machine.
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const name = document.createElement('div');
+    name.className = 'name';
+    const dot = document.createElement('i');
+    if (/^#[0-9a-f]{3,8}$/i.test(staff.shirt ?? '')) dot.style.background = staff.shirt;
+    name.append(dot, String(staff.name ?? ''));
+    this.label.append(bubble, name);
     this.bubbleEl = this.label.querySelector('.bubble');
     labels.appendChild(this.label);
     this.say('');
@@ -250,7 +259,7 @@ export class Agent {
   finish(status) {
     const now = this.now || 0;
     this.anim = { kind: status === 'done' ? 'celebrate' : 'slump', until: now + 2.2 };
-    this.say(status === 'done' ? 'Shipped it!' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
+    this.say(status === 'done' ? 'Shipped it!' : status === 'waiting' ? 'Need your answer' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
     this.job = null;
     this.afterVisit = null;
     this.want = 'lounge';

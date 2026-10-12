@@ -1,9 +1,5 @@
 node_modules
 dist
-data/*.json
-data/*.tmp
-data/uploads
-data/whisper
-data/piper
-data/*.log
+# Everything the office keeps: state, secrets (office-key, leaderboard.json, auth.json), uploads, models.
+data/
 launch/*.mp4

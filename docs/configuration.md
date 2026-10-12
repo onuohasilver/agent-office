@@ -1,19 +1,18 @@
 # Configuration
 
-The common choices are options to the command — the projects folder, `--port`,
-`--data`, `--terminal`, `--no-open`; see
-[Getting started](getting-started.md#options). Everything else is an
-environment variable, e.g. `CHIEF_MODEL=haiku agent-office`. In-app choices — Claude access, the
+Everything is set with environment variables when the server starts, e.g.
+`PORT=4400 CHIEF_MODEL=haiku npm start`. In-app choices — Claude access, the
 voice toggle, team profiles, theme — are made in the office and remembered.
 
 ## The office
 
 | Env | Default | |
 |---|---|---|
-| `OFFICE_ROOT` | where you start it (a clone: the folder above it) | its subfolders are the projects |
-| `OFFICE_DATA` | `~/.agent-office` (a clone: `data/`) | where state, attachments and models are kept |
-| `PORT` | `4317`, or the next free one | |
+| `OFFICE_ROOT` | the folder above this one; with `agentoffice`, the folder you run it from | its subfolders are the projects |
+| `OFFICE_DATA` | `data/` here; with `agentoffice`, `~/.agent-office` | where the office keeps its state |
+| `PORT` | `4317` | with `agentoffice`, a free port is chosen if this is taken (or `--port <n>`); one you set is used as given |
 | `OFFICE_ALLOWED_HOSTS` | none | extra hostnames to accept, comma-separated; see [On your phone](phone.md) |
+| `OFFICE_SHARE_JOB_TITLES` | unset | `1` lets linked offices see your agents' job titles, not just that they're busy |
 
 ## Claude
 
@@ -40,14 +39,15 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 | Env | Default | |
 |---|---|---|
 | `WHISPER_BIN` | `whisper-cli` | |
-| `WHISPER_MODEL` | the best model in `whisper/` in the data folder | point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
-| `PIPER_BIN` | `piper/venv/bin/python` in the data folder | the voices live in `piper/voices` |
+| `WHISPER_MODEL` | the best model in `data/whisper` | point it at a bigger one (`ggml-small.en.bin`) to trade speed for accuracy |
+| `PIPER_BIN` | `data/piper/venv/bin/python` | the voices live in `data/piper/voices` |
 | `FFMPEG_BIN` | `ffmpeg` | |
 
 ## Terminal
 
 | Env | Default | |
 |---|---|---|
+| `OFFICE_LEADERBOARD_URL` | the hosted board | address of a different leaderboard service; see [The leaderboard](leaderboard.md) |
 | `OFFICE_TERMINAL` | unset | `1` opens the in-app terminal |
 | `OFFICE_TERMINAL_SHELL` | your `$SHELL` | |
 | `OFFICE_TERMINAL_MAX` | `4` | sessions at once |

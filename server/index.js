@@ -2,8 +2,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
 import { canSee, route } from './chief.js';
@@ -15,18 +15,28 @@ import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.j
 import { Terminals } from './terminal.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
+import { Leaderboard } from './leaderboard.js';
+import { Links } from './links.js';
+import { Guests } from './guests.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
 const ROOT = path.resolve(process.env.OFFICE_ROOT || path.join(APP, '..'));
 const PORT = Number(process.env.PORT || 4317);
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
-// OFFICE_DATA is set by the agent-office command; a clone keeps it beside the code.
+// OFFICE_DATA is set by the agentoffice command; a clone keeps it beside the code.
 const DATA = path.resolve(process.env.OFFICE_DATA || path.join(APP, 'data'));
 const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const UPLOADS = path.join(DATA, 'uploads');
+// Each running job's office MCP config, token and all. On the command line it
+// would be readable by every process on the machine (`ps`); here it is a 0600
+// file in a 0700 folder, gone when the job's session closes. Leftovers from a
+// crash hold tokens that died with that server, so they are cleared at start.
+const MCP_DIR = path.join(DATA, 'mcp');
+fs.rmSync(MCP_DIR, { recursive: true, force: true });
 const auth = new Auth(DATA);
+const board = new Leaderboard(DATA, { onChange: () => send({ t: 'leaderboard', leaderboard: board.status() }) });
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
@@ -271,9 +281,62 @@ function save() {
 // ---------- broadcasting ----------
 
 const clients = new Set();
+
+// Linked offices. Our agents as other offices see them: who, what they look
+// like, and what they're doing, down to the job title.
+// A job's title is the first line of its prompt, which can say more than the
+// boss means to share, so linked offices see only that an agent is busy.
+// OFFICE_SHARE_JOB_TITLES=1 sends the titles too.
+const SHARE_TITLES = process.env.OFFICE_SHARE_JOB_TITLES === '1';
+function presence() {
+  return hired().map((s) => {
+    const job = state.jobs.find((j) => j.agentId === s.id && j.status === 'working');
+    const doing =
+      state.dismissed.includes(s.id) ? 'away'
+      : standupNow?.who.includes(s.id) ? 'meeting'
+      : job ? 'working'
+      : chill?.who.includes(s.id) ? 'break'
+      : 'idle';
+    return { id: s.id, name: s.name, role: s.role, look: { shirt: s.shirt, hair: s.hair, skin: s.skin }, state: doing, job: job && SHARE_TITLES ? { title: job.title } : null };
+  });
+}
+// Set just below; anything broadcast before then has no guests to tell.
+let guests = null;
+const links = new Links(DATA, {
+  board,
+  presence,
+  onChange: () => {
+    guests?.linksChanged();
+    send({ t: 'links', ...links.status() });
+    send({ t: 'visitors', offices: links.visiting() });
+  },
+  onGuest: (link, msg) => guests?.onGuest(link, msg),
+});
+// Guest offices running jobs here, and our visits to offices that host us.
+guests = new Guests(DATA, {
+  links,
+  office: {
+    jobs: () => state.jobs,
+    createJob: (body, extra) => createJob(body, extra),
+    replyJob: (job, body) => replyJob(job, body),
+    stopJob: (job, why) => stopJob(job, why),
+    diff: async (job, p) => {
+      const cwd = repoPath(job.repo);
+      if (!cwd) throw Object.assign(new Error('That project folder is gone.'), { code: 404 });
+      return fileDiff(cwd, job.changes, p);
+    },
+    staff: () => STAFF,
+    modes: () => Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label])),
+  },
+});
+// Broadcasts that can't change what an agent is doing don't need presence checked.
+const NOT_PRESENCE = new Set(['links', 'visitors', 'proc', 'leaderboard', 'auth', 'usage']);
+
 function send(msg) {
   const data = JSON.stringify(msg);
   for (const ws of clients) if (ws.readyState === 1) ws.send(data);
+  guests?.feed(msg);
+  if (!NOT_PRESENCE.has(msg.t)) links.sendPresence();
 }
 const publicJob = (j, tail = 40) => {
   const { stopRequested, lastTurn, sent, handoffs, ...rest } = j;
@@ -292,6 +355,9 @@ const snapshot = () => ({
   standup: standupNow && { who: standupNow.who },
   usage,
   auth: auth.status(),
+  leaderboard: board.status(),
+  links: links.status(),
+  visitors: links.visiting(),
   procs,
   machine,
   dismissed: state.dismissed,
@@ -520,7 +586,12 @@ const AUTOCOMPACT_PCT = process.env.AGENT_COMPACT_PCT || '60';
 const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
+  'mcp__office__restart_office',
 ];
+// A guest's job can see who is in and ask the boss, nothing more: no
+// messaging colleagues, handing off or channels. Enforced again in agentApi,
+// since full autonomy ignores --allowedTools.
+const GUEST_TOOLS = ['mcp__office__office_roster', 'mcp__office__flag_for_boss'];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
 function repoPath(name) {
@@ -537,7 +608,8 @@ function listRepos() {
     .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
-function createJob({ repo, prompt, mode = 'edit', model = '', auto = false, agentId = '' }) {
+// `extra` tags a job, as a guest's (`from`, `guest`); it must be set before the job can start.
+function createJob({ repo, prompt, mode = 'edit', model = '', auto = false, agentId = '' }, extra = {}) {
   if (!repoPath(repo)) throw new Error('Unknown project folder.');
   prompt = String(prompt || '').trim();
   if (!prompt) throw new Error('Give the job a brief.');
@@ -552,6 +624,7 @@ function createJob({ repo, prompt, mode = 'edit', model = '', auto = false, agen
     sessionId: null, agentId: null, cost: 0, turns: 0, tools: 0, xp: 0,
     pending: prompt, denials: [], error: null, log: [],
     wantAgent: STAFF.some((st) => st.id === agentId) ? agentId : null,
+    ...extra,
   };
   state.jobs.push(job);
   if (job.wantAgent && state.dismissed.includes(job.wantAgent)) recall([job.wantAgent]);
@@ -585,10 +658,18 @@ function start(job, agentId) {
   tokens.set(job.id, token);
   const mcp = { mcpServers: { office: { command: process.execPath, args: [path.join(HERE, 'office-mcp.js')],
     env: { OFFICE_URL: `http://127.0.0.1:${PORT}`, OFFICE_JOB: job.id, OFFICE_TOKEN: token } } } };
+  const mcpFile = path.join(MCP_DIR, `${job.id}-${crypto.randomUUID().slice(0, 8)}.json`);
   // Attachments live outside the project, so agents need leave to read them.
-  fs.mkdirSync(UPLOADS, { recursive: true });
-  args.push('--add-dir', UPLOADS);
-  args.push('--mcp-config', JSON.stringify(mcp), '--allowedTools', OFFICE_TOOLS.join(','), '--append-system-prompt', officePrompt(agentId, job));
+  // A guest's job gets none of them: they are the boss's files.
+  if (!job.guest) {
+    fs.mkdirSync(UPLOADS, { recursive: true });
+    args.push('--add-dir', UPLOADS);
+  } else {
+    // Nor the boss's connectors (mail, Slack, calendar), user settings and
+    // hooks, or memory: at Full autonomy those would all be the guest's.
+    args.push('--strict-mcp-config', '--setting-sources', 'project,local', '--settings', JSON.stringify({ autoMemoryEnabled: false }));
+  }
+  args.push('--mcp-config', mcpFile, '--allowedTools', (job.guest ? GUEST_TOOLS : OFFICE_TOOLS).join(','), '--append-system-prompt', job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job));
   // Being given work in a channel is how you end up in it.
   try { joinChannel(channelOf(job.channel), agentId); } catch {}
   const first = job.pending;
@@ -607,7 +688,14 @@ function start(job, agentId) {
 
   // stdin stays open for the whole job, so the chief can hand the agent
   // new messages while it works.
-  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...auth.env() }, stdio: ['pipe', 'pipe', 'pipe'] });
+  try {
+    fs.mkdirSync(MCP_DIR, { recursive: true, mode: 0o700 });
+    fs.chmodSync(MCP_DIR, 0o700);
+    fs.writeFileSync(mcpFile, JSON.stringify(mcp), { mode: 0o600, flag: 'wx' });
+  } catch (err) {
+    return finish(job, 'failed', `Could not write the office tools' config: ${err.message}`);
+  }
+  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...(job.guest ? { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' } : {}), ...auth.env() }, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
   startProcs();
   child.stdin.on('error', () => {});
@@ -630,10 +718,11 @@ function start(job, agentId) {
 
   const ended = (why) => {
     running.delete(job.id);
+    fs.rm(mcpFile, { force: true }, () => {});
     if (procs) { delete procs[job.id]; }
     endGrace(job);
     if (job.status !== 'working') return;
-    if (job.stopRequested) finish(job, 'stopped', 'Stopped by you.');
+    if (job.stopRequested) finish(job, 'stopped', job.stopWhy || 'Stopped by you.');
     else if (job.lastTurn) finish(job, job.lastTurn.ok ? 'done' : 'failed', job.lastTurn.ok ? null : job.lastTurn.error);
     else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
   };
@@ -714,6 +803,9 @@ function onLine(job, line) {
     // carrying. Worth seeing: a long-resumed job pays it on every turn.
     const u = e.usage || {};
     job.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    board.addTokens((u.input_tokens || 0) + (u.output_tokens || 0));
+    guests.addTokens(job, (u.input_tokens || 0) + (u.output_tokens || 0));
+    board.addTime(e.duration_ms);
     nudgeUsage();
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
@@ -768,13 +860,18 @@ function finish(job, status, error) {
   tokens.delete(job.id);
   job.waiting = false;
   const before = progress();
+  // An agent that ended its turn still needing the boss's input has not
+  // finished: it is waiting. Nothing is marked, scored or announced as done.
+  const awaiting = status === 'done' && !!job.asking;
+  job.awaitingBoss = awaiting;
   job.status = status;
   job.error = error;
   job.endedAt = Date.now();
   // Capture the rung it failed on before bump() moves it.
   const was = TIER_LABEL[tierOf(job.model)] || job.model || 'the default model';
   const retry = status === 'failed' ? bump(job) : null;
-  const gained = status === 'done' ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
+  const gained = status === 'done' && !awaiting ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
+  if (status === 'done' && !awaiting) board.addJob();
   state.xp += gained;
   job.xp += gained;
   pushJob(job);
@@ -792,8 +889,9 @@ function finish(job, status, error) {
   // stop (the boss did that), or a colleague's handed-off piece (their asker
   // gets it, and the asker's own finish is the one worth announcing).
   if (!retry && status !== 'stopped' && !job.requestedBy) {
-    const line = status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
-    post('chief', `**${status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, jobId: job.id, thread: null, channel: GENERAL });
+    const line = awaiting ? `${nameOf(job.agentId)} is waiting on you for "${clip(job.title, 80)}": ${clip(job.asking.summary, 200)}`
+      : status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".${briefOf(job.lastTurn?.text) ? `\n\n${briefOf(job.lastTurn.text)}` : ''}` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
+    post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL });
   }
 
   // Hand the result back to whoever delegated this, if they're still at it.
@@ -820,7 +918,7 @@ function finish(job, status, error) {
       post('chief', `A message for ${nameOf(job.agentId)} landed just as "${job.title}" was stopped, so nobody read it.`, { jobId: job.id });
       job.pending = null;
     } else {
-      Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+      Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null, asking: null, awaitingBoss: false });
       addLog(job, { kind: 'system', summary: 'A message landed as this job was closing. Picking it back up.' });
       pushJob(job);
     }
@@ -841,7 +939,7 @@ function finish(job, status, error) {
     ].filter(Boolean).join('\n\n');
     job.sessionId = null;
     job.pending = job.pending ? `${note}\n\n${job.pending}` : note;
-    if (job.status !== 'queued') Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+    if (job.status !== 'queued') Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null, asking: null, awaitingBoss: false });
     addLog(job, { kind: 'system', summary: `Hit a wall on ${was}; moving up to ${TIER_LABEL[retry]}` });
     pushJob(job);
     post('chief', `That hit a wall on ${was}. Running it again on ${TIER_LABEL[retry]}.`, { jobId: job.id, channel: job.channel });
@@ -871,20 +969,21 @@ function addWait(job, w) {
   waits.set(job.id, [...(waits.get(job.id) || []), w]);
 }
 
-function stopJob(job) {
+function stopJob(job, why) {
   if (job.status === 'queued') {
     job.status = 'stopped';
-    job.error = 'Pulled from the queue.';
+    job.error = why || 'Pulled from the queue.';
     job.endedAt = Date.now();
     pushJob(job);
   } else if (job.status === 'working') {
     job.stopRequested = true;
+    job.stopWhy = why || null;
     const child = running.get(job.id);
     if (child) {
       child.kill('SIGTERM');
       setTimeout(() => running.get(job.id) === child && child.kill('SIGKILL'), 5000);
     } else {
-      finish(job, 'stopped', 'Stopped by you.');
+      finish(job, 'stopped', why || 'Stopped by you.');
     }
   }
 }
@@ -900,7 +999,7 @@ function replyJob(job, { message, mode, files }) {
   if (!message) throw new Error('Say something first.');
   if (mode && !MODES[mode]) throw new Error('Unknown mode.');
   if (mode) job.mode = mode;
-  Object.assign(job, { status: 'queued', queuedAt: Date.now(), pending: message, error: null, endedAt: null });
+  Object.assign(job, { status: 'queued', queuedAt: Date.now(), pending: message, error: null, endedAt: null, asking: null, awaitingBoss: false });
   addLog(job, { kind: 'user', summary: message });
   pushJob(job);
   pump();
@@ -1117,6 +1216,11 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
     ...(root && { thread: root.id }),
   });
   if (/^\/standup$/i.test(text)) return void runStandup(true);
+  const restart = /^\/restart( now)?$/i.exec(text);
+  if (restart) {
+    try { requestRestart({ now: !!restart[1] }); } catch (err) { post('chief', err.message, { channel: where }); }
+    return;
+  }
   if (!text) text = files.length === 1 ? 'Take a look at the attached file.' : 'Take a look at the attached files.';
   // A reply in a job's thread goes straight to that job; no routing needed.
   const job = root && threadJob(root);
@@ -1126,6 +1230,88 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
     .catch((err) => post('chief', `I couldn't route that one: ${err.message}`, { channel: where }));
 }
 
+
+// ---------- restarting ----------
+//
+// Server changes only land on a restart, and stopping the server ends every
+// agent's session, including the one that asked. So a restart waits until
+// nobody is mid-turn, then exits with RESTART for server/supervise.js to start
+// a fresh server. Jobs still open come back on boot (see above), and whoever
+// asked is woken to carry on.
+
+const RESTART_EXIT = 75;
+const SUPERVISED = process.env.OFFICE_SUPERVISED === '1';
+const RESTART_WAIT_MS = 10 * 60 * 1000;
+let restarting = null;
+
+// Started a turn and not finished it. Between turns, or waiting on a
+// colleague, a session loses nothing it can't pick up from its transcript.
+const midTurn = () => state.jobs.filter((j) => j.status === 'working' && running.has(j.id) && !j.lastTurn && !j.waiting);
+
+// A server that won't load is worse than a stale one: nothing would bring the
+// office back to fix it. Syntax for every file, and a load for the modules
+// that are safe to load (not this one, the supervisor, or the stdio MCP).
+function serverProblem() {
+  const files = fs.readdirSync(HERE).filter((f) => f.endsWith('.js'));
+  for (const f of files) {
+    const r = spawnSync(process.execPath, ['--check', path.join(HERE, f)], { encoding: 'utf8', timeout: 15000 });
+    if (r.status !== 0) return (r.stderr || `${f} failed to parse`).trim().split('\n').slice(0, 6).join('\n');
+  }
+  const loadable = files.filter((f) => !['index.js', 'supervise.js', 'office-mcp.js'].includes(f)).map((f) => pathToFileURL(path.join(HERE, f)).href);
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', `for (const f of ${JSON.stringify(loadable)}) await import(f);`],
+    { encoding: 'utf8', timeout: 15000 });
+  if (r.status !== 0) return (r.stderr || 'A server module failed to load').trim().split('\n').slice(0, 6).join('\n');
+  return null;
+}
+
+function requestRestart({ by = 'you', jobId = null, now = false } = {}) {
+  if (!SUPERVISED) {
+    throw new Error('This office was started without its supervisor, so nothing would start it again. Restart it once by hand with npm start; after that it can restart itself.');
+  }
+  if (restarting) {
+    if (now) restartNow();
+    return now ? 'Restarting now.' : 'A restart is already on the way.';
+  }
+  const problem = serverProblem();
+  if (problem) throw new Error(`The server code doesn't load, so a restart would leave the office down. Fix this first:\n${problem}`);
+  // Kept in state, so the next server knows who to wake.
+  state.restart = { by, jobId, at: Date.now() };
+  // A turn that just ended has a moment's grace before its session closes;
+  // letting that run out closes the job cleanly instead of resuming it.
+  restarting = { timer: setInterval(() => (!midTurn().length && !graces.size && !chiefBusy) && restartNow(), 1000) };
+  restarting.deadline = setTimeout(restartNow, now ? 300 : RESTART_WAIT_MS);
+  save();
+  const busy = midTurn().filter((j) => j.id !== jobId);
+  const who = by === 'you' ? 'You asked' : `${nameOf(by)} asked`;
+  post('chief', `**Restarting** · ${who} for a restart to pick up server changes. ${now ? 'Going now.'
+    : busy.length ? `Waiting for ${names([...new Set(busy.map((j) => nameOf(j.agentId)))])} to finish their turn first.`
+    : 'Back in a few seconds.'}`, { kind: 'restart', thread: null, channel: GENERAL });
+  return now ? 'Restarting now.' : 'Restarting once everyone is between turns.';
+}
+
+function restartNow() {
+  if (!restarting || restarting.done) return;
+  restarting.done = true;
+  clearInterval(restarting.timer);
+  clearTimeout(restarting.deadline);
+  send({ t: 'restarting' });
+  shutdown(RESTART_EXIT);
+}
+
+// On the far side of a restart: say so, and wake whoever asked for it.
+function afterRestart() {
+  const r = state.restart;
+  if (!r) return;
+  delete state.restart;
+  save();
+  post('chief', `**Back** · The office restarted and is running the current server code.`, { kind: 'restart', thread: null, channel: GENERAL });
+  const job = r.jobId && state.jobs.find((j) => j.id === r.jobId);
+  // A job interrupted mid-turn already carries its own notice into the queue.
+  if (!job || job.status === 'queued') return;
+  try {
+    deliver(job, 'The office has restarted, as you asked, and is now running the current server code. Carry on: check that your change works.');
+  } catch {}
+}
 
 // ---------- daily standup ----------
 
@@ -1137,6 +1323,21 @@ const clip = (s, n) => {
   s = String(s || '').replace(/\s+/g, ' ').trim();
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 };
+// A short plain-text brief of an agent's final reply: markdown stripped, the
+// opening sentences kept up to n characters, cut at a sentence end if possible.
+function briefOf(text, n = 280) {
+  const plain = String(text || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/^\s*(#{1,6}|[-*>]|\d+\.)\s+/gm, '')
+    .replace(/[*_`]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (plain.length <= n) return plain;
+  const cut = plain.slice(0, n);
+  const end = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('! '), cut.lastIndexOf('? '));
+  return end > n * 0.4 ? cut.slice(0, end + 1) : clip(plain, n);
+}
 const ENDED = { done: 'Shipped', failed: 'Hit a wall on', stopped: 'Stopped' };
 
 // What each agent can honestly report since the last standup.
@@ -1288,8 +1489,16 @@ function officePrompt(agentId, job) {
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
-    `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. ` +
+    `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
     `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId);
+}
+
+// A guest's job: the agent works for someone from another office, so it is
+// told nothing about this office's other work and can't reach colleagues.
+function guestPrompt(agentId, job) {
+  return `You are ${nameOf(agentId)}, an agent in the Agent Office, working on a job for ${job.from}, a guest from another office. ` + persona(agentId) +
+    `Work only in this project. Don't share anything about this office's other projects, jobs or people beyond what office_roster shows. ` +
+    `Your only office tools are office_roster and flag_for_boss; the boss here is the host, not ${job.from}. Talk to ${job.from} in your replies.`;
 }
 
 const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2, MAX_FLAGS = 5;
@@ -1298,7 +1507,11 @@ const FLAGS = { question: 'Question for you', decision: 'Needs your decision', b
 function caller(req) {
   const id = req.headers['x-office-job'];
   const job = state.jobs.find((j) => j.id === id);
-  if (!job || job.status !== 'working' || !tokens.get(id) || tokens.get(id) !== req.headers['x-office-token']) return null;
+  if (!job || job.status !== 'working' || !tokens.get(id)) return null;
+  // Compared in constant time, so the token can't be guessed a byte at a time.
+  const want = Buffer.from(tokens.get(id));
+  const got = Buffer.from(String(req.headers['x-office-token'] || ''));
+  if (got.length !== want.length || !crypto.timingSafeEqual(got, want)) return null;
   return job;
 }
 
@@ -1312,6 +1525,15 @@ function recentJobOf(agentId) {
   if (state.dismissed.includes(agentId) || state.jobs.some((j) => j.status === 'queued' && j.agentId === agentId)) return null;
   const last = state.jobs.filter((j) => j.agentId === agentId && j.endedAt).sort((a, b) => b.endedAt - a.endedAt)[0];
   return last?.status === 'done' && Date.now() - last.endedAt < RESUME_WINDOW_MS ? last : null;
+}
+
+// Who is in, without what anyone is working on or where: a guest's job
+// shouldn't learn this office's other work.
+function guestRoster(me) {
+  const lines = [`You are ${nameOf(me.agentId)}, on a job for ${me.from}.`, 'In the office today:'];
+  for (const s of onFloor()) if (s.id !== me.agentId) lines.push(`- ${s.role ? `${s.name} (${s.role})` : s.name}`);
+  lines.push('', `Project: ${me.repo}`);
+  return lines.join('\n');
 }
 
 const agentApi = {
@@ -1339,6 +1561,8 @@ const agentApi = {
     if (!theirs || (theirs.status === 'working' && !running.has(theirs.id))) {
       throw new Error(`${target.name} isn't on a job right now. Use hand_off to give them work.`);
     }
+    // A guest reads that job's log, so nothing from this office goes into it.
+    if (theirs.guest) throw new Error(`${target.name} is on a job for a guest from another office and can't take messages.`);
 
     const myName = nameOf(me.agentId);
     deliver(theirs, `Message from ${myName} (working on "${me.title}" in ${me.repo}): ${message}` +
@@ -1368,12 +1592,21 @@ const agentApi = {
     if (flagged.includes(summary)) return 'The chief already has that one.';
     if (flagged.length >= MAX_FLAGS) throw new Error("You've flagged a lot for the boss on this job. Put the rest in your reply.");
     flagged.push(summary);
+    // A question, decision or blocker means the boss's answer is still owed,
+    // so the job must not be reported as done when the agent's turn ends.
+    if (kind !== 'review') me.asking = { kind, summary };
     // Top level in #general on purpose: that is where the boss looks. jobId
     // keeps the "open job" link, and the explicit null thread keeps post()
     // from tucking it into the job's thread.
     post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
       { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL });
     return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
+  },
+
+  restart_office(me, { now = false } = {}) {
+    requestRestart({ by: me.agentId, jobId: me.id, now: !!now });
+    return 'The office will restart once everyone is between turns, and that includes you: end your turn now. ' +
+      "You'll get a message when it is back, running the current server code.";
   },
 
   list_channels(me) {
@@ -1611,14 +1844,66 @@ const terminals = new Terminals({ root: ROOT, dataDir: DATA, folders: listRepos 
 // machine's Tailscale name when `tailscale serve` fronts the office. Everything
 // else is still refused, which is what keeps rebinding sites out.
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]', ...String(process.env.OFFICE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+const DEV_PORT = '5317'; // vite.config.js
+
+// The office key. Host and Origin checks keep other websites out, but not
+// other accounts on this machine (or the tailnet, with OFFICE_ALLOWED_HOSTS):
+// they can reach 127.0.0.1 too. So the page and its API need a secret only
+// this account can read. It is opened once with ?key=, which leaves it in an
+// HttpOnly cookie, and it stays the same across restarts. Delete the file to
+// sign every browser out. Agents use their job tokens instead.
+const KEY_FILE = path.join(DATA, 'office-key');
+const OFFICE_KEY = (() => {
+  try { const k = fs.readFileSync(KEY_FILE, 'utf8').trim(); if (/^[0-9a-f]{64}$/.test(k)) return k; } catch {}
+  const k = crypto.randomBytes(32).toString('hex');
+  fs.mkdirSync(DATA, { recursive: true });
+  fs.writeFileSync(KEY_FILE, k + '\n', { mode: 0o600 });
+  return k;
+})();
+try { fs.chmodSync(KEY_FILE, 0o600); } catch {}
+// Cookies ignore ports, so two offices on one machine each need their own name.
+const KEY_COOKIE = `office_key_${PORT}`;
+const sameKey = (k) => {
+  const a = Buffer.from(String(k || '')), b = Buffer.from(OFFICE_KEY);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+function hasKey(req) {
+  for (const c of String(req.headers.cookie || '').split(';')) {
+    const i = c.indexOf('=');
+    if (i > 0 && c.slice(0, i).trim() === KEY_COOKIE) return sameKey(c.slice(i + 1).trim());
+  }
+  return false;
+}
+const keyLink = (host = `localhost:${PORT}`) => `http://${host}/?key=${OFFICE_KEY}`;
+
+// What a browser without the key sees instead of the office.
+function locked(res) {
+  res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent Office</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;background:#11131a;color:#e8e9ee}main{max-width:30rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:.5rem 0;color:#b4b7c3}code{font:.9em ui-monospace,monospace;background:#1d2030;padding:.1em .35em;border-radius:4px;color:#e8e9ee}</style>
+<main><h1>This office is locked</h1>
+<p>Open it with the link it printed when it started: the line that begins <code>Agent Office open on</code>.</p>
+<p>Lost it? Run <code>agentoffice --link</code> in a terminal on this machine.</p></main>`);
+}
+
 function trusted(req) {
   // Anything that can spawn claude with full permissions must refuse
   // requests from other websites and from rebinding hostnames.
   const host = String(req.headers.host || '').replace(/:\d+$/, '');
   if (!LOCAL.has(host)) return false;
   const origin = req.headers.origin;
+  // No Origin is not proof of a local caller: another site's <img> or <link>
+  // GET arrives without one. So every GET must stay read-only, with no side
+  // effects; anything that changes state or spawns goes behind another method.
   if (!origin) return true;
-  try { return LOCAL.has(new URL(origin).hostname); } catch { return false; }
+  // Another port on localhost is another site: a project's dev server, or
+  // anything an agent started. Only the office itself and its vite dev page.
+  try {
+    const o = new URL(origin);
+    if (!LOCAL.has(o.hostname)) return false;
+    if (!['localhost', '127.0.0.1', '[::1]'].includes(o.hostname)) return true;
+    return [String(PORT), DEV_PORT].includes(o.port);
+  } catch { return false; }
 }
 
 function readBody(req) {
@@ -1643,8 +1928,18 @@ const json = (res, code, body) => {
 };
 
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.woff': 'font/woff', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json', '.ico': 'image/x-icon' };
+// Build files are public code with nothing of the boss's in them; anything
+// else falls back to the page, which needs the key.
+function isAsset(pathname) {
+  let f;
+  try { f = path.join(DIST, path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[\/\\])+/, '')); } catch { return false; }
+  if (!f.startsWith(DIST + path.sep) || f === path.join(DIST, 'index.html')) return false;
+  try { return fs.statSync(f).isFile(); } catch { return false; }
+}
 function serveStatic(req, res) {
-  const url = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  let url;
+  // A bad escape (`/%E0`) throws; outside a try that would take the office down.
+  try { url = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { return json(res, 400, { error: 'Bad path.' }); }
   let file = path.join(DIST, path.normalize(url).replace(/^(\.\.[\/\\])+/, ''));
   if (!file.startsWith(DIST)) return json(res, 403, { error: 'No.' });
   if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
@@ -1663,7 +1958,22 @@ const server = http.createServer(async (req, res) => {
   if (!trusted(req)) return json(res, 403, { error: 'Local only.' });
   const url = new URL(req.url, 'http://x');
   const parts = url.pathname.split('/').filter(Boolean);
-  if (parts[0] !== 'api') return serveStatic(req, res);
+  if (parts[0] !== 'api') {
+    if (url.searchParams.has('key')) {
+      if (!sameKey(url.searchParams.get('key'))) return locked(res);
+      url.searchParams.delete('key');
+      res.writeHead(303, {
+        'set-cookie': `${KEY_COOKIE}=${OFFICE_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+        location: url.pathname + url.search, 'cache-control': 'no-store',
+      });
+      return res.end();
+    }
+    if (!hasKey(req) && !isAsset(url.pathname)) return locked(res);
+    return serveStatic(req, res);
+  }
+  // Agents prove who they are with their job token (caller); everyone else
+  // with the office key.
+  if (parts[1] !== 'agent' && !hasKey(req)) return json(res, 401, { error: 'Open the office with its link first.' });
 
   try {
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
@@ -1677,6 +1987,8 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && parts[1] === 'agent' && agentApi[parts[2]]) {
       const me = caller(req);
       if (!me) return json(res, 403, { error: 'Not on the clock.' });
+      if (me.guest && !GUEST_TOOLS.includes(`mcp__office__${parts[2]}`)) return json(res, 403, { error: 'Not on a guest’s job.' });
+      if (me.guest && parts[2] === 'office_roster') return json(res, 200, { text: guestRoster(me) });
       return json(res, 200, { text: agentApi[parts[2]](me, await readBody(req)) });
     }
     if (req.method === 'POST' && url.pathname === '/api/uploads') {
@@ -1691,6 +2003,45 @@ const server = http.createServer(async (req, res) => {
       catch (err) { return json(res, err.code || 400, { error: err.message }); }
       if (req.method !== 'GET') { send({ t: 'auth', auth: status }); refreshUsage(); }
       return json(res, 200, status);
+    }
+    // The leaderboard. Joining claims a handle with the service and starts
+    // sharing day counters. Leaving deletes the counters; the handle goes too
+    // unless linked offices still need it.
+    if (url.pathname === '/api/leaderboard' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
+      let status;
+      try {
+        if (req.method === 'GET') status = board.status();
+        else if (req.method === 'POST') status = await board.join((await readBody(req)).handle);
+        else {
+          const keepHandle = links.links.length > 0;
+          status = await board.leave({ keepHandle });
+          if (!keepHandle) links.forget();
+        }
+      } catch (err) { return json(res, err.code >= 400 && err.code < 600 ? err.code : 400, { error: err.message }); }
+      if (req.method !== 'GET') send({ t: 'leaderboard', leaderboard: status });
+      return json(res, 200, status);
+    }
+    // A handle without joining the board, for linking offices.
+    if (req.method === 'POST' && url.pathname === '/api/leaderboard/handle') {
+      let status;
+      try { status = await board.claim((await readBody(req)).handle); }
+      catch (err) { return json(res, err.code >= 400 && err.code < 600 ? err.code : 400, { error: err.message }); }
+      send({ t: 'leaderboard', leaderboard: status });
+      return json(res, 200, status);
+    }
+    // Linked offices: codes to make and use, and the links they made.
+    if (url.pathname === '/api/links' || parts[1] === 'links') {
+      const linkErr = (err) => json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message });
+      try {
+        if (req.method === 'GET' && url.pathname === '/api/links') return json(res, 200, await links.refresh().catch(() => links.status()));
+        if (req.method === 'POST' && url.pathname === '/api/links/invite') return json(res, 201, await links.invite(await readBody(req)));
+        if (req.method === 'POST' && url.pathname === '/api/links/redeem') return json(res, 200, await links.redeem(await readBody(req)));
+        if (req.method === 'DELETE' && parts[2] && !parts[3]) return json(res, 200, await links.unlink(parts[2]));
+      } catch (err) { return linkErr(err); }
+    }
+    if (req.method === 'GET' && url.pathname === '/api/leaderboard/board') {
+      try { return json(res, 200, await board.board(url.searchParams.get('period'))); }
+      catch (err) { return json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message }); }
     }
     if (req.method === 'POST' && url.pathname === '/api/voice/replies') {
       const { on } = await readBody(req);
@@ -1726,6 +2077,10 @@ const server = http.createServer(async (req, res) => {
       return p ? json(res, 200, p) : json(res, 404, { error: 'No such agent.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/standup') { runStandup(true); return json(res, 202, { ok: true }); }
+    if (req.method === 'POST' && url.pathname === '/api/restart') {
+      const { now } = await readBody(req);
+      return json(res, 202, { text: requestRestart({ now: !!now }) });
+    }
     if (req.method === 'POST' && parts[1] === 'chat' && parts[2] && parts[3] === 'react' && !parts[4]) {
       react(parts[2], (await readBody(req)).emoji);
       return json(res, 200, { ok: true });
@@ -1762,6 +2117,20 @@ const server = http.createServer(async (req, res) => {
       send(snapshot());
       return json(res, 200, { ok: true });
     }
+    // Visiting an office that made us its guest: each call is a request to
+    // the host over the relay, which checks it against the guest's limits.
+    if (parts[1] === 'visit' && parts[2] && parts[3] === 'jobs') {
+      const link = parts[2], id = parts[4];
+      try {
+        if (req.method === 'POST' && !id) return json(res, 201, await guests.request(link, 'createJob', await readBody(req)));
+        if (req.method === 'GET' && id && !parts[5]) return json(res, 200, await guests.request(link, 'job', { job: id }));
+        if (req.method === 'GET' && id && parts[5] === 'diff') return json(res, 200, await guests.request(link, 'diff', { job: id, path: url.searchParams.get('path') || '' }));
+        if (req.method === 'POST' && id && parts[5] === 'reply') { const b = await readBody(req); return json(res, 200, await guests.request(link, 'reply', { job: id, text: b.text ?? b.message, mode: b.mode })); }
+        if (req.method === 'POST' && id && parts[5] === 'stop') return json(res, 200, await guests.request(link, 'stop', { job: id }));
+      } catch (err) {
+        return json(res, err.code >= 400 && err.code < 600 ? err.code : 400, { error: err.message });
+      }
+    }
     if (parts[1] === 'jobs' && parts[2]) {
       const job = state.jobs.find((j) => j.id === parts[2]);
       if (!job) return json(res, 404, { error: 'No such job.' });
@@ -1787,12 +2156,21 @@ const termWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
   if (!trusted(req)) return socket.destroy();
+  if (!hasKey(req)) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return; }
   if (url.pathname === '/ws') {
     return wss.handleUpgrade(req, socket, head, (ws) => {
       clients.add(ws);
       ws.on('close', () => clients.delete(ws));
       ws.send(JSON.stringify(snapshot()));
     });
+  }
+  const visit = /^\/ws\/visit\/([\w-]{1,64})$/.exec(url.pathname);
+  if (visit) {
+    // The host's office, as its guest. Our own fields fill what the host
+    // doesn't send, so the page has everything it expects.
+    return wss.handleUpgrade(req, socket, head, (ws) => guests.visit(ws, visit[1], () => ({
+      ...snapshot(), dismissed: [], standup: null, chiefBusy: false, procs: null, visitors: [],
+    })));
   }
   // No terminal, no socket: with the door shut there is nothing to hold open
   // while someone guesses at tickets.
@@ -1802,25 +2180,41 @@ server.on('upgrade', (req, socket, head) => {
   socket.destroy();
 });
 
+// A taken port won't free up by trying again, so say so and tell the
+// supervisor not to retry (78).
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  console.error(`Port ${PORT} is already in use. Start the office with another: agentstudio --port <n>, or PORT=<n>.`);
+  process.exit(78);
+});
 server.listen(PORT, '127.0.0.1', () => {
-  console.log(`Agent Office open on http://localhost:${PORT}  (projects in ${ROOT})`);
+  // The key is in this line on purpose: it's how the boss gets in. It only
+  // goes to this terminal (or the supervisor's), never to a log file.
+  console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
+  // For `agentoffice --link`, which can't know which free port we got.
+  try { fs.writeFileSync(path.join(DATA, 'office-port'), String(PORT)); } catch {}
   // Shell access being open is not something to find out by accident.
   terminals.status().then((t) => console.log(t.enabled
     ? `Terminal ON — anything in this browser gets a shell as ${process.env.USER || 'you'}. Up to ${t.max}, ${t.idleMinutes} min idle.`
     : `Terminal off. ${t.reason}`));
+  afterRestart();
   pump();
   refreshUsage();
   setInterval(standupDue, 60 * 1000);
   setTimeout(standupDue, 15 * 1000);
 });
 
-const shutdown = () => {
+function shutdown(code = 0) {
   for (const child of running.values()) child.kill('SIGTERM');
   terminals.killAll();
   clearTimeout(saveTimer);
+  board.flush();
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  process.exit(0);
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+  process.exit(code);
+}
+// One bad request must not take the office down: a crash skips shutdown(),
+// so state isn't saved and running agents are orphaned.
+process.on('unhandledRejection', (err) => console.error('[office] unhandled', err));
+process.on('SIGINT', () => shutdown());
+process.on('SIGTERM', () => shutdown());

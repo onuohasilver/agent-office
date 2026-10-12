@@ -11,7 +11,9 @@ const MAX_FILES = 200;
 const MAX_DIFF = 400 * 1024;
 
 const git = (cwd, args, env = {}) => new Promise((resolve, reject) => {
-  execFile('git', args, { cwd, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, timeout: 60000 }, (err, out) => {
+  // A project's own config can name commands git runs (fsmonitor, diff
+  // drivers); none of them should run just because a job ended.
+  execFile('git', ['-c', 'core.fsmonitor=false', ...args], { cwd, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, timeout: 60000 }, (err, out) => {
     if (err) reject(err); else resolve(out);
   });
 });
@@ -67,6 +69,6 @@ export async function summarize(cwd, base, end) {
 // The patch for one file, only when the boss asks for it.
 export async function fileDiff(cwd, changes, file) {
   if (!changes?.files.some((f) => f.path === file)) throw new Error('That file is not part of this job’s changes.');
-  const out = await git(cwd, ['diff', '--no-renames', '--no-color', changes.base, changes.end, '--', file]);
+  const out = await git(cwd, ['diff', '--no-renames', '--no-color', '--no-ext-diff', '--no-textconv', changes.base, changes.end, '--', file]);
   return out.length > MAX_DIFF ? `${out.slice(0, MAX_DIFF)}\n… diff cut at ${MAX_DIFF / 1024} KB` : out;
 }

@@ -25,8 +25,22 @@ const read = (k, fallback, valid) => {
 };
 const save = (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
 
+// Light/dark used to be kept under office.mode, which is also the chat
+// composer's clearance: "dark" blanked its picker and "auto" read as full
+// autonomy. Move it out once. An "auto" there can't be told apart, so it
+// goes, leaving the theme on its default (auto) and the composer on its own.
+try {
+  if (localStorage.getItem('office.appearance') === null) {
+    const old = localStorage.getItem('office.mode');
+    if (MODES.some((x) => x.id === old)) {
+      localStorage.setItem('office.appearance', old);
+      localStorage.removeItem('office.mode');
+    }
+  }
+} catch { /* private mode */ }
+
 let theme = read('office.theme', 'paper', THEMES);
-let mode = read('office.mode', 'auto', MODES);
+let mode = read('office.appearance', 'auto', MODES);
 
 const btn = document.getElementById('themeBtn');
 const pop = document.getElementById('themePop');
@@ -66,7 +80,7 @@ function render() {
     label('Theme'),
     group(THEMES, theme, (id) => { theme = id; save('office.theme', id); apply(); }, 'theme-swatches'),
     label('Mode'),
-    group(MODES, mode, (id) => { mode = id; save('office.mode', id); apply(); }, 'theme-modes'),
+    group(MODES, mode, (id) => { mode = id; save('office.appearance', id); apply(); }, 'theme-modes'),
   );
 }
 

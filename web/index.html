@@ -29,11 +29,18 @@
   <body>
     <div class="app" id="app" data-m="office">
       <aside class="side">
+        <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
         <header class="brand">
           <div class="title">
             <h1>Agent Office</h1>
             <span class="title-end">
               <span class="lv" id="lv">Lv 1</span>
+              <button type="button" class="theme-btn" id="lbBtn" aria-label="Leaderboard" aria-haspopup="true" aria-expanded="false" title="Leaderboard">
+                <svg viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5v1a3 3 0 0 0 3 3"/><path d="M16 6h3v1a3 3 0 0 1-3 3"/><path d="M12 13v4"/><path d="M8.5 20h7"/></svg>
+              </button>
+              <button type="button" class="theme-btn" id="linkBtn" aria-label="Linked offices" aria-haspopup="true" aria-expanded="false" title="Linked offices">
+                <svg viewBox="0 0 24 24"><path d="M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2"/><path d="M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2"/></svg>
+              </button>
               <button type="button" class="theme-btn" id="acctBtn" aria-label="Claude access" aria-haspopup="true" aria-expanded="false" title="Claude access">
                 <svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3"/><path d="m17 6 3 3"/><path d="m14.5 8.5 2 2"/></svg>
               </button>
@@ -42,6 +49,8 @@
               </button>
             </span>
             <div class="theme-pop" id="themePop" role="dialog" aria-label="Appearance" hidden></div>
+            <div class="theme-pop lb-pop" id="lbPop" role="dialog" aria-label="Leaderboard" hidden></div>
+            <div class="theme-pop link-pop" id="linkPop" role="dialog" aria-label="Linked offices" hidden></div>
             <div class="theme-pop acct-pop" id="acctPop" role="dialog" aria-label="Claude access" hidden></div>
           </div>
           <div class="level">

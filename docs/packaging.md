@@ -29,22 +29,21 @@ if users ask for one; leave hosted until the local version has users.
 - [x] **Claude access:** users choose the Claude Code login or an API key
       ([Claude access](claude-access.md)).
 - [x] **Licence:** MIT ([`LICENSE`](../LICENSE)).
-- [x] **npm name:** `agent-office-studio` (`agent-office` is taken); it installs both `agent-office-studio` and `agent-office`.
-- [x] **Data folder:** `~/.agent-office`, `--data` or `OFFICE_DATA` to change it.
-- [x] **Project root:** the folder it's started in, or `agent-office <folder>`.
-- [x] **`bin/agent-office.js`:** `--port`, `--no-open`, `--terminal`, `--data`;
-      the next free port if 4317 is taken; opens the browser.
-- [x] **Preflight:** `agent-office doctor`, and the same checks on start.
-- [x] **Package:** ships a built `dist/`; the runtime needs only `ws`.
-- [ ] **Terminal:** a `node-pty` with working prebuilt binaries (1.1.0's macOS
-      helper isn't executable; waiting for a fixed stable release).
-- [x] **Voice:** `agent-office voice`.
-- [ ] **Migrate a clone's `data/`** into `~/.agent-office` for people moving
-      from a clone to the package.
-- [ ] **Publish** the first version to npm.
+- [ ] **npm name:** confirm `agent-office` is free, or pick another.
+- [ ] **Data directory:** `~/.agent-office` (or `$XDG_DATA_HOME`) with an
+      `OFFICE_DATA` override, migrating an existing `<app>/data` on first run.
+- [ ] **Project root:** default to the current directory, `--root <dir>`,
+      remembered after the first run.
+- [ ] **`bin/agent-office.js`:** `--port`, `--root`, `--open`, `--terminal`;
+      pick another port if 4317 is taken; open the browser.
+- [ ] **Preflight:** `claude` on `PATH`, recent enough, and signed in or given a
+      key — one clear fix for each problem.
+- [ ] **Package:** publish a prebuilt `dist/`; move the web-only dependencies
+      (`three`, `marked`, `xterm`, fonts) to devDependencies so the runtime
+      needs only `ws`.
+- [ ] **Terminal:** a `node-pty` build with prebuilt binaries, still optional.
+- [ ] **Voice:** `agent-office voice setup` in place of the two npm scripts.
 - [ ] **Plan meters:** hide quietly if the usage endpoint goes away.
-- [x] **Platforms:** CI on clean macOS and Ubuntu, including installing the
-      packed package; Windows via WSL.
-- [x] **Releases:** pushing a `v*` tag runs the checks, publishes to npm with
-      provenance and creates the GitHub release from the CHANGELOG.
-- [ ] **Homebrew** formula.
+- [ ] **Platforms:** CI on clean macOS and Ubuntu; Windows via WSL.
+- [ ] **Releases:** on a tag, a smoke test against a stub `claude`, then
+      `npm publish --provenance` and a Homebrew bump; a CHANGELOG.

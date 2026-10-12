@@ -59,21 +59,21 @@ A message you passed to an agent ("Passed to…", "Adding this to…" in the cha
 
 Images. A screenshot or mockup the boss attaches is shown to you with the message, so look at it before you decide: it is usually the whole brief. Let what you see set the project, the agent and the model, and say it in plain words in "brief" — "the usage bar is drawn over the avatar in the sidebar" tells the agent far more than "see the screenshot". The file's path travels with the brief, so the agent can open it themselves. Attachments you were not shown (other file types, and voice notes, which reach you as their transcript) you cannot open: route on the boss's words and leave the reading to the agent.
 
-"say" is one short, warm line for the chat, in plain words, e.g. "Ada's on it." or "Passing that to Tunde, it fits what they're doing." Refer to agents only by name or as "they"; never "he", "she", "him" or "her". Never claim work is done.`;
+"say" is one short, warm line for the chat, in plain words, e.g. "Ada's on it." or "Passing that to Tunde, it fits what they're doing." Refer to agents only by name or as "they"; never "he", "she", "him" or "her". Never claim work is done, and never call a job done while its agent is still waiting on the boss's answer; say it is waiting on them.`;
 
 // Routing on the boss's words alone, or on the images too. Only streamed
 // input can carry an image, and the CLI answers a stream with a stream, so
 // that path reads one JSON object per line and keeps the last one.
 export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000, images = [], env = process.env } = {}) {
   const shown = canSee(images);
-  if (!shown.length) return ask(context, { bin, model, timeoutMs });
+  if (!shown.length) return ask(context, { bin, model, timeoutMs, env });
   // An image the API won't take (too many pixels, a .png that isn't one)
   // shouldn't cost the boss their answer, so the words go on their own.
-  return ask(context, { bin, model, timeoutMs, images: shown })
-    .catch(() => ask(context, { bin, model, timeoutMs }));
+  return ask(context, { bin, model, timeoutMs, env, images: shown })
+    .catch(() => ask(context, { bin, model, timeoutMs, env }));
 }
 
-function ask(context, { bin, model, timeoutMs, images }) {
+function ask(context, { bin, model, timeoutMs, env, images }) {
   const streamed = !!images?.length;
   return new Promise((resolve, reject) => {
     const args = [
@@ -90,7 +90,8 @@ function ask(context, { bin, model, timeoutMs, images }) {
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', () => {
       clearTimeout(timer);
@@ -99,7 +100,7 @@ function ask(context, { bin, model, timeoutMs, images }) {
         const decision = r.structured_output || JSON.parse(r.result);
         resolve({ ...decision, cost: r.total_cost_usd || 0 });
       } catch {
-        reject(new Error(err.trim().split('\n').pop() || 'The chief could not decide.'));
+        reject(new Error(whyNot(out, err, streamed, timedOut, timeoutMs)));
       }
     });
     child.stdin.on('error', () => {});
@@ -119,6 +120,21 @@ function message(context, images) {
 }
 
 // The decision is in the last line of the stream, the one the run ends on.
+// Why a routing call gave no decision, in words the boss can act on. claude
+// reports most failures (not signed in, out of credit, a model the account
+// can't use) inside its JSON on stdout with nothing on stderr, so read that
+// before falling back.
+function whyNot(out, err, streamed, timedOut, timeoutMs) {
+  if (timedOut) return `The chief took longer than ${Math.round(timeoutMs / 1000)} seconds to answer. Check that \`claude -p "hi"\` answers in a terminal.`;
+  let r = null;
+  try { r = streamed ? result(out) : JSON.parse(out); } catch {}
+  const said = String(r?.is_error ? r.result || r.subtype || '' : '').trim();
+  if (said) return `claude said: ${said.split('\n')[0].slice(0, 300)}`;
+  const last = err.trim().split('\n').pop();
+  if (last) return last.slice(0, 300);
+  return out.trim() ? 'The chief could not decide.' : 'claude exited without answering. Check that `claude -p "hi"` answers in a terminal.';
+}
+
 function result(out) {
   for (const line of out.trim().split('\n').reverse()) {
     try {

@@ -22,6 +22,10 @@ OFFICE_ALLOWED_HOSTS=my-mac.tail1234.ts.net agent-office
 `OFFICE_ALLOWED_HOSTS` takes exact hostnames, comma-separated. Every other
 host and origin is still refused.
 
+On the phone, open the tailnet address once with the office key on the end,
+`https://my-mac.tail1234.ts.net/?key=…` (the key is in the link the office
+printed, or `agentoffice --link`). The phone keeps it after that.
+
 **Read this first.** Whoever can open that address can run Claude in your
 projects with full autonomy, and — if started with `--terminal` — get a shell on
 this machine. Only expose it on a tailnet that is just you. Never put it on

@@ -10,13 +10,22 @@ walk to a desk and do it for real, in that project folder, with `claude -p`.
 
 ```bash
 npm install -g agent-office-studio
-cd ~/code            # the folder that holds your projects
-agent-office         # opens http://localhost:4317
+cd ~/projects        # the folder whose subfolders are your projects
+agentoffice          # or: agentstudio. Serves on http://localhost:4317, or any free port (`--port <n>` to choose; the URL is printed)
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/onuohasilver/agent-office.git
+cd agent-office
+npm install
+npm start            # builds, then serves on http://localhost:4317
 ```
 
 You need Node.js 20+, git, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 signed in on this machine (or an Anthropic API key). Your projects are the
-folders inside the one you start it in — see [Getting started](docs/getting-started.md).
+folders next to this one (or, with `agentoffice`, in the folder you run it from) — see [Getting started](docs/getting-started.md).
 
 ## What it does
 
@@ -54,6 +63,7 @@ folders inside the one you start it in — see [Getting started](docs/getting-st
 | [Getting started](docs/getting-started.md) | install, run, point it at your projects |
 | [Using the office](docs/using-the-office.md) | the chat, channels, threads, standup, the break room |
 | [Jobs](docs/jobs.md) | clearance, which model, what changed |
+| [The leaderboard](docs/leaderboard.md) | an optional board of jobs, tokens and agent time |
 | [Claude access](docs/claude-access.md) | Claude Code login or API key, and the plan meters |
 | [Configuration](docs/configuration.md) | every setting |
 | [Talking out loud](docs/voice.md) | speech in and voices out |

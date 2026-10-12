@@ -6,10 +6,9 @@ the talking.
 
 ```bash
 brew install ffmpeg whisper-cpp
-agent-office voice         # ~150 MB of ears, ~700 MB of voices
+npm run voice:model        # ~148 MB, ears
+npm run voice:piper        # ~700 MB, voices
 ```
-
-In a clone, `npm run voice` does the same into its `data/` folder.
 
 The microphone sits next to the paperclip, and `⌥M` works from anywhere.
 Click once to start, again to stop. What you said lands **in the composer**

@@ -1,0 +1,27 @@
+name = "agent-office-leaderboard"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+# Create the database with `npx wrangler d1 create agent-office-leaderboard`,
+# then paste the id it prints here.
+[[d1_databases]]
+binding = "DB"
+database_name = "agent-office-leaderboard"
+database_id = "3cd683e5-c7bb-48f6-bb8a-a6ab798bfbf5"
+
+# Hourly: clear spent rate-limit counters and expired invites.
+[triggers]
+crons = ["17 * * * *"]
+
+# Addresses are kept only as an HMAC under this secret:
+#   npx wrangler secret put IP_KEY
+# (any long random string; locally, put IP_KEY=... in .dev.vars).
+
+# One Mailbox per office holds its relay socket (linked offices).
+[[durable_objects.bindings]]
+name = "MAILBOX"
+class_name = "Mailbox"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Mailbox"]
