@@ -341,6 +341,7 @@ guests = new Guests(DATA, {
   links,
   office: {
     jobs: () => state.jobs,
+    repoPath: (name) => repoPath(name),
     createJob: (body, extra) => createJob(body, extra),
     replyJob: (job, body) => replyJob(job, body),
     stopJob: (job, why) => stopJob(job, why),

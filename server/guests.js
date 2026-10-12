@@ -142,7 +142,7 @@ export function guestJob(j, tail = 40) {
 }
 
 export class Guests {
-  // office: { jobs(), createJob(body, extra), replyJob(job, body), stopJob(job), diff(job, path), staff(), modes() }
+  // office: { jobs(), repoPath(name), createJob(body, extra), replyJob(job, body), stopJob(job), diff(job, path), staff(), modes() }
   // office also has send(msg), which broadcasts to our own browsers.
   // visits (as host): our side of a guest's own agents working in our
   // projects; see visits.js.
@@ -656,7 +656,7 @@ export class Guests {
     const tags = [...text.matchAll(/(^|\s)#([\w.-]+)/g)];
     // A project of ours, not theirs: their agent would run in their folder
     // and never see ours. Say so, rather than quietly working somewhere else.
-    const ours = tags.find((t) => !repos.some((r) => norm(r) === norm(t[2])) && this.office.repoPath?.(t[2]));
+    const ours = tags.find((t) => !repos.some((r) => norm(r) === norm(t[2])) && this.office.repoPath(t[2]));
     if (ours) return { repo: this.lentHome(entry, ours[2]), home: true, text: text.replace(ours[0], ' ').replace(/[ \t]+/g, ' ').trim() };
     if (repos.length === 1) return { repo: repos[0], text };
     for (const t of tags) {
