@@ -8,6 +8,11 @@ Notable changes to Agent Office. The format follows
 
 ## 0.2.0 — 2026-10-12
 
+### Install
+- Published as `agent-office-studio`. `npm install -g agent-office-studio`, then
+  run `agentoffice` (or `agentstudio`) in the folder that holds your projects.
+  State lives in `~/.agent-office`; `OFFICE_DATA` and `OFFICE_ROOT` override.
+
 ### Fixed
 - A job whose agent flagged a question, decision or blocker is no longer
   reported as done when their turn ends. The chief posts "Waiting on you"

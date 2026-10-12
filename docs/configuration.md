@@ -8,7 +8,8 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 
 | Env | Default | |
 |---|---|---|
-| `OFFICE_ROOT` | the folder above this one | its subfolders are the projects |
+| `OFFICE_ROOT` | the folder above this one; with `agentoffice`, the folder you run it from | its subfolders are the projects |
+| `OFFICE_DATA` | `data/` here; with `agentoffice`, `~/.agent-office` | where the office keeps its state |
 | `PORT` | `4317` | |
 | `OFFICE_ALLOWED_HOSTS` | none | extra hostnames to accept, comma-separated; see [On your phone](phone.md) |
 

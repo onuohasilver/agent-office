@@ -4,6 +4,7 @@
   "description": "A 3D office where the staff are Claude Code agents.",
   "license": "MIT",
   "files": [
+    "bin",
     "dist",
     "server",
     "shared",
@@ -33,6 +34,10 @@
     "node": ">=20"
   },
   "type": "module",
+  "bin": {
+    "agentoffice": "bin/agentoffice.js",
+    "agentstudio": "bin/agentoffice.js"
+  },
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",

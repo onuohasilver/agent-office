@@ -9,6 +9,14 @@ walk to a desk and do it for real, in that project folder, with `claude -p`.
 ![The office: chat on the left, the floor with desks, a break room, a pool table and the chief of staff at reception](docs/images/office.jpg)
 
 ```bash
+npm install -g agent-office-studio
+cd ~/projects        # the folder whose subfolders are your projects
+agentoffice          # or: agentstudio. Serves on http://localhost:4317
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/onuohasilver/agent-office.git
 cd agent-office
 npm install
@@ -17,7 +25,7 @@ npm start            # builds, then serves on http://localhost:4317
 
 You need Node.js 20+, git, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 signed in on this machine (or an Anthropic API key). Your projects are the
-folders next to this one — see [Getting started](docs/getting-started.md).
+folders next to this one (or, with `agentoffice`, in the folder you run it from) — see [Getting started](docs/getting-started.md).
 
 ## What it does
 
