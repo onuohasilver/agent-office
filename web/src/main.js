@@ -224,9 +224,9 @@ const app = {
   staffName: (id) => app.staff.find((s) => s.id === id)?.name || '',
   person: (from) => {
     if (from === 'you') return { name: 'You', color: '#c9c1b4' };
-    if (from === 'chief') return { name: 'Chief of Staff', color: CHIEF.shirt };
+    if (from === 'chief') return { name: 'Chief of Staff', color: CHIEF.shirt, look: CHIEF };
     const s = app.staff.find((x) => x.id === from);
-    return { name: s?.name || from, color: s?.shirt || '#999' };
+    return { name: s?.name || from, color: s?.shirt || '#999', look: s };
   },
   onFloor: () => app.staff.slice(0, app.progress?.capacity || 0).filter((s) => !app.dismissed.has(s.id)),
   roster: () => app.onFloor().map((s) => {

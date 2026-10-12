@@ -3,6 +3,7 @@
 
 import { Marked } from 'marked';
 import { recorder, voiceFile, speech } from './voice.js';
+import { LOOKS } from './figure.js';
 import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
 
 const $ = (id) => document.getElementById(id);
@@ -35,9 +36,92 @@ const STATION = { library: 'Library', servers: 'Server room', window: 'Research'
 // as a class or a number is held to the ones we know.
 const known = (map, k) => (typeof k === 'string' && Object.hasOwn(map, k) ? k : '');
 const statusText = (s) => STATUS[known(STATUS, s)] || '';
+// Briefs the chief writes open with "The boss says: "…"", which buries the ask
+// under the same words on every row; the list shows the quote, the tooltip the lot.
+const askOf = (t) => {
+  const q = /^the boss (?:says|asks|wants)\s*[:,]?\s*["“](.+?)(?:["”]|$)[\s.,:;]*(.*)/is.exec(String(t || ''));
+  // A one-word ask ("restart") says too little alone, so it keeps the brief after it.
+  const s = (q ? (q[1].length < 24 && q[2] ? `${q[1].replace(/[.!]$/, '')}: ${q[2]}` : q[1]) : String(t || '')).trim();
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+const since = (ms) => {
+  if (!ms) return '';
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+  return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+};
 const num = (n) => (Number.isFinite(n) ? n : 0);
 // Colours go into style attributes, so only a hex colour gets through.
 const hex = (c) => (typeof c === 'string' && /^#[0-9a-f]{3,8}$/i.test(c) ? c : '#999');
+
+// A project shows its own app icon or favicon when the server finds one
+// (/api/repos/icon); until then, or when it has none, a tinted initial.
+// Image load and error events stop at document; they never reach window.
+const iconSeen = new Map(); // project -> true | false once the browser has tried it
+const projectIcon = (name) => {
+  let h = 0;
+  for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const initial = (String(name).match(/[a-z0-9]/i) || ['#'])[0].toUpperCase();
+  const seen = iconSeen.get(name);
+  const img = seen === false ? '' : `<img src="/api/repos/icon?name=${encodeURIComponent(name)}" alt="" data-pico="${esc(name)}" draggable="false">`;
+  return `<span class="pico${seen ? ' has' : ''}" style="--h:${h}" aria-hidden="true">${esc(initial)}${img}</span>`;
+};
+document.addEventListener('load', (e) => {
+  const img = e.target;
+  if (!img?.dataset?.pico) return;
+  iconSeen.set(img.dataset.pico, true);
+  img.parentElement.classList.add('has');
+}, true);
+document.addEventListener('error', (e) => {
+  const img = e.target;
+  if (!img?.dataset?.pico) return;
+  iconSeen.set(img.dataset.pico, false);
+  img.remove();
+}, true);
+
+// Each person's face, drawn from the same skin, hair and shirt the office
+// figure wears, so the portrait is recognisably them.
+const portrait = (s) => {
+  const look = LOOKS[s.id] || {};
+  const skin = hex(s.skin), hair = hex(s.hair), shirt = hex(s.shirt);
+  const style = look.hair || 'short';
+  const back = {
+    afro: `<circle cx="24" cy="18" r="13.5" fill="${hair}"/>`,
+    bob: `<path d="M10 40V19a14 14 0 0 1 28 0v21z" fill="${hair}"/>`,
+    long: `<path d="M9 44V19a15 15 0 0 1 30 0v25z" fill="${hair}"/>`,
+    ponytail: `<path d="M33 14c8 1 10 9 6 19-1-6-3-9-6-10z" fill="${hair}"/>`,
+    bun: `<circle cx="24" cy="6.5" r="4.5" fill="${hair}"/>`,
+  }[style] || '';
+  const front = {
+    afro: `<path d="M15 17a9 9 0 0 1 18 0c-3-3-6-4-9-4s-6 1-9 4z" fill="${hair}"/>`,
+    short: `<path d="M15 18a9 9 0 0 1 18 0c-4-1-6-3-9-5-2 3-5 4-9 5z" fill="${hair}"/>`,
+    buzz: `<path d="M15.2 17.5a8.8 8.8 0 0 1 17.6 0c-5-2-12.6-2-17.6 0z" fill="${hair}"/>`,
+    spiky: `<path d="M15 18l1-7 3 4 2-7 3 6 3-6 2 7 3-4 1 7c-4-2-6-3-9-3s-5 1-9 3z" fill="${hair}"/>`,
+    bob: `<path d="M15 19a9 9 0 0 1 18 0c-5 0-9-2-11-5-1 3-3 5-7 5z" fill="${hair}"/>`,
+    long: `<path d="M15 19a9 9 0 0 1 18 0c-5 0-9-2-11-5-1 3-3 5-7 5z" fill="${hair}"/>`,
+    ponytail: `<path d="M15 18a9 9 0 0 1 18 0c-4-1-7-3-9-5-2 3-5 4-9 5z" fill="${hair}"/>`,
+    bun: `<path d="M15 18a9 9 0 0 1 18 0c-4-1-7-3-9-5-2 3-5 4-9 5z" fill="${hair}"/>`,
+  }[style] || '';
+  const extra = look.extra === 'glasses'
+    ? '<g fill="none" stroke="#2b2b2b" stroke-width="1.2"><circle cx="20.5" cy="22" r="3"/><circle cx="27.5" cy="22" r="3"/><path d="M23.5 22h1"/></g>'
+    : look.extra === 'headphones'
+      ? '<path d="M14.5 22v-4a9.5 9.5 0 0 1 19 0v4" fill="none" stroke="#2b2b2b" stroke-width="2"/><rect x="12.5" y="20" width="4" height="7" rx="2" fill="#2b2b2b"/><rect x="31.5" y="20" width="4" height="7" rx="2" fill="#2b2b2b"/>'
+      : '';
+  return `<svg class="face" viewBox="0 0 48 48" aria-hidden="true" style="background:${shirt}33">
+    ${back}
+    <path d="M6 48c1-9 8-13 18-13s17 4 18 13z" fill="${shirt}"/>
+    <rect x="20.5" y="27" width="7" height="9" rx="3" fill="${skin}"/>
+    <ellipse cx="24" cy="22" rx="9" ry="10" fill="${skin}"/>
+    ${front}
+    <circle cx="20.5" cy="22.5" r="1.2" fill="#2b2118"/><circle cx="27.5" cy="22.5" r="1.2" fill="#2b2118"/>
+    <path d="M21.5 27.5q2.5 2 5 0" fill="none" stroke="#2b2118" stroke-width="1.1" stroke-linecap="round" opacity=".7"/>
+    ${extra}
+  </svg>`;
+};
+
+// A sender's avatar: their portrait, or a plain silhouette for the boss.
+const avatar = (p, cls = '') => `<span class="av ${cls}">${p.look
+  ? portrait(p.look)
+  : '<svg class="face" viewBox="0 0 48 48" aria-hidden="true" style="background:#c9c1b455"><path d="M6 48c1-9 8-13 18-13s17 4 18 13z" fill="#a39a8a"/><ellipse cx="24" cy="21" rx="9" ry="10" fill="#a39a8a"/></svg>'}</span>`;
 
 const store = (k, v) => {
   try {
@@ -211,7 +295,7 @@ export class Hud {
       if (job) return this.app.openJob(job.dataset.id);
       const add = e.target.closest('[data-new]');
       if (add) return this.focusInput(`#${add.dataset.new.replace(/\s+/g, '-')} `);
-      const head = e.target.closest('.head[data-project]');
+      const head = e.target.closest('[data-project]');
       if (head) {
         this.projectOpen = this.projectOpen === head.dataset.project ? null : head.dataset.project;
         this.renderProjects();
@@ -222,6 +306,7 @@ export class Hud {
       if (b.dataset.m === 'office') this.mobile('office');
       else this.tab(b.dataset.m);
     }));
+    this.bindViewToggle();
     this.bindTeam();
     this.bindChat();
     this.bindChannels();
@@ -338,19 +423,45 @@ export class Hud {
   renderJobs(jobs, staffName) {
     const order = { working: 0, queued: 1, done: 2, failed: 2, stopped: 2 };
     const list = [...jobs].sort((a, b) => order[a.status] - order[b.status] || (b.endedAt || b.queuedAt) - (a.endedAt || a.queuedAt));
-    $('jobs').innerHTML = list.length
-      ? list.map((j) => `
+    const row = (j) => `
         <button class="job ${j.id === this.openId ? 'open' : ''}" data-id="${esc(j.id)}">
           <span class="dot ${known(STATUS, j.status)}"></span>
-          <span class="t">${esc(j.title)}</span>
-          <span class="m">${j.from ? `<b class="from">from ${esc(j.from)}</b> · ` : ''}${esc(j.repo)}${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''} · ${statusText(j.status)}</span>
-        </button>`).join('')
+          <span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
+          <time class="w">${order[j.status] < 2 ? '' : since(j.endedAt || j.queuedAt)}</time>
+          <span class="m">${j.from ? `<b class="from">from ${esc(j.from)}</b> · ` : ''}${projectIcon(j.repo)}<span class="r">${esc(j.repo)}</span>${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''}${j.status === 'done' ? '' : ` · <span class="s ${known(STATUS, j.status)}">${statusText(j.status)}</span>`}</span>
+        </button>`;
+    const live = list.filter((j) => order[j.status] < 2);
+    const past = list.filter((j) => order[j.status] === 2);
+    const group = (label, js) => (js.length ? `<h3 class="jgroup">${label}<span>${js.length}</span></h3>${js.map(row).join('')}` : '');
+    $('jobs').innerHTML = list.length
+      ? group('In progress', live) + group('Finished', past)
       : `<p class="empty">No jobs yet. Ask for something in the chat.</p>`;
     $('clear').hidden = !list.some((j) => order[j.status] === 2);
     const open = list.filter((j) => order[j.status] < 2).length;
     $('jobCount').textContent = open ? String(open) : '';
     $('mJobCount').textContent = open ? String(open) : '';
     this.renderProjects(jobs);
+  }
+
+  // Projects and Team share one list/icons choice, remembered per browser.
+  bindViewToggle() {
+    this.view = store('office.view') === 'icons' ? 'icons' : 'list';
+    const paint = () => {
+      document.querySelectorAll('.viewbar [data-view]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.view === this.view)));
+      $('team').classList.toggle('icons', this.view === 'icons');
+      $('projects').classList.toggle('icons', this.view === 'icons');
+    };
+    document.querySelectorAll('.viewbar').forEach((bar) => bar.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-view]');
+      if (!b || b.dataset.view === this.view) return;
+      if (this.dirty() && !confirm('Discard your changes?')) return;
+      this.view = b.dataset.view;
+      store('office.view', this.view);
+      paint();
+      this.renderProjects();
+      this.renderTeam(true);
+    }));
+    paint();
   }
 
   // ---------- projects ----------
@@ -380,22 +491,38 @@ export class Hud {
       const note = live ? esc(this.app.busyIn(name)) : queued ? `${queued} queued` : `Last: ${esc(js[0].title)}`;
       return { name, js, live, queued, state, note, last: at(js[0]) };
     }).sort((a, b) => (!!b.live - !!a.live) || b.last - a.last).slice(0, 8);
-    $('projects').innerHTML = rows.length ? rows.map((p) => {
+    if (!rows.length) {
+      $('projects').innerHTML = `<p class="empty">No projects worked on yet. Ask for something in the chat.</p>`;
+      return;
+    }
+    const sub = (p) => `<div class="sub">${p.js.length ? p.js.slice(0, 8).map((j) => `
+          <button class="job" data-id="${esc(j.id)}"><span class="dot ${known(STATUS, j.status)}"></span><span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
+            <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${statusText(j.status)}</span></button>`).join('')
+      : `<p class="none">Nothing has run here yet.</p>`}
+          <button type="button" class="ghost" data-new="${esc(p.name)}"><span aria-hidden="true">+</span> New job in ${esc(p.name)}</button></div>`;
+    const count = (p) => (p.js.length ? `${p.js.length} job${p.js.length === 1 ? '' : 's'}` : '');
+    if (this.view === 'icons') {
+      const openP = rows.find((p) => p.name === this.projectOpen);
+      $('projects').innerHTML = `<div class="tiles">${rows.map((p) => `
+        <button type="button" class="tile${p.name === this.projectOpen ? ' open' : ''}" data-project="${esc(p.name)}" aria-expanded="${p.name === this.projectOpen}" title="${esc(p.name)}${count(p) ? ` · ${count(p)}` : ''}">
+          <span class="art">${projectIcon(p.name)}<span class="dot ${p.state}"></span></span>
+          <span class="n">${esc(p.name)}</span>
+          <span class="c">${count(p) || 'No jobs'}</span>
+        </button>`).join('')}</div>${openP ? `<div class="project open">${openP.live || openP.queued ? `<p class="note">${openP.note}</p>` : ''}${sub(openP)}</div>` : ''}`;
+      return;
+    }
+    $('projects').innerHTML = rows.map((p) => {
       const open = this.projectOpen === p.name;
       return `<div class="project${open ? ' open' : ''}">
         <button type="button" class="head" data-project="${esc(p.name)}" aria-expanded="${open}">
           <span class="dot ${p.state}"></span>
           <span class="n">${esc(p.name)}</span>
-          <span class="c">${p.js.length ? `${p.js.length} job${p.js.length === 1 ? '' : 's'}` : ''}</span>
+          <span class="c">${count(p)}</span>
           <span class="m">${p.note}</span>
         </button>
-        ${open ? `<div class="sub">${p.js.length ? p.js.slice(0, 8).map((j) => `
-          <button class="job" data-id="${esc(j.id)}"><span class="dot ${known(STATUS, j.status)}"></span><span class="t">${esc(j.title)}</span>
-            <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${statusText(j.status)}</span></button>`).join('')
-          : `<p class="none">Nothing has run here yet.</p>`}
-          <button type="button" class="ghost" data-new="${esc(p.name)}">New job in ${esc(p.name)}</button></div>` : ''}
+        ${open ? sub(p) : ''}
       </div>`;
-    }).join('') : `<p class="empty">No projects worked on yet. Ask for something in the chat.</p>`;
+    }).join('');
   }
 
   // ---------- detail drawer ----------
@@ -1047,7 +1174,7 @@ export class Hud {
     if (!replies.length) return '';
     const last = replies.at(-1);
     const faces = [...new Set(replies.map((r) => r.from))].slice(-3)
-      .map((p) => `<i style="background:${hex(this.app.person(p).color)}"></i>`).join('');
+      .map((p) => avatar(this.app.person(p))).join('');
     const said = last.text.replace(/[*_`#>]/g, '').replace(/\s+/g, ' ').trim();
     return `
       <button type="button" class="thread-sum" data-thread="${esc(m.id)}">
@@ -1081,6 +1208,7 @@ export class Hud {
       ? `<p>${esc(m.text).replace(/(^|\s)([@#][\w.-]+)/g, '$1<span class="tag">$2</span>')}</p>`
       : rich(m.text);
     const long = m.from !== 'you' && m.from !== 'chief' && !m.to && m.text.length > 420;
+    const project = m.project || (m.jobId && this.app.jobs.get(m.jobId)?.repo) || '';
     const extras = [
       long ? `<button type="button" class="icon" data-more aria-label="Show all" title="Show all">${ICONS.more}</button>` : '',
       m.jobId && m.from !== 'you' ? `<button type="button" class="icon" data-open="${m.jobId}" aria-label="Open job" title="Open job">${ICONS.open}</button>` : '',
@@ -1091,7 +1219,7 @@ export class Hud {
     ].filter(Boolean).join('');
     return `
       <div data-id="${esc(m.id)}" class="msg from-${m.from === 'you' ? 'you' : m.from === 'chief' ? 'chief' : 'agent'} ${m.kind || ''} ${m.status || ''} ${long ? 'clamp' : ''}">
-        <div class="who"><i style="background:${hex(who.color)}"></i><b>${esc(who.name)}</b>${to ? `<span class="arrow">→</span><i style="background:${hex(to.color)}"></i><b>${esc(to.name)}</b>` : ''}<time>${time}</time></div>
+        <div class="who">${avatar(who)}<b>${esc(who.name)}</b>${to ? `<span class="arrow">→</span>${avatar(to)}<b>${esc(to.name)}</b>` : ''}<time>${time}</time>${project ? `<span class="ptag" title="Project: ${esc(project)}" role="img" aria-label="Project: ${esc(project)}">${projectIcon(project)}</span>` : ''}</div>
         ${m.kind === 'handoff' ? `<p class="kind">Handed off · ${esc(m.project || '')}</p>` : ''}
         ${m.kind === 'standup' && m.from !== 'chief' ? '<p class="kind">Standup</p>' : ''}
         ${m.text ? `<div class="body md">${body}</div>` : ''}
@@ -1284,8 +1412,28 @@ export class Hud {
     if ($('teamPane').hidden || (!force && this.dirty())) return;
     const { staff, progress, dismissed } = this.app;
     const cap = progress?.capacity || 0;
+    const form = (s) => `<form data-id="${esc(s.id)}">
+          <label>Role<input name="role" maxlength="80" value="${esc(s.role)}" placeholder="Backend engineer" /></label>
+          <label>Personality<textarea name="personality" rows="3" maxlength="600" placeholder="How they come across: calm, chatty, blunt, funny…">${esc(s.personality)}</textarea></label>
+          <label>Background<textarea name="background" rows="3" maxlength="600" placeholder="Where they've worked, what they know best">${esc(s.background)}</textarea></label>
+          <p class="hint-t">Shapes how ${esc(s.name)} writes and who the chief sends their way. It never lowers the bar on the work.</p>
+          <div class="row"><button type="button" class="ghost small" data-cancel>Cancel</button><button type="submit" class="primary small">Save</button></div>
+        </form>`;
+    const statusOf = (s, i) => (i >= cap ? 'Not hired yet' : dismissed.has(s.id) ? 'Gone home' : '');
+    if (this.view === 'icons') {
+      const openS = staff.find((s) => s.id === this.editing);
+      $('team').innerHTML = `<div class="tiles">${staff.map((s, i) => {
+        const status = statusOf(s, i);
+        return `<button type="button" class="tile${i >= cap ? ' later' : ''}${s.id === this.editing ? ' open' : ''}" data-member="${esc(s.id)}" aria-expanded="${s.id === this.editing}" title="${esc(s.name)} · ${esc(s.role || 'No role yet')}${status ? ` · ${status}` : ''}">
+          <span class="art">${portrait(s)}</span>
+          <span class="n">${esc(s.name)}</span>
+          <span class="c">${status || esc(s.role || 'No role yet')}</span>
+        </button>`;
+      }).join('')}</div>${openS ? `<div class="member open">${form(openS)}</div>` : ''}`;
+      return;
+    }
     $('team').innerHTML = staff.map((s, i) => {
-      const status = i >= cap ? 'Not hired yet' : dismissed.has(s.id) ? 'Gone home' : '';
+      const status = statusOf(s, i);
       const open = this.editing === s.id;
       const head = `<button type="button" class="head" data-member="${esc(s.id)}" aria-expanded="${open}">
           <i style="background:${hex(s.shirt)}"></i>
@@ -1293,15 +1441,7 @@ export class Hud {
           <span class="r">${esc(s.role || 'No role yet')}</span>
         </button>`;
       if (!open) return `<div class="member${i >= cap ? ' later' : ''}">${head}${s.personality ? `<p class="p">${esc(s.personality)}</p>` : ''}</div>`;
-      return `<div class="member open">${head}
-        <form data-id="${esc(s.id)}">
-          <label>Role<input name="role" maxlength="80" value="${esc(s.role)}" placeholder="Backend engineer" /></label>
-          <label>Personality<textarea name="personality" rows="3" maxlength="600" placeholder="How they come across: calm, chatty, blunt, funny…">${esc(s.personality)}</textarea></label>
-          <label>Background<textarea name="background" rows="3" maxlength="600" placeholder="Where they've worked, what they know best">${esc(s.background)}</textarea></label>
-          <p class="hint-t">Shapes how ${esc(s.name)} writes and who the chief sends their way. It never lowers the bar on the work.</p>
-          <div class="row"><button type="button" class="ghost small" data-cancel>Cancel</button><button type="submit" class="primary small">Save</button></div>
-        </form>
-      </div>`;
+      return `<div class="member open">${head}${form(s)}</div>`;
     }).join('');
   }
 

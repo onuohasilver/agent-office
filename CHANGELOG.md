@@ -6,6 +6,13 @@ Notable changes to Agent Office. The format follows
 
 ## 0.5.0 — 2026-10-12
 
+### Added
+- A list/icons toggle on the Team and Projects tabs, to see them as rows or as a grid of icons.
+
+### Changed
+- The Jobs list is restyled: each row leads with the ask itself rather than the "The boss says" preamble, with the full brief in the tooltip.
+- Chat shows each sender's avatar, drawn from their office look (a plain silhouette for the boss), instead of a coloured dot beside their name.
+
 ### Removed
 - The in-app browser terminal: the drawer under the office, its `/api/terminal` and `/ws/terminal` endpoints, and the `OFFICE_TERMINAL*` settings. The `xterm` and `node-pty` dependencies go with it, so installing no longer needs `allow-scripts` and npm stops warning about `node-pty`'s install scripts.
 

@@ -19,6 +19,7 @@ import { Leaderboard } from './leaderboard.js';
 import { Links } from './links.js';
 import { Settings } from './settings.js';
 import { Guests } from './guests.js';
+import { findIcon } from './icons.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -2108,6 +2109,16 @@ const server = http.createServer(async (req, res) => {
   if (parts[1] !== 'agent' && !hasKey(req)) return json(res, 401, { error: 'Open the office with its link first.' });
 
   try {
+    if (req.method === 'GET' && url.pathname === '/api/repos/icon') {
+      const dir = repoPath(url.searchParams.get('name'));
+      const icon = dir && findIcon(dir);
+      if (!icon) return json(res, 404, { error: 'No icon.' });
+      res.writeHead(200, {
+        'content-type': icon.type, 'cache-control': 'private, max-age=300',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff',
+      });
+      return fs.createReadStream(icon.file).pipe(res);
+    }
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
     if (req.method === 'POST' && parts[1] === 'agent' && agentApi[parts[2]]) {
       const me = caller(req);
