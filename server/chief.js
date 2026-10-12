@@ -24,7 +24,7 @@ export function canSee(files) {
 const SCHEMA = {
   type: 'object',
   properties: {
-    action: { type: 'string', enum: ['followup', 'new', 'dismiss', 'recall', 'standup', 'ask', 'chat'] },
+    action: { type: 'string', enum: ['followup', 'new', 'dismiss', 'recall', 'clear', 'standup', 'ask', 'chat'] },
     jobId: { type: 'string' },
     agentId: { type: 'string' },
     agentIds: { type: 'array', items: { type: 'string' } },
@@ -45,6 +45,7 @@ Actions:
 - "new": a new piece of work. Give "repo" (exactly one name from Projects), "brief" (the task in the boss's own words, plus any context from recent chat that the agent needs; never add requirements), "agentId" (the tagged agent's id; otherwise a free agent whose role in Staff clearly fits the work; otherwise "" for whoever is free), and "model" (see Sizing the work). Never pick a busy or dismissed agent unless the boss tagged them.
 - "dismiss": the boss wants agents sent home (dismissed, let go for now, off the floor). Give "agentIds": the ids of exactly who they mean, worked out from Staff (e.g. "everyone who's free except Mira" means every free agent but Mira). Only free agents can go; leave out anyone working.
 - "recall": the boss wants dismissed agents back in. Give "agentIds" (every dismissed agent if they say "everyone").
+- "clear": the boss wants agents to clear their context (start fresh, forget the conversation so far). Do it yourself; never hand it out as a job. Give "agentIds" for the agents they name, or leave it empty when they mean everyone.
 - "standup": the boss wants the team to hold a standup now (e.g. "standup time", "let's do standup", "gather everyone for a status update").
 - "ask": you can't tell which project new work belongs to, or the request is too unclear to start. Ask one short question.
 - "chat": greetings, thanks, or questions about the office itself (who is doing what). Answer from the context given. If your answer is about one particular job, give its jobId too, so the boss gets a link to where that job's updates are collecting.

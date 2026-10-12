@@ -33,6 +33,27 @@ never moves on its own.
 The drawer shows each job's model and how much context its last turn carried,
 so a session that has grown expensive is visible rather than guessed at.
 
+An agent can also clear its own context. Its `clear_context` tool takes notes
+to itself (what is done, what is left, what it learned); when it ends its
+turn the office closes the session and starts the job again fresh, carrying the
+brief, those notes and any message that arrived meanwhile. The history is what
+costs tokens on every turn, so this is the way to shed it at a natural break.
+Once a session's context passes `AGENT_CLEAR_TOKENS` (150,000 by default, `0` to
+turn it off), the next message the agent receives carries a one-time nudge to do
+this. Clearing is still the agent's call. The log records each clear, and it is
+capped at five per job.
+
+The boss can also just say "clear context" in chat, for everyone or for named
+agents. The chief of staff does it directly: a working agent restarts fresh when
+its current turn ends (carrying its last reply as notes), and a finished job
+forgets its session so the next reply starts clean.
+
+Neither kind of clear loses track of the work. The office keeps a short note on
+the job (`lastClear`: the agent's last report, or the brief if it had not
+reported) and shows it in the job's log. A reply to a cleared job carries the
+note and the brief into the fresh session, and any new job the agent takes
+mentions what they were last on, so "what were you doing?" still has an answer.
+
 ## What changed
 
 When a job starts, the office snapshots the project's working tree; when it

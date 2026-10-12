@@ -4,7 +4,15 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.4.0 — 2026-10-12
+
+### Added
+- Clearing context no longer erases what an agent was doing. The boss's "clear context" keeps a note of each job's last report (or brief), logs it, and feeds it back on the next reply and to the agent's later jobs.
+- Agents can clear their own context. A new `clear_context` tool takes notes to self; once the turn ends, the job restarts in a fresh session with the brief and those notes, so long jobs stop paying for their whole history on every turn. Past `AGENT_CLEAR_TOKENS` of context (default 150,000, `0` to disable) the agent's next message nudges it to do so. The limit can also be set from the office, in the Claude access menu, and takes effect straight away. See [Jobs](docs/jobs.md).
+- The chief of staff can clear context directly. Telling it "clear context" (for everyone, or for named agents) clears their sessions with no job handed out.
+
+### Fixed
+- An agent whose brief was itself "clear your context" looped on `clear_context`: each fresh session re-read the brief and cleared again until the cap. The restart now says the clear is done and not to repeat it.
 
 ### Security
 - `ws` 8.22.0: fixes a memory-exhaustion denial of service and an

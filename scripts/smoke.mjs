@@ -54,7 +54,12 @@ try { mcp = { path: mcpAt, mode: fs.statSync(mcpAt).mode & 0o777, body: JSON.par
 fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), key: process.env.ANTHROPIC_API_KEY || null, mcp }) + '\\n');
 // The office snapshots the tree as the job starts; a real agent takes seconds
 // to make its first edit, so wait like one rather than racing the snapshot.
-process.stdin.once('data', () => setTimeout(() => {
+process.stdin.once('data', (buf) => setTimeout(async () => {
+  fs.appendFileSync(${JSON.stringify(record + '.prompts')}, JSON.stringify(String(buf)) + '\\n');
+  if (String(buf).includes('CLEAR-ME') && !String(buf).includes('The clear is DONE')) {
+    const env = mcp.body.mcpServers.office.env;
+    await fetch(env.OFFICE_URL + '/api/agent/clear_context', { method: 'POST', headers: { 'content-type': 'application/json', 'x-office-job': env.OFFICE_JOB, 'x-office-token': env.OFFICE_TOKEN }, body: JSON.stringify({ notes: 'step one is done' }) });
+  }
   fs.appendFileSync('README.md', 'edited by the stub\\n');
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
   out({ type: 'system', subtype: 'init', session_id: 'smoke-session', model: 'stub' });
@@ -78,7 +83,7 @@ const service = http.createServer((req, res) => {
 });
 await new Promise((r) => service.listen(0, '127.0.0.1', r));
 
-const env = { ...process.env, PORT: String(PORT), OFFICE_ROOT: root, CLAUDE_BIN: stub, STANDUP_AT: 'off', BANTER: 'off', OFFICE_LEADERBOARD_URL: `http://127.0.0.1:${service.address().port}` };
+const env = { ...process.env, PORT: String(PORT), OFFICE_ROOT: root, CLAUDE_BIN: stub, STANDUP_AT: 'off', AGENT_CLEAR_TOKENS: '1000', BANTER: 'off', OFFICE_LEADERBOARD_URL: `http://127.0.0.1:${service.address().port}` };
 delete env.ANTHROPIC_API_KEY;
 const server = spawn(process.execPath, ['server/index.js'], { cwd: app, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
@@ -257,6 +262,35 @@ try {
     assert(res.status === 200 && !(await res.json()).joined, `status ${res.status}`);
     assert(sent.some((r) => r.method === 'DELETE' && r.url === '/v1/me'), JSON.stringify(sent));
     assert(!fs.existsSync(path.join(app, 'data', 'leaderboard.json')), 'identity kept');
+  });
+  await check('clear_context restarts the job in a fresh session with the notes', async () => {
+    const before = calls().length;
+    const res = await post('/api/jobs', { repo: 'storefront', prompt: 'CLEAR-ME then finish', mode: 'edit' });
+    const j = await res.json();
+    await until('a second session', () => calls().length >= before + 2);
+    const [first, second] = calls().slice(before);
+    assert(!first.args.includes('--resume') && !second.args.includes('--resume'), 'the cleared session was resumed');
+    const state = path.join(app, 'data', 'state.json');
+    const done = await until('the job to finish', () => {
+      try { const x = JSON.parse(fs.readFileSync(state, 'utf8')).jobs.find((y) => y.id === j.id); return x && x.status === 'done' ? x : null; } catch { return null; }
+    });
+    assert(done.clears === 1 && !done.clearNote, JSON.stringify({ clears: done.clears, note: done.clearNote }));
+    assert(done.log.some((l) => /Cleared context/.test(l.summary)), 'no log line');
+  });
+  await check('a heavy session is nudged to clear on its next message, once', async () => {
+    const prompts = () => fs.readFileSync(record + '.prompts', 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    const res = await post('/api/jobs', { repo: 'storefront', prompt: 'Heavy job', mode: 'edit' });
+    const j = await res.json();
+    const state = path.join(app, 'data', 'state.json');
+    const at = () => { try { return JSON.parse(fs.readFileSync(state, 'utf8')).jobs.find((y) => y.id === j.id); } catch { return null; } };
+    await until('the job to finish', () => (at()?.status === 'done' ? true : null));
+    const n = prompts().length;
+    assert(!prompts().at(-1).includes('Office note'), 'nudged on the first brief');
+    const r = await post(`/api/jobs/${j.id}/reply`, { message: 'one more thing' });
+    assert(r.status < 300, `reply status ${r.status}`);
+    await until('the resumed session', () => prompts().length > n);
+    const got = prompts().at(-1);
+    assert(got.includes('one more thing') && /Office note: your context is at 5k tokens/.test(got), got);
   });
 } finally {
   server.kill('SIGTERM');

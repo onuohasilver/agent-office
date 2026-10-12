@@ -3,7 +3,7 @@ import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
 import './pwa.js';
 import './theme.js';
-import { setAccess } from './account.js';
+import { setAccess, setContextLimit } from './account.js';
 import { setLeaderboard } from './leaderboard.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
@@ -391,6 +391,7 @@ function handle(msg) {
     hud.renderLevel(app.progress);
     hud.renderUsage(msg.usage);
     setAccess(msg.auth);
+    setContextLimit(msg.contextLimit);
     setLeaderboard(msg.leaderboard);
     setLinks(msg.links);
     hud.renderProc(msg.procs, msg.machine);
@@ -475,6 +476,8 @@ function handle(msg) {
     hud.renderTeam();
   } else if (msg.t === 'auth') {
     setAccess(msg.auth);
+  } else if (msg.t === 'contextLimit') {
+    setContextLimit(msg.contextLimit);
   } else if (msg.t === 'leaderboard') {
     setLeaderboard(msg.leaderboard);
   } else if (msg.t === 'links') {

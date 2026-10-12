@@ -243,7 +243,7 @@ for (const j of state.jobs) {
   if (j.status !== 'working') continue;
   if (j.sessionId) {
     Object.assign(j, {
-      status: 'queued', queuedAt: Date.now(), wantAgent: j.agentId, waiting: false,
+      status: 'queued', queuedAt: Date.now(), wantAgent: j.agentId, waiting: false, clearing: false,
       // An unread message stashed by deliver() comes along too, rather than
       // being written over by the notice about the restart.
       pending: [j.pending, 'The office restarted while you were working, which interrupted you. Pick up exactly where you left off.'].filter(Boolean).join('\n\n'),
@@ -363,6 +363,7 @@ const snapshot = () => ({
   dismissed: state.dismissed,
   voice: voiceReady(DATA),
   tts: { ...piperReady(DATA), replies: voiceOn() },
+  contextLimit: contextLimit(),
 });
 
 // ---------- what the agents are costing this machine ----------
@@ -583,10 +584,25 @@ const REPLY_WAIT_MS = 10 * 60 * 1000;
 // Long-lived jobs get resumed on every reply and pay for the whole history each
 // turn, so agents auto-compact earlier than the default. AGENT_COMPACT_PCT to tune.
 const AUTOCOMPACT_PCT = process.env.AGENT_COMPACT_PCT || '60';
+// Past this many tokens of context, the next message an agent gets carries a
+// nudge to clear_context. 0 turns the nudge off. AGENT_CLEAR_TOKENS to tune.
+// The limit set in the office wins over the environment's, which is the default.
+const CLEAR_DEFAULT = Math.max(0, parseInt(process.env.AGENT_CLEAR_TOKENS ?? '150000', 10) || 0);
+const clearTokens = () => (Number.isInteger(state.clearTokens) && state.clearTokens >= 0 ? state.clearTokens : CLEAR_DEFAULT);
+const contextLimit = () => ({ tokens: clearTokens(), default: CLEAR_DEFAULT, custom: Number.isInteger(state.clearTokens) });
+// The nudge goes with a message the session is about to pay its whole history
+// to read, once per session, and never to a guest (who has no such tool).
+function withClearHint(job, text) {
+  const limit = clearTokens();
+  if (!limit || job.guest || job.hinted || !(job.context >= limit)) return text;
+  job.hinted = true;
+  const k = Math.round(job.context / 1000);
+  return `${text}\n\n(Office note: your context is at ${k}k tokens, and every turn pays for all of it. If you are between steps, call clear_context with notes to yourself now, then end your turn.)`;
+}
 const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
-  'mcp__office__restart_office',
+  'mcp__office__restart_office', 'mcp__office__clear_context',
 ];
 // A guest's job can see who is in and ask the boss, nothing more: no
 // messaging colleagues, handing off or channels. Enforced again in agentApi,
@@ -672,7 +688,7 @@ function start(job, agentId) {
   args.push('--mcp-config', mcpFile, '--allowedTools', (job.guest ? GUEST_TOOLS : OFFICE_TOOLS).join(','), '--append-system-prompt', job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job));
   // Being given work in a channel is how you end up in it.
   try { joinChannel(channelOf(job.channel), agentId); } catch {}
-  const first = job.pending;
+  const first = job.sessionId ? withClearHint(job, job.pending) : job.pending;
 
   Object.assign(job, {
     status: 'working', agentId, pending: null, denials: [], error: null,
@@ -722,12 +738,37 @@ function start(job, agentId) {
     if (procs) { delete procs[job.id]; }
     endGrace(job);
     if (job.status !== 'working') return;
+    if (job.clearing && !job.stopRequested) return recycle(job);
     if (job.stopRequested) finish(job, 'stopped', job.stopWhy || 'Stopped by you.');
     else if (job.lastTurn) finish(job, job.lastTurn.ok ? 'done' : 'failed', job.lastTurn.ok ? null : job.lastTurn.error);
     else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
   };
   child.on('error', (err) => ended(`Could not start claude: ${err.message}`));
   child.on('close', (code) => ended(`claude exited with code ${code}`));
+}
+
+// Start a job over in a fresh session: the history is what costs tokens on
+// every turn, so the agent's own handoff note, the brief and anything that
+// arrived meanwhile are all the new session carries.
+function recycle(job) {
+  const note = job.clearNote;
+  const carried = job.context;
+  const wake = [
+    `Your original brief:\n${job.prompt}`,
+    `Your context has just been cleared (${(job.clears || 0) + 1} time${job.clears ? 's' : ''} on this job), ${job.clearedBy === 'boss' ? 'at the boss\'s request' : 'by you, to save tokens'}. Your notes:\n${note}`,
+    'The clear is DONE. If the brief or your notes only asked you to clear your context, that step is complete: do not call clear_context again, just confirm in one line that you are on a fresh context and finish. ' +
+      'The project still holds everything you changed. Check where the work stands, then carry on.',
+    job.pending,
+  ].filter(Boolean).join('\n\n');
+  Object.assign(job, { sessionId: null, clearNote: null, clearedBy: null, clearing: false, hinted: false, context: null, lastTurn: null, pending: wake,
+    status: 'queued', queuedAt: Date.now(), waiting: false });
+  job.clears = (job.clears || 0) + 1;
+  job.lastClear = { note, by: job.clearedBy || 'self', at: Date.now() };
+  tokens.delete(job.id);
+  addLog(job, { kind: 'system', summary: `Cleared context${carried ? ` (${Math.round(carried / 1000)}k tokens)` : ''} and carried on fresh` });
+  pushJob(job);
+  save();
+  setImmediate(pump);
 }
 
 function write(child, text) {
@@ -744,7 +785,7 @@ function deliver(job, text) {
     job.lastTurn = null;
     if (job.waiting) { job.waiting = false; pushJob(job); }
     addLog(job, { kind: 'user', summary: text });
-    if (child && write(child, text)) return 'live';
+    if (child && write(child, withClearHint(job, text))) return 'live';
     // The session ended between the check and the write, so there is nobody
     // to hand it to. Hold it for the next turn: passing it to replyJob would
     // only hand it straight back here, for as long as the stack allows.
@@ -774,6 +815,12 @@ function onLine(job, line) {
     job.sessionId = e.session_id;
     addLog(job, { kind: 'system', summary: `Clocked in · ${e.model}` });
   } else if (e.type === 'assistant') {
+    // Each assistant message carries the usage of one API call, whose input side
+    // is the real context size right now. (A subagent's calls are its own context.)
+    const au = e.message?.usage;
+    if (au && !e.parent_tool_use_id) {
+      job.context = (au.input_tokens || 0) + (au.cache_read_input_tokens || 0) + (au.cache_creation_input_tokens || 0);
+    }
     for (const c of e.message?.content || []) {
       if (c.type === 'text' && c.text.trim()) {
         addLog(job, { kind: 'text', summary: c.text.trim().slice(0, 6000) });
@@ -799,10 +846,10 @@ function onLine(job, line) {
   } else if (e.type === 'result') {
     job.cost += e.total_cost_usd || 0;
     job.turns++;
-    // The input side of the last turn is how much context this session is
-    // carrying. Worth seeing: a long-resumed job pays it on every turn.
+    // The result's usage is summed over every API call in the turn, so its cache
+    // reads count the whole history once per tool call: not the context size.
+    // job.context is kept from the last assistant message instead (see above).
     const u = e.usage || {};
-    job.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
     board.addTokens((u.input_tokens || 0) + (u.output_tokens || 0));
     guests.addTokens(job, (u.input_tokens || 0) + (u.output_tokens || 0));
     board.addTime(e.duration_ms);
@@ -812,6 +859,13 @@ function onLine(job, line) {
     addLog(job, { kind: 'result', ok, summary: String(e.result || e.subtype || '').trim().slice(0, 8000), cost: e.total_cost_usd, ms: e.duration_ms });
     job.lastTurn = { ok, error: ok ? null : `Ended with ${e.subtype}`, text: String(e.result || '').trim() };
     endGrace(job);
+    // The agent asked for a clean slate: close this session now, and ended()
+    // starts the job again without its history.
+    if (ok && job.clearNote && running.has(job.id)) {
+      job.clearing = true;
+      running.get(job.id).stdin.end();
+      return;
+    }
     const pending = waits.get(job.id) || [];
     if (ok && pending.length && running.has(job.id)) {
       // Keep the session open; whatever they're waiting for will wake it.
@@ -999,6 +1053,10 @@ function replyJob(job, { message, mode, files }) {
   if (!message) throw new Error('Say something first.');
   if (mode && !MODES[mode]) throw new Error('Unknown mode.');
   if (mode) job.mode = mode;
+  // A cleared session has no history, so what it was doing comes along with the reply.
+  if (!job.sessionId && job.lastClear) {
+    message = `Your context was cleared (${job.lastClear.by === 'boss' ? "at the boss's request" : 'by you'}). What you were on:\n${job.lastClear.note}\n\nOriginal brief:\n${job.prompt}\n\nNow: ${message}`;
+  }
   Object.assign(job, { status: 'queued', queuedAt: Date.now(), pending: message, error: null, endedAt: null, asking: null, awaitingBoss: false });
   addLog(job, { kind: 'user', summary: message });
   pushJob(job);
@@ -1026,6 +1084,51 @@ function dismiss(ids) {
   return [
     gone.length ? `${names(gone)} ${gone.length === 1 ? 'has' : 'have'} gone home.` : 'Nobody new to send home.',
     busy.length ? `${names(busy)} ${busy.length === 1 ? 'is' : 'are'} mid-job, so they stay until it's done.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+// The boss's own "clear context", with no job to hand out. A live session is
+// closed once its turn ends and restarted fresh by ended(); a finished job
+// just forgets its session so the next reply starts clean.
+// What an agent was up to, kept when a context is wiped so neither they nor
+// the boss are left guessing: their last report, or failing that the brief.
+function whereItStood(job) {
+  const lastReply = [...(job.log || [])].reverse().find((e) => e.kind === 'result' && e.summary)?.summary;
+  const said = (job.lastTurn?.text || lastReply || '').trim().slice(0, 2000);
+  const state_ = job.status === 'working' ? 'in progress' : job.awaitingBoss ? 'waiting on the boss' : job.status;
+  return `Job "${job.title}" in ${job.repo} (${state_}). ` + (said ? `Last report:\n${said}` : `No report yet; the brief was:\n${String(job.prompt || '').slice(0, 1000)}`);
+}
+
+function clearContext(ids) {
+  const cleared = [], none = [];
+  for (const id of ids) {
+    const s = hired().find((x) => x.id === id);
+    if (!s) continue;
+    const job = workingJobOf(id);
+    if (job) {
+      if (job.clearNote || job.clearing) { cleared.push(s.name); continue; }
+      job.clearNote = whereItStood(job);
+      job.clearedBy = 'boss';
+      job.lastClear = { note: job.clearNote, by: 'boss', at: Date.now() };
+      // Idle with the session held open: nothing will end the turn, so close it now.
+      if (job.waiting && running.has(job.id)) { job.clearing = true; running.get(job.id).stdin.end(); }
+      cleared.push(s.name);
+      continue;
+    }
+    const last = state.jobs.filter((j) => j.agentId === id && j.sessionId).sort((a, b) => (b.queuedAt || 0) - (a.queuedAt || 0))[0];
+    if (last) {
+      const note = whereItStood(last);
+      // Held for the next reply, which starts a fresh session, so it carries on knowing.
+      Object.assign(last, { sessionId: null, context: null, hinted: false, lastClear: { note, by: 'boss', at: Date.now() } });
+      addLog(last, { kind: 'system', summary: `Context cleared by the boss. Kept: ${note.slice(0, 300)}` });
+      pushJob(last);
+      cleared.push(s.name);
+    } else none.push(s.name);
+  }
+  save();
+  return [
+    cleared.length ? `Cleared context for ${names(cleared)}.` : 'Nobody had a context to clear.',
+    none.length ? `${names(none)} had nothing to clear.` : '',
   ].filter(Boolean).join(' ');
 }
 
@@ -1181,6 +1284,10 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
   if (d.action === 'dismiss' || d.action === 'recall') {
     const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
     return say(d.action === 'dismiss' ? dismiss(ids) : recall(ids));
+  }
+  if (d.action === 'clear') {
+    const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
+    return say(clearContext(ids.length ? ids : hired().map((x) => x.id)));
   }
   if (d.action === 'standup') return void runStandup(true);
   // An answer that is merely about a job gets the same link a follow-up does.
@@ -1489,8 +1596,18 @@ function officePrompt(agentId, job) {
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
+    `When your context has grown heavy and you are between steps, clear_context with notes to yourself lets you resume fresh and cheaper. ` +
     `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
-    `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId);
+    `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId) + recentWork(agentId, job);
+}
+
+// Survives a cleared context: what this agent was last working on, so
+// "what were you doing?" has an answer even in a brand new session.
+function recentWork(agentId, job) {
+  const mine = state.jobs.filter((j) => j.agentId === agentId && j.id !== job?.id && j.lastClear)
+    .sort((a, b) => b.lastClear.at - a.lastClear.at).slice(0, 2);
+  if (!mine.length) return '';
+  return ' Before your context was last cleared you were on: ' + mine.map((j) => `[${j.id}] ${clip(j.lastClear.note, 600)}`).join(' | ');
 }
 
 // A guest's job: the agent works for someone from another office, so it is
@@ -1501,7 +1618,7 @@ function guestPrompt(agentId, job) {
     `Your only office tools are office_roster and flag_for_boss; the boss here is the host, not ${job.from}. Talk to ${job.from} in your replies.`;
 }
 
-const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2, MAX_FLAGS = 5;
+const MAX_MESSAGES = 20, MAX_HANDOFFS = 5, MAX_DEPTH = 2, MAX_FLAGS = 5, MAX_CLEARS = 5;
 const FLAGS = { question: 'Question for you', decision: 'Needs your decision', blocker: 'Blocked', review: 'Ready for your review' };
 
 function caller(req) {
@@ -1601,6 +1718,14 @@ const agentApi = {
     post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
       { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL });
     return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
+  },
+
+  clear_context(me, { notes }) {
+    notes = String(notes || '').trim().slice(0, 4000);
+    if (!notes) throw new Error('Write the notes you will need: what is done, what is left, what you learned.');
+    if ((me.clears || 0) >= MAX_CLEARS) throw new Error("You've cleared your context several times on this job. Finish with what you have.");
+    me.clearNote = notes;
+    return 'Your context will clear when you end your turn. End it now: say nothing more of substance, your notes are what you resume with.';
   },
 
   restart_office(me, { now = false } = {}) {
@@ -2003,6 +2128,18 @@ const server = http.createServer(async (req, res) => {
       catch (err) { return json(res, err.code || 400, { error: err.message }); }
       if (req.method !== 'GET') { send({ t: 'auth', auth: status }); refreshUsage(); }
       return json(res, 200, status);
+    }
+    // The context limit: past it, an agent is nudged to clear_context. 0 turns
+    // the nudge off; null goes back to the AGENT_CLEAR_TOKENS default.
+    if (url.pathname === '/api/context-limit' && ['GET', 'POST'].includes(req.method)) {
+      if (req.method === 'POST') {
+        const { tokens } = await readBody(req);
+        if (tokens !== null && !(Number.isInteger(tokens) && tokens >= 0 && tokens <= 10_000_000)) return json(res, 400, { error: 'Use a whole number of tokens, or 0 to turn it off.' });
+        if (tokens === null) delete state.clearTokens; else state.clearTokens = tokens;
+        save();
+        send({ t: 'contextLimit', contextLimit: contextLimit() });
+      }
+      return json(res, 200, contextLimit());
     }
     // The leaderboard. Joining claims a handle with the service and starts
     // sharing day counters. Leaving deletes the counters; the handle goes too

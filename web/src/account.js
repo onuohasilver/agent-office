@@ -14,6 +14,7 @@ let status = null;
 let picked = null; // the choice on screen, which may not be saved yet
 let busy = false;
 let note = '';
+let limit = null; // { tokens, default, custom }: when an agent is nudged to clear its context
 
 const el = (tag, props = {}) => Object.assign(document.createElement(tag), props);
 
@@ -73,6 +74,51 @@ function render() {
   }
   if (note) say(note, 'acct-note acct-err');
   pop.append(el('p', { className: 'acct-note acct-fine', textContent: 'Jobs already running finish the way they started.' }));
+  renderLimit();
+}
+
+// Past this much context an agent is nudged to clear it and carry on fresh.
+// Saved on its own, so it never waits on the Claude access form above.
+function renderLimit() {
+  if (!limit) return;
+  pop.append(el('p', { className: 'theme-k', textContent: 'Context limit' }));
+  const form = el('form', { className: 'acct-form' });
+  const input = el('input', { type: 'number', min: 0, step: 10000, value: limit.tokens, required: true });
+  input.setAttribute('aria-label', 'Context limit in tokens');
+  const go = el('button', { type: 'submit', className: 'primary small', textContent: 'Save' });
+  form.append(input, go);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const n = Number(input.value);
+    if (Number.isInteger(n) && n >= 0) saveLimit(n); else { note = 'Use a whole number of tokens, or 0 to turn it off.'; render(); }
+  });
+  pop.append(form, el('p', { className: 'acct-note acct-fine', textContent: limit.tokens
+    ? `Agents are nudged to clear their context past ${limit.tokens.toLocaleString()} tokens.`
+    : 'Off: agents are never nudged to clear their context.' }));
+  if (limit.custom) {
+    const reset = el('button', { type: 'button', className: 'acct-forget', textContent: `Back to the default (${limit.default.toLocaleString()})` });
+    reset.addEventListener('click', () => saveLimit(null));
+    pop.append(reset);
+  }
+}
+
+async function saveLimit(tokens) {
+  note = '';
+  try {
+    const res = await fetch('/api/context-limit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ tokens }) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'That didn’t save.');
+    limit = out;
+  } catch (err) {
+    note = err.message;
+  }
+  render();
+}
+
+export function setContextLimit(next) {
+  if (!next) return;
+  limit = next;
+  if (!busy && pop && !pop.hidden) render();
 }
 
 async function save(body) {

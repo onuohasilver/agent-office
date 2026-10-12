@@ -40,6 +40,11 @@ const TOOLS = [
     description: 'Restart the office server so changes to its own code (agent-office/server) take effect. Waits until nobody is mid-turn, so end your turn right after; you are messaged when it is back. Not needed for web changes: a build is enough.',
     inputSchema: obj({ now: { type: 'boolean', description: 'Skip the wait and interrupt anyone mid-turn. Only if asked to.' } }, []),
   },
+  {
+    name: 'clear_context',
+    description: 'Drop this session\'s history to cut token use, at a natural break between steps. Give notes to yourself: what is done, what is left, what you learned (files, decisions, gotchas). End your turn right after; you resume fresh from the brief and your notes. Not for the end of a job.',
+    inputSchema: obj({ notes: { type: 'string' } }, ['notes']),
+  },
   { name: 'list_channels', description: 'List chat channels: purpose, members, and which one your work is in.', inputSchema: NONE },
   {
     name: 'create_channel',
