@@ -22,6 +22,7 @@ export const CLEARANCE = ['plan', 'edit', 'auto'];
 const MAX_OPEN_JOBS = 3; // queued or working, per guest
 const MAX_PROMPT = 20_000;
 const REQ_TIMEOUT_MS = 15_000;
+const CLOSE_TIMEOUT_MS = 60_000; // telling a host the work ended isn't on anyone's clock, and the relay can be slow to carry it
 const CONNECT_WAIT_MS = 5_000;
 const FEED_EVERY_MS = 250;
 const FEED_BYTES = 48 * 1024; // under the relay's 64 KB a frame
@@ -384,14 +385,14 @@ export class Guests {
     return link;
   }
 
-  async request(linkId, op, args = {}) {
+  async request(linkId, op, args = {}, timeoutMs = REQ_TIMEOUT_MS) {
     const link = this.guestLink(linkId);
     // Just after linking (or a reconnect) the relay socket can still be
     // opening; a visit started then shouldn't fail for it.
     for (const end = Date.now() + CONNECT_WAIT_MS; !this.links.status().connected && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(fail(504, `@${link.peer} didn’t answer.`)); }, REQ_TIMEOUT_MS);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(fail(504, `@${link.peer} didn’t answer.`)); }, timeoutMs);
       const clean = CLEAN_BODY[op] || (() => ({}));
       this.pending.set(id, { resolve: (body) => { try { resolve(clean(body)); } catch (err) { reject(err); } }, reject, timer });
       if (!this.links.send({ t: 'req', link: link.id, id, op, args })) {
@@ -720,7 +721,18 @@ export class Guests {
     const s = this.away.get(job.id);
     if (!s) return;
     this.away.delete(job.id);
-    await this.request(job.away.link, 'visit.close', { sid: s.sid, status, summary: String(summary || '').slice(0, 2000) });
+    const args = { sid: s.sid, status, summary: String(summary || '').slice(0, 2000) };
+    // A close that outruns the wait may still land, so ask again once. The
+    // host ends a visit once, and an answer that says it already has is fine.
+    for (let tries = 0; ; tries++) {
+      try {
+        await this.request(job.away.link, 'visit.close', args, CLOSE_TIMEOUT_MS);
+        return;
+      } catch (err) {
+        if (err.code === 404 || err.code === 410) return;
+        if (err.code !== 504 || tries) throw err;
+      }
+    }
   }
 
   // Start a job with one of a host's agents, from our chat.

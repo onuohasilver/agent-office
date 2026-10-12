@@ -1026,12 +1026,15 @@ function finish(job, status, error) {
   const text = status === 'done' ? job.lastTurn?.text || 'Done.'
     : status === 'stopped' ? 'Stopped, as asked.'
     : `I hit a wall: ${error || 'something went wrong'}`;
-  post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
+  // A borrowed agent's chat belongs to the borrower: the host's feed carries
+  // the finished job over the link, and remoteEnded posts it in their office.
+  // Nothing about a guest's job goes in our own chat.
+  if (!job.guest) post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
   // The result lands in the job's thread, which the boss may never open, so
   // the chief says so in #general. Not for a retry (the work isn't over), a
   // stop (the boss did that), or a colleague's handed-off piece (their asker
   // gets it, and the asker's own finish is the one worth announcing).
-  if (!retry && status !== 'stopped' && !job.requestedBy) {
+  if (!retry && status !== 'stopped' && !job.requestedBy && !job.guest) {
     const line = awaiting ? `${nameOf(job.agentId)} is waiting on you for "${clip(job.title, 80)}": ${clip(job.asking.summary, 200)}`
       : status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".${briefOf(job.lastTurn?.text) ? `\n\n${briefOf(job.lastTurn.text)}` : ''}` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
     post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL });
@@ -1406,7 +1409,7 @@ function remoteEnded(job) {
   const name = guests.remoteStatus().find((o) => o.link === job.remote.link)?.staff.find((s) => s.id === job.agentId)?.name || 'Their agent';
   const last = job.log.at(-1);
   const how = { done: 'finished', failed: 'hit a wall on', stopped: 'stopped' }[job.status] || 'stopped';
-  const said = last?.kind === 'result' && last.summary ? `\n\n${clip(last.summary, 600)}` : job.error ? ` ${job.error}` : '';
+  const said = last?.kind === 'result' && last.summary ? `\n\n${clip(last.summary, 4000)}` : job.error ? ` ${job.error}` : '';
   post('chief', `${name} at @${job.remote.host} ${how} “${job.title}”.${said}`, { jobId: job.id, channel: job.channel, thread: job.thread || null });
 }
 
