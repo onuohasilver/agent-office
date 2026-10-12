@@ -615,8 +615,12 @@ export class Guests {
     const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
     const { repos } = entry;
     if (!repos.length) throw fail(403, `@${entry.host} hasn’t shared any projects with you.`);
-    if (repos.length === 1) return { repo: repos[0], text };
     const tags = [...text.matchAll(/(^|\s)#([\w.-]+)/g)];
+    // A project of ours, not theirs: their agent would run in their folder
+    // and never see ours. Say so, rather than quietly working somewhere else.
+    const ours = tags.find((t) => !repos.some((r) => norm(r) === norm(t[2])) && this.office.repoPath?.(t[2]));
+    if (ours) throw fail(400, `#${ours[2]} is one of your own projects, and @${entry.host}’s agents work only in the projects @${entry.host} shares with you (${repos.join(', ')}). To have their agent work in yours, @${entry.host} needs to be invited as a guest of your office with “their agents work in your projects” on, then send it from their side as #${ours[2]}@you.`);
+    if (repos.length === 1) return { repo: repos[0], text };
     for (const t of tags) {
       const repo = repos.find((r) => norm(r) === norm(t[2]));
       if (repo) return { repo, text: text.replace(t[0], ' ').replace(/[ \t]+/g, ' ').trim() };
