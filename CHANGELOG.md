@@ -4,7 +4,25 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.3.0 — 2026-10-12
+
+### Added
+- Linked offices. Link two offices with a one-time code, and each sees the other's agents walk into its 3D office as visitors, showing their name, role and what they're doing. Job titles stay home unless `OFFICE_SHARE_JOB_TITLES=1`. You can also invite a guest to start jobs with your agents, limited to the projects, clearance and daily tokens you choose. See [Linked offices](docs/linked-offices.md).
+- A handle without the leaderboard. Linking needs a handle, and sharing counters on the board is now a separate tickbox.
+
+### Changed
+- The leaderboard works out of the box: the office points at the hosted board by default. `OFFICE_LEADERBOARD_URL` still overrides it. Nothing is shared until you join.
+- **The office has a key.** Other accounts on the same machine (or the tailnet) could reach the office's API and start jobs as you. The page, API and socket now need a key from `data/office-key` (mode `0600`). Open the office once with the link it prints at startup; `agentoffice --link` prints it again. After upgrading, open that link once.
+- `agentoffice`/`agentstudio` now pick a free port (4317 if open, else any free one). `--port <n>` or `PORT` chooses one; a taken port you asked for stops with a clear message instead of restarting in a loop.
+
+### Fixed
+- "I couldn't route that one: The chief could not decide" now says why: the error `claude` reported (signed out, out of credit, a model the plan can't use), a timeout, or `claude` exiting without answering. [Troubleshooting](docs/guides/troubleshooting.md#jobs-dont-run) has the one-line check.
+
+### Security
+- Only the office's own page can call it: a page on another localhost port (a project's dev server, say) is refused like any other website.
+- A malformed address (`/%E0`) no longer crashes the office.
+- A guest's jobs don't get the host's MCP servers and claude.ai connectors, user-level Claude Code settings and hooks, or Claude Code memory.
+- Git runs with `core.fsmonitor` off and no external diff or textconv drivers when the office records what a job changed.
 
 ## 0.2.0 — 2026-10-12
 
