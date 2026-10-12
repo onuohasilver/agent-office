@@ -103,7 +103,7 @@ function render() {
 // A handle, without joining the leaderboard. A server from before this change
 // only has "join", which also shares counters, so don't offer it there.
 function claim() {
-  const out = [say('Linked offices see each other’s agents walk in as visitors, and a guest can run jobs here within the limits you set. First, pick a handle for this office.')];
+  const out = [say('Invite a guest to run jobs here within the limits you set. Their agents walk into your office as visitors. First, pick a handle for this office.')];
   if (board && !board.configured) return [...out, say('This office has no link service set up.', 'acct-note acct-err')];
   const form = el('form', { className: 'acct-form' });
   const input = el('input', { type: 'text', placeholder: 'Pick a handle', autocomplete: 'off', spellcheck: false, maxLength: 20 });
@@ -122,8 +122,6 @@ function claim() {
 
 function actions() {
   const wrap = el('div', { className: 'link-actions' });
-  const make = el('button', { type: 'button', className: 'ghost small', textContent: busy === 'link' ? 'Making a code…' : 'Invite an office', disabled: !!busy });
-  make.addEventListener('click', () => { guestForm = null; makeInvite('link'); });
   const asGuest = el('button', { type: 'button', className: 'ghost small', textContent: 'Invite a guest', disabled: !!busy });
   asGuest.setAttribute('aria-expanded', String(!!guestForm && !guestForm.edit));
   asGuest.addEventListener('click', () => openGuest());
@@ -141,7 +139,7 @@ function actions() {
       invite = null;
     });
   });
-  wrap.append(el('div', { className: 'link-row' }, make, asGuest), form);
+  wrap.append(el('div', { className: 'link-row' }, asGuest), form);
   return wrap;
 }
 
