@@ -4,6 +4,7 @@ import './style.css';
 import './pwa.js';
 import './theme.js';
 import { setAccess, setContextLimit } from './account.js';
+import { initSettings, setSettings } from './settings.js';
 import { setLeaderboard } from './leaderboard.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
@@ -251,6 +252,7 @@ const app = {
 };
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
+initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
 const terminal = new TerminalDrawer({ api, toast: (t, k) => hud.toast(t, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
@@ -393,6 +395,7 @@ function handle(msg) {
     hud.renderUsage(msg.usage);
     setAccess(msg.auth);
     setContextLimit(msg.contextLimit);
+    if (!msg.visiting) setSettings(msg);
     setLeaderboard(msg.leaderboard);
     setLinks(msg.links);
     hud.renderProc(msg.procs, msg.machine);
@@ -479,6 +482,9 @@ function handle(msg) {
     setAccess(msg.auth);
   } else if (msg.t === 'contextLimit') {
     setContextLimit(msg.contextLimit);
+  } else if (msg.t === 'settings') {
+    setContextLimit(msg.contextLimit);
+    setSettings(msg);
   } else if (msg.t === 'leaderboard') {
     setLeaderboard(msg.leaderboard);
   } else if (msg.t === 'links') {

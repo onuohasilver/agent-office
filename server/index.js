@@ -18,6 +18,7 @@ import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
 import { Leaderboard } from './leaderboard.js';
 import { Links } from './links.js';
+import { Settings } from './settings.js';
 import { Guests } from './guests.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -41,10 +42,6 @@ const board = new Leaderboard(DATA, { onChange: () => send({ t: 'leaderboard', l
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
-const CHIEF_MODEL = process.env.CHIEF_MODEL || 'sonnet';
-// The daily standup, local time; "off" turns it off. Weekdays unless STANDUP_WEEKENDS=1.
-const STANDUP_AT = process.env.STANDUP_AT ?? '09:30';
-const STANDUP_WEEKENDS = process.env.STANDUP_WEEKENDS === '1';
 // After a turn ends, keep the session open briefly: a message that landed
 // at the last moment starts another turn instead of being lost.
 const GRACE_MS = 2500;
@@ -175,6 +172,12 @@ let state = { xp: 0, jobs: [], chat: [], channels: [], chiefCost: 0, dismissed: 
 try {
   state = { ...state, ...JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) };
 } catch {}
+// What the boss sets on the Settings page, over the environment's defaults.
+// The context limit used to live at state.clearTokens.
+if (!state.settings || typeof state.settings !== 'object') state.settings = {};
+if (Number.isInteger(state.clearTokens) && !('tokenLimit' in state.settings)) state.settings.tokenLimit = state.clearTokens;
+delete state.clearTokens;
+const settings = new Settings(state.settings, () => save());
 if (!state.channels.some((c) => c.id === GENERAL)) state.channels.unshift({ id: GENERAL, name: GENERAL, createdAt: Date.now() });
 // Sat next to #general, and described even if someone had already opened a
 // channel by that name by hand. An explanation they wrote themselves stays.
@@ -288,7 +291,6 @@ const clients = new Set();
 // A job's title is the first line of its prompt, which can say more than the
 // boss means to share, so linked offices see only that an agent is busy.
 // OFFICE_SHARE_JOB_TITLES=1 sends the titles too.
-const SHARE_TITLES = process.env.OFFICE_SHARE_JOB_TITLES === '1';
 function presence() {
   return hired().map((s) => {
     const job = state.jobs.find((j) => j.agentId === s.id && j.status === 'working');
@@ -298,7 +300,7 @@ function presence() {
       : job ? 'working'
       : chill?.who.includes(s.id) ? 'break'
       : 'idle';
-    return { id: s.id, name: s.name, role: s.role, look: { shirt: s.shirt, hair: s.hair, skin: s.skin }, state: doing, job: job && SHARE_TITLES ? { title: job.title } : null };
+    return { id: s.id, name: s.name, role: s.role, look: { shirt: s.shirt, hair: s.hair, skin: s.skin }, state: doing, job: job && settings.get('shareTitles') ? { title: job.title } : null };
   });
 }
 // Set just below; anything broadcast before then has no guests to tell.
@@ -343,17 +345,20 @@ const publicJob = (j, tail = 40) => {
   const { stopRequested, lastTurn, sent, handoffs, ...rest } = j;
   return { ...rest, log: j.log.slice(-tail) };
 };
-// Whose office this is: OFFICE_OWNER, else the first name on this account.
-const OWNER = (() => {
-  const set = String(process.env.OFFICE_OWNER || '').trim();
-  if (set) return set.slice(0, 40);
+// Whose office this is: the owner set in Settings (default OFFICE_OWNER), else the first name on this account.
+const ACCOUNT_NAME = (() => {
   let full = '';
   if (process.platform === 'darwin') full = spawnSync('/usr/bin/id', ['-F'], { encoding: 'utf8' }).stdout?.trim() || '';
   return (full.split(/\s+/)[0] || os.userInfo().username || '').slice(0, 40);
 })();
+const owner = () => settings.get('owner') || ACCOUNT_NAME;
+function announceSettings() {
+  send({ t: 'settings', owner: owner(), settings: settings.status(), contextLimit: contextLimit() });
+}
 const snapshot = () => ({
   t: 'hello',
-  owner: OWNER,
+  owner: owner(),
+  settings: settings.status(),
   staff: STAFF,
   modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label])),
   progress: progress(),
@@ -536,9 +541,7 @@ const endChill = (id) => { if (chill?.id === id) chill = null; };
 // The model writes the small talk, but not for every chat: at most one per
 // BANTER_GAP, and BANTER=off turns it off. Anything else, or any failure,
 // comes back with no script and the browser uses a canned chat instead.
-const BANTER_ON = process.env.BANTER !== 'off';
-const BANTER_GAP = Number(process.env.BANTER_GAP_SECONDS ?? 120) * 1000;
-const BANTER_MODEL = process.env.BANTER_MODEL || 'haiku';
+const BANTER_GAP = () => settings.get('banterGap') * 1000;
 let banterAt = 0;
 
 function banterContext(pair) {
@@ -557,16 +560,16 @@ async function claimBanter(pair, game = false) {
   const c = claimChill(pair, game);
   if (!c) return { id: null };
   if (game) return { id: c.id };
-  if (!BANTER_ON || Date.now() - banterAt < BANTER_GAP) return { id: c.id };
+  if (!settings.get('banter') || Date.now() - banterAt < BANTER_GAP()) return { id: c.id };
   banterAt = Date.now();
   try {
-    const { lines, cost } = await writeBanter(banterContext(pair), { bin: CLAUDE, model: BANTER_MODEL, env: auth.env() });
+    const { lines, cost } = await writeBanter(banterContext(pair), { bin: CLAUDE, model: settings.get('banterModel'), env: auth.env() });
     state.chiefCost += cost || 0;
     send({ t: 'chief', busy: false, cost: state.chiefCost });
     c.at = Date.now();
     return { id: c.id, script: lines };
   } catch {
-    banterAt = Date.now() - BANTER_GAP + 30 * 1000;
+    banterAt = Date.now() - BANTER_GAP() + 30 * 1000;
     return { id: c.id };
   }
 }
@@ -593,13 +596,11 @@ const waits = new Map();
 const REPLY_WAIT_MS = 10 * 60 * 1000;
 // Long-lived jobs get resumed on every reply and pay for the whole history each
 // turn, so agents auto-compact earlier than the default. AGENT_COMPACT_PCT to tune.
-const AUTOCOMPACT_PCT = process.env.AGENT_COMPACT_PCT || '60';
 // Past this many tokens of context, the next message an agent gets carries a
 // nudge to clear_context. 0 turns the nudge off. AGENT_CLEAR_TOKENS to tune.
 // The limit set in the office wins over the environment's, which is the default.
-const CLEAR_DEFAULT = Math.max(0, parseInt(process.env.AGENT_CLEAR_TOKENS ?? '150000', 10) || 0);
-const clearTokens = () => (Number.isInteger(state.clearTokens) && state.clearTokens >= 0 ? state.clearTokens : CLEAR_DEFAULT);
-const contextLimit = () => ({ tokens: clearTokens(), default: CLEAR_DEFAULT, custom: Number.isInteger(state.clearTokens) });
+const clearTokens = () => settings.get('tokenLimit');
+const contextLimit = () => { const t = settings.status().find((x) => x.key === 'tokenLimit'); return { tokens: t.value, default: t.default, custom: t.custom }; };
 // The nudge goes with a message the session is about to pay its whole history
 // to read, once per session, and never to a guest (who has no such tool).
 function withClearHint(job, text) {
@@ -721,7 +722,7 @@ function start(job, agentId) {
   } catch (err) {
     return finish(job, 'failed', `Could not write the office tools' config: ${err.message}`);
   }
-  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: AUTOCOMPACT_PCT, ...(job.guest ? { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' } : {}), ...auth.env() }, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(CLAUDE, args, { cwd, env: { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(settings.get('compactPct')), ...(job.guest ? { CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' } : {}), ...auth.env() }, stdio: ['pipe', 'pipe', 'pipe'] });
   running.set(job.id, child);
   startProcs();
   child.stdin.on('error', () => {});
@@ -1255,7 +1256,7 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
     const said = files.length
       ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')}${shown.length ? `. ${shown.length === 1 ? 'The image is' : 'The images are'} attached for you to look at.` : ''})`
       : text;
-    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: CHIEF_MODEL, images: shown, env: auth.env() });
+    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: settings.get('chiefModel'), images: shown, env: auth.env() });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -1525,7 +1526,7 @@ async function runStandup(byBoss) {
   try {
     // A quiet office has nothing worth a model call. Otherwise it writes
     // while everyone walks over.
-    const writing = quiet ? null : writeStandup(context, { bin: CLAUDE, model: CHIEF_MODEL, env: auth.env() }).catch(() => null);
+    const writing = quiet ? null : writeStandup(context, { bin: CLAUDE, model: settings.get('chiefModel'), env: auth.env() }).catch(() => null);
     await sleep(GATHER_MS);
     const written = writing && (await writing);
     if (written) {
@@ -1557,8 +1558,9 @@ async function runStandup(byBoss) {
 // Checked every minute. Missed standups still happen later that day, but
 // not after 6pm, and a day with nothing to talk about is skipped.
 function standupDue() {
-  if (STANDUP_AT === 'off' || standupNow) return;
-  const due = dueToday(STANDUP_AT, STANDUP_WEEKENDS);
+  const at = settings.get('standupAt');
+  if (!at || standupNow) return;
+  const due = dueToday(at, settings.get('standupWeekends'));
   const now = Date.now();
   if (!due || now < due || (state.lastStandup || 0) >= due || new Date().getHours() >= 18) return;
   const since = state.lastStandup || now - DAY_MS;
@@ -2145,11 +2147,20 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST') {
         const { tokens } = await readBody(req);
         if (tokens !== null && !(Number.isInteger(tokens) && tokens >= 0 && tokens <= 10_000_000)) return json(res, 400, { error: 'Use a whole number of tokens, or 0 to turn it off.' });
-        if (tokens === null) delete state.clearTokens; else state.clearTokens = tokens;
-        save();
-        send({ t: 'contextLimit', contextLimit: contextLimit() });
+        settings.set({ tokenLimit: tokens });
+        announceSettings();
       }
       return json(res, 200, contextLimit());
+    }
+    // The Settings page: every value, its default, and whether it is overridden.
+    // A POST of { key: value | null } saves them all or none; null is the default.
+    if (url.pathname === '/api/settings' && ['GET', 'POST'].includes(req.method)) {
+      if (req.method === 'POST') {
+        try { settings.set(await readBody(req)); }
+        catch (err) { return json(res, err.code || 400, { error: err.message }); }
+        announceSettings();
+      }
+      return json(res, 200, { owner: owner(), settings: settings.status() });
     }
     // The leaderboard. Joining claims a handle with the service and starts
     // sharing day counters. Leaving deletes the counters; the handle goes too

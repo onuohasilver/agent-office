@@ -4,6 +4,8 @@ Everything is set with environment variables when the server starts, e.g.
 `PORT=4400 CHIEF_MODEL=haiku npm start`. In-app choices — Claude access, the
 voice toggle, team profiles, theme — are made in the office and remembered.
 
+**Settings page.** Open the sliders icon in the office header to change the owner, token limit, compaction point, chief model, standup time and weekends, sharing of job titles, and the break-room talk without restarting. A value saved there wins over the environment variable below, which becomes the default; "Use the default" puts it back. Everything else here is environment-only.
+
 ## The office
 
 | Env | Default | |
