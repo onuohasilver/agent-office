@@ -6,8 +6,12 @@
 // clearance cap, tokens per day). The guest's office is never trusted: it
 // only ever sees its own jobs, and the feed it gets is cut down to them.
 //
-// As guest, the browser opens /ws/visit/:link. We ask the host for a hello,
-// then pass on its feed; the composer's posts become `req` frames.
+// As guest, we keep the host's hello (its agents, the projects and clearance
+// it shares, our jobs there) for as long as the link lives, and fold its feed
+// into our own office: the boss tags the host's agents in our chat like our
+// own, and their jobs sit in our list. Ids are namespaced `<link>.<id>` so a
+// host can never name one of our jobs or agents. The older /ws/visit/:link
+// page still works off the same requests.
 // See docs/proposals/linked-offices.md, "Guests".
 
 import crypto from 'node:crypto';
@@ -22,6 +26,9 @@ const CONNECT_WAIT_MS = 5_000;
 const FEED_EVERY_MS = 250;
 const FEED_BYTES = 48 * 1024; // under the relay's 64 KB a frame
 const FEED_TYPES = new Set(['job', 'log', 'staff']);
+const HELLO_RETRY_MS = 30_000;
+const REMOTE_LOG = 600;
+const MAX_THREADS = 300;
 const utcDay = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 10);
 const fail = (code, message) => Object.assign(new Error(message), { code });
 
@@ -104,6 +111,10 @@ export function cleanFeed(m) {
   if (m.t === 'job') { const job = cleanJob(m.job); return job && { t: 'job', job }; }
   if (m.t === 'log') { const entry = cleanEntry(m.entry); return entry && id(m.jobId) && { t: 'log', jobId: m.jobId, entry }; }
   if (m.t === 'staff') return Array.isArray(m.dismissed) ? { t: 'staff', dismissed: m.dismissed.filter((x) => id(x)).slice(0, 50) } : null;
+  // The host changed what we may do there; we ask for its hello again.
+  if (m.t === 'policy') return { t: 'policy' };
+  // The host stopped one of our agents working in its project.
+  if (m.t === 'visit') return id(m.job) && m.ended === 'stopped' ? { t: 'visit', job: m.job, ended: 'stopped' } : null;
   return null;
 }
 
@@ -115,6 +126,13 @@ const CLEAN_BODY = {
   reply: () => ({ ok: true }),
   stop: () => ({ ok: true }),
   hello: (b) => b,
+  'visit.open': (b) => {
+    if (typeof b.sid !== 'string' || !/^[0-9a-f]{32}$/.test(b.sid)) throw fail(502, 'The host sent back a session that doesn’t look right.');
+    return { sid: b.sid, access: b.access === 'edit' ? 'edit' : 'read' };
+  },
+  // What the host says about its own files goes only to our agent, as text.
+  'visit.fs': (b) => ({ text: str(b.text, 64 * 1024) }),
+  'visit.close': () => ({ ok: true }),
 };
 
 // What a guest may see of one of its own jobs.
@@ -125,16 +143,30 @@ export function guestJob(j, tail = 40) {
 
 export class Guests {
   // office: { jobs(), createJob(body, extra), replyJob(job, body), stopJob(job), diff(job, path), staff(), modes() }
-  constructor(dataDir, { links, office }) {
+  // office also has send(msg), which broadcasts to our own browsers.
+  // visits (as host): our side of a guest's own agents working in our
+  // projects; see visits.js.
+  constructor(dataDir, { links, office, visits = null }) {
     this.links = links;
     this.office = office;
+    this.copies = visits;
     this.file = path.join(dataDir, 'guests.json');
     this.used = {};
-    try { this.used = JSON.parse(fs.readFileSync(this.file, 'utf8')).used || {}; } catch {}
+    // Where each of our jobs at a host was asked for (chat thread and
+    // channel), and the project last used at each host.
+    this.asked = { threads: {}, lastRepo: {} };
+    try {
+      const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
+      this.used = saved.used || {};
+      this.asked = { threads: saved.asked?.threads || {}, lastRepo: saved.asked?.lastRepo || {} };
+    } catch {}
+    this.remote = new Map(); // link id -> { link, host, staff, repos, clearance, jobs: Map(host job id -> job) }
+    this.helloing = new Map(); // link id -> retry-after time, while asking or after a failure
     this.queue = new Map(); // link id -> messages waiting for the next feed frame
     this.flushTimer = null;
     this.visits = new Map(); // link id -> Set of browser sockets (as guest)
     this.pending = new Map(); // req id -> { resolve, reject, timer } (as guest)
+    this.away = new Map(); // our job id -> { sid, access } while one of our agents works in a host's project
   }
 
   // Every req, res and feed frame on a guest link comes through here.
@@ -199,9 +231,21 @@ export class Guests {
           staff: this.office.staff(),
           modes: Object.fromEntries(Object.entries(this.office.modes()).filter(([k]) => CLEARANCE.indexOf(k) <= CLEARANCE.indexOf(p.clearance))),
           jobs: this.jobsOf(link.id).map((j) => guestJob(j)),
-          policy: { repos: p.repos, clearance: p.clearance, tokensPerDay: p.tokensPerDay, tokensToday: this.tokensToday(link.id) },
+          policy: {
+            repos: p.repos, clearance: p.clearance, tokensPerDay: p.tokensPerDay, tokensToday: this.tokensToday(link.id),
+            ourAgents: p.ourAgents !== false, theirAgents: this.copies ? p.theirAgents || 'off' : 'off',
+          },
         };
+      case 'visit.open': case 'visit.fs': case 'visit.close': {
+        if (!this.copies) throw fail(400, 'Guests can’t do that here.');
+        if (op === 'visit.open') return this.copies.open(link, p, args);
+        // Every file call is held to the limits as they are now, not as they
+        // were when the work started.
+        if (!['read', 'edit'].includes(p.theirAgents)) throw fail(403, 'This office no longer lets your agents work in its projects.');
+        return op === 'visit.fs' ? this.copies.fs(link, args, p) : this.copies.close(link, args);
+      }
       case 'createJob': {
+        if (p.ourAgents === false) throw fail(403, 'This office lets your own agents work in its projects, but doesn’t lend its agents. Send one of yours instead.');
         if (!p.repos.includes(args.repo)) throw fail(403, 'That project isn’t shared with you.');
         const mode = this.capMode(p, args.mode);
         this.checkTokens(link, p);
@@ -214,6 +258,7 @@ export class Guests {
         return { job: guestJob(job) };
       }
       case 'reply': {
+        if (p.ourAgents === false) throw fail(403, 'This office doesn’t lend its agents any more.');
         const job = this.ownJob(link, args.job);
         const mode = args.mode === undefined ? undefined : this.capMode(p, args.mode);
         this.checkTokens(link, p);
@@ -254,7 +299,9 @@ export class Guests {
     for (const [id, u] of Object.entries(this.used)) if (u.day !== day) delete this.used[id];
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      fs.writeFileSync(this.file + '.tmp', JSON.stringify({ used: this.used }));
+      const threads = Object.entries(this.asked.threads);
+      if (threads.length > MAX_THREADS) this.asked.threads = Object.fromEntries(threads.slice(-MAX_THREADS));
+      fs.writeFileSync(this.file + '.tmp', JSON.stringify({ used: this.used, asked: this.asked }));
       fs.renameSync(this.file + '.tmp', this.file);
     } catch (err) { console.error('[guests] could not save', err.message); }
   }
@@ -305,6 +352,7 @@ export class Guests {
       for (const ws of socks) ws.close(4404, 'This office unlinked you.');
       this.visits.delete(linkId);
     }
+    this.syncRemote();
   }
 
   // ---------- as guest ----------
@@ -343,11 +391,13 @@ export class Guests {
   }
 
   fromHost(link, msg) {
+    if (!Array.isArray(msg.msgs)) return;
     const socks = this.visits.get(link.id);
-    if (!socks?.size || !Array.isArray(msg.msgs)) return;
     for (const raw of msg.msgs.slice(0, 500)) {
       const m = cleanFeed(raw);
       if (!m) continue;
+      this.remoteFeed(link, m);
+      if (!socks?.size) continue;
       const data = JSON.stringify(m);
       for (const ws of socks) if (ws.readyState === 1) ws.send(data);
     }
@@ -370,6 +420,7 @@ export class Guests {
         link: link.id, host: link.peer,
         repos: (Array.isArray(policy.repos) ? policy.repos : []).filter((r) => typeof r === 'string' && REPO.test(r)).slice(0, 50),
         clearance, tokensPerDay: count(policy.tokensPerDay), tokensToday: count(policy.tokensToday),
+        ourAgents: policy.ourAgents !== false, theirAgents: ['read', 'edit'].includes(policy.theirAgents) ? policy.theirAgents : 'off',
       },
     };
   }
@@ -387,5 +438,262 @@ export class Guests {
     catch (err) { return ws.close(4502, String(err.message).slice(0, 120)); }
     if (ws.readyState !== 1) return;
     ws.send(JSON.stringify({ ...extra(), ...this.cleanHello(link, hello) }));
+  }
+
+  // ---------- a host's agents, from our own office ----------
+
+  // Ask every host that made us its guest for its hello, once per link (and
+  // again after a failure, no sooner than HELLO_RETRY_MS). Cheap to call on
+  // every links change: it does nothing for hosts it already knows.
+  syncRemote() {
+    const hosts = this.links.links.filter((l) => l.kind === 'guest' && l.role === 'guest');
+    let gone = false;
+    for (const id of this.remote.keys()) if (!hosts.some((l) => l.id === id)) { this.remote.delete(id); gone = true; }
+    if (gone) this.office.send({ t: 'remote', offices: this.remoteStatus(), away: this.awayFolders() });
+    if (!this.links.status().connected) return;
+    for (const l of hosts) {
+      if (this.remote.has(l.id) || (this.helloing.get(l.id) || 0) > Date.now()) continue;
+      this.remoteHello(l).catch(() => {});
+    }
+  }
+
+  async remoteHello(link) {
+    this.helloing.set(link.id, Infinity);
+    try {
+      const hello = this.cleanHello(link, await this.request(link.id, 'hello'));
+      const entry = {
+        link: link.id, host: link.peer, staff: hello.staff, repos: hello.visiting.repos, clearance: hello.visiting.clearance,
+        ourAgents: hello.visiting.ourAgents, theirAgents: hello.visiting.theirAgents,
+        jobs: new Map(hello.jobs.map((j) => [j.id, j])),
+      };
+      if (!this.guestLinkOrNull(link.id)) return null; // unlinked while we asked
+      this.remote.set(link.id, entry);
+      this.helloing.delete(link.id);
+      this.office.send({ t: 'remote', offices: this.remoteStatus(), away: this.awayFolders() });
+      for (const j of entry.jobs.values()) this.office.send({ t: 'job', job: this.localJob(entry, j) });
+      return entry;
+    } catch (err) {
+      this.helloing.set(link.id, Date.now() + HELLO_RETRY_MS);
+      throw err;
+    }
+  }
+
+  guestLinkOrNull(linkId) {
+    try { return this.guestLink(linkId); } catch { return null; }
+  }
+
+  // A host's job as our page sees it: namespaced ids, where it was asked
+  // for, and which office it runs in. `from` is us, so it's dropped.
+  localJob(entry, j, tail = 40) {
+    const key = `${entry.link}.${j.id}`;
+    const { guest: _g, from: _f, ...rest } = j;
+    return {
+      ...rest, id: key, agentId: j.agentId ? `${entry.link}.${j.agentId}` : null,
+      remote: { link: entry.link, host: entry.host }, ...this.asked.threads[key],
+      log: (j.log || []).slice(-tail),
+    };
+  }
+
+  // The host's agents, for our page. `here` says who it has on the floor,
+  // from its presence; staff it hasn't hired can't be tagged.
+  remoteStatus() {
+    return [...this.remote.values()].map((e) => {
+      const present = this.links.presentAt(e.link);
+      const here = present && new Set(present.map((a) => a.id));
+      return {
+        link: e.link, host: e.host, repos: e.repos, clearance: e.clearance, theirAgents: e.theirAgents || 'off',
+        // A host that only lets our own agents in has none of its to tag.
+        staff: e.ourAgents === false ? [] : e.staff.map((s) => ({ ...s, id: `${e.link}.${s.id}`, here: here ? here.has(s.id) : true })),
+      };
+    });
+  }
+
+  remoteJobs() {
+    return [...this.remote.values()].flatMap((e) => [...e.jobs.values()].map((j) => this.localJob(e, j)));
+  }
+
+  // One feed message from a host, folded into our office.
+  remoteFeed(link, m) {
+    if (m.t === 'policy') {
+      this.remote.delete(link.id);
+      this.helloing.delete(link.id);
+      this.syncRemote();
+      return;
+    }
+    if (m.t === 'visit') {
+      this.office.awayStopped?.(m.job, link.id);
+      return;
+    }
+    const entry = this.remote.get(link.id);
+    if (!entry) return;
+    if (m.t === 'job') {
+      const prev = entry.jobs.get(m.job.id);
+      const job = { ...m.job, log: prev?.log || [] };
+      entry.jobs.set(job.id, job);
+      this.office.send({ t: 'job', job: this.localJob(entry, job, 0) });
+      if (prev?.status === 'working' && job.status !== 'working' && job.status !== 'queued') this.office.remoteEnded?.(this.localJob(entry, job, 1), prev);
+    } else if (m.t === 'log') {
+      const job = entry.jobs.get(m.jobId);
+      if (!job) return;
+      job.log.push(m.entry);
+      if (job.log.length > REMOTE_LOG) job.log.splice(0, job.log.length - REMOTE_LOG);
+      this.office.send({ t: 'log', jobId: `${entry.link}.${job.id}`, entry: m.entry });
+    }
+  }
+
+  // `<link>.<host job id>` -> the host and its id, or null if it isn't one.
+  remoteKey(key) {
+    const m = /^([A-Za-z0-9_-]{1,64})\.([A-Za-z0-9_-]{1,64})$/.exec(String(key ?? ''));
+    const entry = m && this.remote.get(m[1]);
+    return entry ? { entry, id: m[2] } : null;
+  }
+
+  // The remote job a chat thread is about, if any.
+  threadJob(root) {
+    const key = Object.keys(this.asked.threads).findLast((k) => this.asked.threads[k].thread === root);
+    return key && this.remoteKey(key) ? key : null;
+  }
+
+  // The highest clearance at or below `mode` that the host allows.
+  capRemote(entry, mode) {
+    const want = CLEARANCE.includes(mode) ? mode : 'edit';
+    return CLEARANCE[Math.min(CLEARANCE.indexOf(want), CLEARANCE.indexOf(entry.clearance))];
+  }
+
+  // What /api/jobs/<link>.<id> does for a host's job.
+  async remoteOp(key, op, args = {}) {
+    const r = this.remoteKey(key);
+    if (!r) throw fail(404, 'No such job.');
+    const { entry, id } = r;
+    if (op === 'job') {
+      const { job } = await this.request(entry.link, 'job', { job: id });
+      entry.jobs.set(job.id, job);
+      return this.localJob(entry, job, 500);
+    }
+    if (op === 'diff') return this.request(entry.link, 'diff', { job: id, path: String(args.path ?? '') });
+    if (op === 'stop') return this.request(entry.link, 'stop', { job: id });
+    if (op === 'reply') {
+      if (Array.isArray(args.files) && args.files.length) throw fail(400, `Files can’t go to @${entry.host}’s office. Paste the text instead.`);
+      const text = String(args.message ?? args.text ?? '').trim();
+      if (!text) throw fail(400, 'Say something first.');
+      return this.request(entry.link, 'reply', { job: id, text, mode: args.mode === undefined ? undefined : this.capRemote(entry, args.mode) });
+    }
+    throw fail(400, 'Can’t do that with a linked office’s job.');
+  }
+
+  // A host agent tagged in `text`. `@Name@host` always means the host's;
+  // a bare `@Name` only when none of ours answers to it (isLocal).
+  tagged(text, isLocal) {
+    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const offices = this.remoteStatus();
+    const find = (name, host) => {
+      for (const o of offices) {
+        if (host && norm(o.host) !== norm(host)) continue;
+        const s = o.staff.find((x) => x.here && norm(x.name) === norm(name));
+        if (s) return { link: o.link, host: o.host, staff: s };
+      }
+      return null;
+    };
+    for (const m of text.matchAll(/@([\w-]+)@([\w-]+)/g)) {
+      const hit = find(m[1], m[2]);
+      if (hit) return { ...hit, clean: text.replace(m[0], ' ').replace(/[ \t]+/g, ' ').trim() };
+    }
+    for (const m of text.matchAll(/(^|[^\w@])@([\w-]+)(?![\w@-])/g)) {
+      if (isLocal(m[2])) continue;
+      const hit = find(m[2]);
+      if (hit) {
+        const re = new RegExp(`@${m[2]}(?![\\w@-])`);
+        return { ...hit, clean: text.replace(re, ' ').replace(/[ \t]+/g, ' ').trim() };
+      }
+    }
+    return null;
+  }
+
+  // The project a job at a host goes in: the only one it shares, one tagged
+  // or named in the brief, or the one used there last time.
+  remoteRepo(entry, text) {
+    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+    const { repos } = entry;
+    if (!repos.length) throw fail(403, `@${entry.host} hasn’t shared any projects with you.`);
+    if (repos.length === 1) return { repo: repos[0], text };
+    const tags = [...text.matchAll(/(^|\s)#([\w.-]+)/g)];
+    for (const t of tags) {
+      const repo = repos.find((r) => norm(r) === norm(t[2]));
+      if (repo) return { repo, text: text.replace(t[0], ' ').replace(/[ \t]+/g, ' ').trim() };
+    }
+    const said = norm(text);
+    const named = repos.filter((r) => norm(r).length >= 3 && said.includes(norm(r)));
+    if (named.length === 1) return { repo: named[0], text };
+    const last = this.asked.lastRepo[entry.link];
+    if (repos.includes(last)) return { repo: last, text };
+    throw fail(400, `Which of @${entry.host}’s projects is that for? Say ${repos.map((r) => r).join(', ')} in the message.`);
+  }
+
+  // ---------- our agents in a host's projects ----------
+  //
+  // A host can let our own agents work in its projects: the agent runs here,
+  // on our account, and its file tools are requests to the host (visit.*),
+  // which works on a copy and answers in text. See visits.js for the host's side.
+
+  // `#web@friend`: a host's project our agents may work in, or null.
+  awayFolder(repo, host) {
+    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
+    for (const e of this.remote.values()) {
+      if (norm(e.host) !== norm(host) || !['read', 'edit'].includes(e.theirAgents)) continue;
+      const r = e.repos.find((x) => norm(x) === norm(repo));
+      if (r) return { link: e.link, host: e.host, repo: r, access: e.theirAgents };
+    }
+    return null;
+  }
+
+  // Every host project our agents may work in, for the page's # menu.
+  awayFolders() {
+    return [...this.remote.values()].filter((e) => ['read', 'edit'].includes(e.theirAgents))
+      .flatMap((e) => e.repos.map((repo) => ({ link: e.link, host: e.host, repo, access: e.theirAgents })));
+  }
+
+  // One file call from our agent's job, as a request to the host. The first
+  // opens the session there; a session the host has lost is opened again once.
+  async awayFs(job, agent, op, args) {
+    const { link, repo } = job.away;
+    const open = async () => {
+      const s = await this.request(link, 'visit.open', { repo, job: job.id, title: job.title, agent });
+      this.away.set(job.id, s);
+      job.away.access = s.access;
+      return s;
+    };
+    let s = this.away.get(job.id) || await open();
+    try {
+      return (await this.request(link, 'visit.fs', { ...args, sid: s.sid, op })).text;
+    } catch (err) {
+      if (err.code !== 404 || !/session has ended/.test(err.message)) throw err;
+      this.away.delete(job.id);
+      s = await open();
+      return (await this.request(link, 'visit.fs', { ...args, sid: s.sid, op })).text;
+    }
+  }
+
+  // Our job ended: the host closes its side and works out what changed.
+  async awayClose(job, status, summary) {
+    const s = this.away.get(job.id);
+    if (!s) return;
+    this.away.delete(job.id);
+    await this.request(job.away.link, 'visit.close', { sid: s.sid, status, summary: String(summary || '').slice(0, 2000) });
+  }
+
+  // Start a job with one of a host's agents, from our chat.
+  async startRemote({ link, staff, text, mode, model, thread, channel }) {
+    const entry = this.remote.get(link) || await this.remoteHello(this.guestLink(link));
+    const { repo, text: brief } = this.remoteRepo(entry, text);
+    if (!brief) throw fail(400, 'Say what the job is, as well as who it’s for.');
+    const agentId = staff.id.slice(link.length + 1);
+    const { job } = await this.request(link, 'createJob', { repo, prompt: brief, mode: this.capRemote(entry, mode), model, agentId });
+    this.asked.threads[`${link}.${job.id}`] = { thread, channel };
+    this.asked.lastRepo[link] = repo;
+    this.save();
+    entry.jobs.set(job.id, job);
+    const local = this.localJob(entry, job);
+    this.office.send({ t: 'job', job: local });
+    return { job: local, entry, repo, capped: this.capRemote(entry, mode) !== mode };
   }
 }

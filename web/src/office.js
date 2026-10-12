@@ -2,7 +2,12 @@ import * as THREE from 'three';
 import { Grid } from './nav.js';
 import { SEAT } from './figure.js';
 
-export const W = 40, D = 30;
+// The floor runs x0..x1 and z0..z1. The team's floor is x -20..20; east of
+// that is the guest wing, where visitors from linked offices work.
+export const W = 52, D = 30;
+export const FLOOR = { x0: -20, x1: 32, z0: -D / 2, z1: D / 2, cx: 6 };
+const WING = 20.4; // the glass line between our floor and the guest wing
+const DOOR_X = 27;
 // Where the pool table stands, and how high its cloth is.
 export const POOL = { x: 7.6, z: 10.9, felt: 0.84 };
 
@@ -705,14 +710,14 @@ export function dressDesk(desk, { name = '', accent = '#7d8a9c', state = 'open' 
 // ---------- the room ----------
 
 export function buildOffice(scene) {
-  const grid = new Grid(W, D);
+  const grid = new Grid(W, D, FLOOR.x0, FLOOR.z0);
   const blinkers = [];
 
   // The office sits on a thick wooden slab, like a model on a table.
   const edge = mat('#a97a50');
   const top = new THREE.MeshStandardMaterial({ map: plankTexture(), roughness: 0.7 });
   const slab = new THREE.Mesh(new THREE.BoxGeometry(W + 0.6, 0.7, D + 0.6), [edge, edge, top, edge, edge, edge]);
-  slab.position.y = -0.35;
+  slab.position.set(FLOOR.cx, -0.35, 0);
   slab.receiveShadow = true;
   slab.castShadow = true;
   scene.add(slab);
@@ -721,21 +726,28 @@ export function buildOffice(scene) {
   catcher.position.y = -0.72;
   catcher.receiveShadow = true;
   scene.add(catcher);
-  scene.add(contactShadow(W + 16, D + 16));
+  const shade = contactShadow(W + 16, D + 16);
+  shade.position.x = FLOOR.cx;
+  scene.add(shade);
   const carpet = box(scene, 24.5, 0.02, 12.6, null, 0, 0.011, 1.2, new THREE.MeshStandardMaterial({ map: carpetTexture(), roughness: 1 }));
   carpet.castShadow = false;
 
   // Four walls. The ones between the camera and the room drop to a stub so
   // you can always see in, whichever way you turn.
+  // The south wall turns round, so its local x runs west: the door's gap
+  // sits at -(DOOR_X - cx).
+  const doorL = -(DOOR_X - FLOOR.cx);
   const walls = [
-    buildWall(scene, W + 0.6, 0, -D / 2 - 0.15, 0, [0, 0, -1]),
-    buildWall(scene, W + 0.6, 0, D / 2 + 0.15, Math.PI, [0, 0, 1], [[-W / 2 - 0.3, -19.2], [-16.8, W / 2 + 0.3]]),
-    buildWall(scene, D, -W / 2 - 0.15, 0, Math.PI / 2, [-1, 0, 0]),
-    buildWall(scene, D, W / 2 + 0.15, 0, -Math.PI / 2, [1, 0, 0]),
+    buildWall(scene, W + 0.6, FLOOR.cx, FLOOR.z0 - 0.15, 0, [0, 0, -1]),
+    buildWall(scene, W + 0.6, FLOOR.cx, FLOOR.z1 + 0.15, Math.PI, [0, 0, 1], [[-W / 2 - 0.3, doorL - 1.2], [doorL + 1.2, W / 2 + 0.3]]),
+    buildWall(scene, D, FLOOR.x0 - 0.15, 0, Math.PI / 2, [-1, 0, 0]),
+    buildWall(scene, D, FLOOR.x1 + 0.15, 0, -Math.PI / 2, [1, 0, 0]),
   ];
   const [north, , west, east] = walls;
-  grid.block(-W / 2, W / 2, -D / 2, -D / 2 + 0.2);
-  grid.block(-W / 2, -W / 2 + 0.2, -D / 2, D / 2);
+  // Things on the north wall are placed in world x; the wall is centred on cx.
+  const nx = (x) => x - FLOOR.cx;
+  grid.block(FLOOR.x0, FLOOR.x1, FLOOR.z0, FLOOR.z0 + 0.2);
+  grid.block(FLOOR.x0, FLOOR.x0 + 0.2, FLOOR.z0, FLOOR.z1);
 
   // Windows on the west wall (local x runs along -z there).
   for (const wz of [-6, 0, 6]) {
@@ -851,14 +863,14 @@ export function buildOffice(scene) {
   grid.block(-11.5, -10.5, 11.5, 12.5);
 
   // kanban wall
-  north.attach.push(box(north.g, 9.4, 3.5, 0.08, '#d9cdbb', 0, 2.2, 0.2));
+  north.attach.push(box(north.g, 9.4, 3.5, 0.08, '#d9cdbb', nx(0), 2.2, 0.2));
   const board = canvasPlane(north.g, 9, 3.2, 1536, 546);
-  board.mesh.position.set(0, 2.2, 0.26);
+  board.mesh.position.set(nx(0), 2.2, 0.26);
   north.attach.push(board.mesh);
 
   // reception — the chief of staff
   const reception = new THREE.Group();
-  reception.position.set(15.5, 0, 10.6);
+  reception.position.set(23.4, 0, 12.4);
   box(reception, 3.4, 1.05, 0.9, '#efe9df', 0, 0.525, 0);
   box(reception, 3.5, 0.06, 1.0, C.wood, 0, 1.08, 0);
   box(reception, 0.9, 0.55, 0.05, C.metal, -0.8, 1.4, -0.25);
@@ -876,15 +888,15 @@ export function buildOffice(scene) {
   deskSeat.rotation.y = Math.PI;
   reception.add(deskSeat);
   scene.add(reception);
-  grid.block(13.7, 17.3, 10.1, 11.1);
+  grid.block(21.6, 25.2, 11.9, 12.9);
 
   // entrance
-  const mat0 = box(scene, 2.4, 0.02, 1.6, '#b9a58f', 18.2, 0.01, 13.4);
+  const mat0 = box(scene, 2.4, 0.02, 1.6, '#b9a58f', DOOR_X, 0.01, 14);
   mat0.castShadow = false;
 
   // wall art and a clock — they fold away with their wall
-  framedArt(north, -7.6, 2.5, 1.6, 1.1, ART.sunset);
-  wallClock(north, 7.6, 2.7);
+  framedArt(north, nx(-7.6), 2.5, 1.6, 1.1, ART.sunset);
+  wallClock(north, nx(7.6), 2.7);
   framedArt(east, 1.4, 2.4, 1.0, 1.4, ART.arcs);
   framedArt(east, 3.0, 2.4, 1.0, 1.4, ART.blocks);
   framedArt(east, 4.6, 2.4, 1.0, 1.4, ART.leaf);
@@ -980,10 +992,12 @@ export function buildOffice(scene) {
   grid.block(-18.4, -17.6, 7.8, 8.6);
 
   // rug by reception, so the entrance feels like a lobby
-  const lobby = box(scene, 5, 0.02, 3.2, '#c9b79c', 15.5, 0.012, 12.6, { roughness: 1 });
+  const lobby = box(scene, 6.4, 0.02, 3.2, '#c9b79c', 25.4, 0.012, 12.9, { roughness: 1 });
   lobby.castShadow = false;
-  const lobbyBorder = box(scene, 4.6, 0.022, 2.8, '#ddd0bb', 15.5, 0.013, 12.6, { roughness: 1 });
+  const lobbyBorder = box(scene, 6, 0.022, 2.8, '#ddd0bb', 25.4, 0.013, 12.9, { roughness: 1 });
   lobbyBorder.castShadow = false;
+
+  const wing = guestWing(scene, grid, north, east, nx);
 
   const plants = [[-19, -9.5, 1.1, 'tall'], [10, -14, 1, 'snake'], [-9.8, -14.2, 0.9, 'bush'], [19, -11, 1.2, 'tall'], [-10.3, 14, 1, 'bush'], [6.2, 13.8, 1.1, 'tall'], [19, 8.5, 1, 'snake'], [19.2, 0, 0.9, 'bush'], [-19.1, 14.2, 0.8, 'snake'], [11.6, 13.9, 1, 'bush']];
   for (const [x, z, s, kind] of plants) plant(scene, grid, x, z, s, kind);
@@ -1029,20 +1043,173 @@ export function buildOffice(scene) {
     { pos: new THREE.Vector3(POOL.x + 0.9, 0, POOL.z + 1.65), face: face.n, pose: 'stand', taken: null, game: true },
   );
 
-  // Visitors from linked offices never take a desk. Working, they stand at a
-  // hot-desk spot under the kanban wall. On a break they watch the pool or
-  // take a coffee (the same mug spots as ours, so nobody shares a spot). In a
-  // meeting they stand around the communal table.
+  // Visitors from linked offices never take one of our desks. Working, they
+  // sit at the guest benches in their wing. On a break they watch the pool
+  // or have a coffee at the guest bar. In a meeting they gather at the guest
+  // table. See guestWing.
   const toward = (x, z, cx, cz, pose) => ({ pos: new THREE.Vector3(x, 0, z), face: Math.atan2(cx - x, cz - z), pose, taken: null });
-  stations.hotdesk = { label: 'Hot desks', spots: [-4.5, -2.7, -0.9, 0.9, 2.7, 4.5].map((x) => toward(x, -13.4, x, -15, 'read')) };
   stations.poolside = { label: 'Pool table', spots: [[4.9, 10.9], [10.3, 10.9], [9.6, 8.8], [5.6, 8.8]].map(([x, z]) => toward(x, z, POOL.x, POOL.z, 'mug')) };
-  stations.coffee = { label: 'Coffee', spots: stations.lounge.spots.filter((s) => s.pose === 'mug') };
-  stations.huddle = { label: 'Break-room table', spots: [[-4.5, 11], [-4.5, 12.2], [2.5, 11], [2.5, 12.2], [-1.85, 9.6], [-0.15, 9.6]].map(([x, z]) => toward(x, z, -1, 11.6, 'stand')) };
+  Object.assign(stations, wing.stations);
 
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6), seatY: SEAT } };
+  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
 }
 
+
+// ---------- guest wing ----------
+
+// Where visitors from linked offices spend their time, east of the glass:
+// two benches of hot desks, a coffee bar with a sofa, and a standing table
+// for their meetings. The door opens into it, so guests arrive in their own
+// space and never queue for one of ours.
+function guestWing(scene, grid, north, east, nx) {
+  const toward = (x, z, cx, cz, pose, seatY) => ({ pos: new THREE.Vector3(x, 0, z), face: Math.atan2(cx - x, cz - z), pose, seatY, taken: null });
+  const BX = 26.2; // the benches' middle
+
+  // Glass between our floor and theirs, down to where the whiteboard stands.
+  const glassMat = new THREE.MeshStandardMaterial({ color: C.glass, transparent: true, opacity: 0.28, roughness: 0.08, metalness: 0.1, depthWrite: false });
+  const g0 = FLOOR.z0, g1 = -3.6;
+  const pane = new THREE.Mesh(new THREE.BoxGeometry(0.05, 2.3, g1 - g0), glassMat);
+  pane.position.set(WING, 1.25, (g0 + g1) / 2);
+  scene.add(pane);
+  box(scene, 0.1, 0.1, g1 - g0, C.metal, WING, 2.42, (g0 + g1) / 2);
+  box(scene, 0.12, 0.1, g1 - g0, C.metal, WING, 0.05, (g0 + g1) / 2);
+  for (let z = g0 + 0.2; z <= g1 + 0.01; z += (g1 - g0 - 0.2) / 4) box(scene, 0.08, 2.45, 0.08, C.metal, WING, 1.22, z);
+  grid.block(WING - 0.15, WING + 0.15, g0, g1);
+
+  // A sage rug marks the wing without a wall.
+  box(scene, 10.4, 0.02, 10.8, '#c9d3c4', BX, 0.011, -8.6, { roughness: 1 }).castShadow = false;
+  box(scene, 10, 0.022, 10.4, '#d6ddd1', BX, 0.012, -8.6, { roughness: 1 }).castShadow = false;
+
+  // "Guest wing" over the benches, on the north wall so it folds away too.
+  north.attach.push(box(north.g, 5.4, 1.5, 0.08, '#2f3440', nx(BX), 2.65, 0.2));
+  const sign = canvasPlane(north.g, 5.2, 1.3, 800, 200);
+  sign.mesh.position.set(nx(BX), 2.65, 0.25);
+  sign.ctx.fillStyle = '#2f3440';
+  sign.ctx.fillRect(0, 0, 800, 200);
+  sign.ctx.textAlign = 'center';
+  sign.ctx.fillStyle = '#f5f0e8';
+  sign.ctx.font = `680 76px ${FONT}`;
+  sign.ctx.fillText('Guest wing', 400, 104);
+  sign.ctx.fillStyle = '#b9c7b4';
+  sign.ctx.font = `500 30px ${FONT}`;
+  sign.ctx.fillText('Visitors from linked offices work here', 400, 158);
+  sign.tex.needsUpdate = true;
+  north.attach.push(sign.mesh);
+
+  // Two windows on the east wall (local x runs along +z there).
+  for (const wz of [-10.4, -5.2]) {
+    east.attach.push(
+      box(east.g, 3.2, 2.2, 0.06, C.glass, wz, 2.2, 0.15, { emissive: '#bfe3f5', emissiveIntensity: 0.45, roughness: 0.15 }),
+      box(east.g, 3.4, 0.12, 0.14, C.trim, wz, 1.08, 0.2),
+      box(east.g, 3.4, 0.12, 0.14, C.trim, wz, 3.32, 0.2),
+      box(east.g, 0.1, 2.3, 0.14, C.trim, wz, 2.2, 0.2),
+    );
+  }
+
+  // Hot-desk benches: three seats a side, a laptop at each.
+  const hotdesk = [];
+  for (const bz of [-11, -6.2]) {
+    const bench = new THREE.Group();
+    bench.position.set(BX, 0, bz);
+    box(bench, 6.2, 0.08, 1.2, C.wood, 0, 0.78, 0);
+    box(bench, 6.24, 0.03, 1.24, C.woodDark, 0, 0.742, 0);
+    for (const lx of [-2.8, 2.8]) box(bench, 0.08, 0.74, 1.0, C.metal, lx, 0.38, 0);
+    box(bench, 5.5, 0.26, 0.04, C.woodDark, 0, 0.6, 0);
+    for (const sx of [-2, 0, 2]) {
+      for (const side of [-1, 1]) {
+        stool(bench, sx, side * 1.05, ['#7c5cff', '#0e9f9a', '#d9488f', '#c98a12', '#3b82f6', '#65a30d'][(sx / 2 + 1) * 2 + (side + 1) / 2]);
+        const laptop = new THREE.Group();
+        laptop.position.set(sx, 0.82, side * 0.3);
+        laptop.rotation.y = side > 0 ? 0 : Math.PI;
+        box(laptop, 0.5, 0.025, 0.35, '#c7ccd4', 0, 0.012, 0);
+        const lid = box(laptop, 0.5, 0.34, 0.02, '#c7ccd4', 0, 0.17, -0.17);
+        lid.rotation.x = -0.25;
+        bench.add(laptop);
+        hotdesk.push(toward(BX + sx, bz + side * 1.05, BX + sx, bz, 'desk', SEAT));
+      }
+    }
+    for (const px of [-2, 2]) {
+      cyl(bench, 0.02, 0.02, 1.6, '#2f3440', px, 3.4, 0, 6);
+      cyl(bench, 0.06, 0.32, 0.28, '#2f3440', px, 2.55, 0, 20, { roughness: 0.5 }).castShadow = false;
+      const glow = new THREE.Mesh(new THREE.CircleGeometry(0.29, 20), new THREE.MeshBasicMaterial({ color: '#fff1c4' }));
+      glow.rotation.x = Math.PI / 2;
+      glow.position.set(px, 2.405, 0);
+      bench.add(glow);
+    }
+    scene.add(bench);
+    grid.block(BX - 3.1, BX + 3.1, bz - 0.6, bz + 0.6);
+  }
+
+  // A sofa for a sit-down break, with a low table in front.
+  const sofa = new THREE.Group();
+  sofa.position.set(24.4, 0, -2.2);
+  const teal = '#3f8f8a', tealLight = '#5aa8a2';
+  box(sofa, 4, SEAT - 0.14, 1.1, teal, 0, (SEAT - 0.14) / 2, 0);
+  box(sofa, 4, 0.78, 0.28, teal, 0, SEAT + 0.25, -0.44);
+  for (const ax of [-1.86, 1.86]) box(sofa, 0.28, 0.58, 1.1, teal, ax, SEAT - 0.07, 0);
+  for (const cx of [-1.1, 0, 1.1]) box(sofa, 1.05, 0.14, 0.92, tealLight, cx, SEAT - 0.07, 0.05);
+  for (const [lx, lz] of [[-1.8, -0.45], [1.8, -0.45], [-1.8, 0.45], [1.8, 0.45]]) cyl(sofa, 0.05, 0.04, 0.12, C.woodDark, lx, 0.06, lz, 8);
+  scene.add(sofa);
+  grid.block(22.3, 26.5, -2.8, -1.6);
+  box(scene, 1.8, 0.06, 0.7, C.wood, 24.4, 0.4, -0.5);
+  for (const [lx, lz] of [[-0.8, -0.28], [0.8, -0.28], [-0.8, 0.28], [0.8, 0.28]]) box(scene, 0.05, 0.38, 0.05, C.metal, 24.4 + lx, 0.19, -0.5 + lz);
+  bookStack(scene, 24, 0.43, -0.5, 2);
+  grid.block(23.4, 25.4, -0.9, -0.1);
+
+  // Coffee bar against the east wall, under the prints.
+  const bar = new THREE.Group();
+  bar.position.set(31.35, 0, 3);
+  box(bar, 1.0, 0.95, 3.6, '#efe9df', 0, 0.475, 0);
+  box(bar, 1.06, 0.05, 3.7, C.wood, 0, 0.97, 0);
+  box(bar, 0.55, 0.65, 0.5, '#2c2f36', 0.1, 1.32, -0.9);
+  box(bar, 0.12, 0.08, 0.12, '#0e9f9a', -0.2, 1.44, -0.9, { emissive: '#0e9f9a', emissiveIntensity: 0.6 });
+  for (let k = 0; k < 3; k++) cyl(bar, 0.07, 0.06, 0.14, '#ffffff', -0.1, 1.06, 0.1 + k * 0.28, 10);
+  succulent(bar, 0, 0.99, 1.3);
+  scene.add(bar);
+  grid.block(30.8, FLOOR.x1, 1.1, 4.9);
+
+  // A tall table to stand at with a cup.
+  const bistro = new THREE.Group();
+  bistro.position.set(27.6, 0, 3);
+  cyl(bistro, 0.3, 0.34, 0.04, C.metal, 0, 0.02, 0, 20);
+  cyl(bistro, 0.04, 0.04, 1.05, C.metal, 0, 0.55, 0, 10);
+  cyl(bistro, 0.48, 0.48, 0.05, C.wood, 0, 1.08, 0, 28);
+  cyl(bistro, 0.06, 0.05, 0.13, '#d9488f', 0.15, 1.17, 0.1, 12);
+  scene.add(bistro);
+  grid.block(27.1, 28.1, 2.5, 3.5);
+
+  const coffee = [
+    toward(30.2, 2, 31.35, 2, 'mug'), toward(30.2, 3, 31.35, 3, 'mug'), toward(30.2, 4, 31.35, 4, 'mug'),
+    toward(26.65, 3, 27.6, 3, 'mug'), toward(28.55, 3, 27.6, 3, 'mug'),
+    ...[23.2, 24.4, 25.6].map((x) => ({ pos: new THREE.Vector3(x, 0, -2.1), face: 0, pose: 'couch', seatY: SEAT, taken: null })),
+  ];
+
+  // Their meeting table: round, standing height, room for six.
+  const MT = { x: 27.6, z: 8.4 };
+  const meet = new THREE.Group();
+  meet.position.set(MT.x, 0, MT.z);
+  cyl(meet, 0.42, 0.48, 0.05, C.metal, 0, 0.025, 0, 24);
+  cyl(meet, 0.07, 0.07, 1.02, C.metal, 0, 0.53, 0, 12);
+  cyl(meet, 0.9, 0.9, 0.06, C.wood, 0, 1.06, 0, 36);
+  notebook(meet, -0.2, 1.09, 0.1);
+  scene.add(meet);
+  grid.block(MT.x - 0.9, MT.x + 0.9, MT.z - 0.9, MT.z + 0.9);
+  const huddle = Array.from({ length: 6 }, (_, i) => {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    return toward(MT.x + Math.sin(a) * 1.55, MT.z + Math.cos(a) * 1.55, MT.x, MT.z, 'stand');
+  });
+
+  for (const [x, z, sz, kind] of [[31.2, -14.2, 1.1, 'tall'], [21.1, -4.6, 0.9, 'bush'], [31.2, 13.8, 1, 'snake'], [31.3, -1.2, 0.9, 'bush'], [21.2, 6.2, 1, 'tall']]) plant(scene, grid, x, z, sz, kind);
+
+  return {
+    stations: {
+      hotdesk: { label: 'Guest desks', spots: hotdesk },
+      coffee: { label: 'Guest coffee', spots: coffee },
+      huddle: { label: 'Guest table', spots: huddle },
+    },
+  };
+}
 
 // ---------- floor, walls, shadow ----------
 

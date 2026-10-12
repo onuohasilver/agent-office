@@ -277,6 +277,8 @@ export class Hud {
     this.app = app;
     this.openId = null;
     this.repos = null;
+    window.addEventListener('focus', () => this.syncRepos());
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) this.syncRepos(); });
     this.channels = [{ id: 'general', name: 'general' }];
     this.channel = store('office.channel') || 'general';
     this.unread = new Map();
@@ -428,7 +430,7 @@ export class Hud {
           <span class="dot ${known(STATUS, j.status)}"></span>
           <span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
           <time class="w">${order[j.status] < 2 ? '' : since(j.endedAt || j.queuedAt)}</time>
-          <span class="m">${j.from ? `<b class="from">from ${esc(j.from)}</b> · ` : ''}${projectIcon(j.repo)}<span class="r">${esc(j.repo)}</span>${j.agentId ? ' · ' + esc(staffName(j.agentId)) : ''}${j.status === 'done' ? '' : ` · <span class="s ${known(STATUS, j.status)}">${statusText(j.status)}</span>`}</span>
+          <span class="m">${j.from ? `<b class="from">from ${esc(j.from)}</b> · ` : ''}${projectIcon(j.repo)}<span class="r">${esc(j.repo)}</span>${j.agentId ? ' · ' + esc(staffName(j.agentId)) : j.visitor ? ' · ' + esc(j.visitor.name) : ''}${j.status === 'done' ? '' : ` · <span class="s ${known(STATUS, j.status)}">${statusText(j.status)}</span>`}</span>
         </button>`;
     const live = list.filter((j) => order[j.status] < 2);
     const past = list.filter((j) => order[j.status] === 2);
@@ -473,6 +475,21 @@ export class Hud {
     this.renderProjects();
   }
 
+  // A project created while the office is open (an agent scaffolding a new
+  // repo) joins the list by itself: re-read the folders when the page comes
+  // back, when a job turns up in a project we don't know, and every so often.
+  syncRepos() {
+    const now = Date.now();
+    if (this.repos && now - (this.reposAt || 0) < 3000) return;
+    this.reposAt = now;
+    api('/api/repos').then((r) => {
+      const next = allowRepos(r.repos);
+      if (this.repos && next.join('\n') === this.repos.join('\n')) return;
+      this.repos = next;
+      this.renderProjects();
+    }).catch(() => {});
+  }
+
   renderProjects(jobs = this.lastJobs || []) {
     this.lastJobs = jobs;
     if ($('projectsPane').hidden) return;
@@ -482,6 +499,8 @@ export class Hud {
     }
     const by = new Map();
     for (const j of jobs) (by.get(j.repo) || by.set(j.repo, []).get(j.repo)).push(j);
+    // `web@host` is a host's project, never on this machine's list.
+    if ([...by.keys()].some((name) => !name.includes('@') && !this.repos.includes(name))) this.syncRepos();
     const at = (j) => j.endedAt || j.startedAt || j.queuedAt || 0;
     const rows = [...by].filter(([name]) => this.repos.includes(name)).map(([name, js]) => {
       js.sort((a, b) => at(b) - at(a));
@@ -617,9 +636,21 @@ export class Hud {
     const meta = $('meta');
     if (!meta || !job) return;
     const end = job.status === 'working' || job.status === 'queued' ? Date.now() : job.endedAt || Date.now();
+    // A guest's own agent: it runs on their machine and account, so no model, cost or XP here.
+    if (job.visitor) {
+      meta.innerHTML = [
+        ['Project', `${job.repo} (a copy)`],
+        ['From', job.from],
+        ['Agent', [job.visitor.name, job.visitor.role].filter(Boolean).join(' · ')],
+        ['Access', job.access === 'edit' ? 'Edit a copy' : 'Read only'],
+        ['Time', job.startedAt ? duration(end - job.startedAt) : '—'],
+      ].map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('');
+      return;
+    }
     const rows = [
       ['Project', job.repo],
       ...(job.from && !visiting.on ? [['From', `${job.from} (guest)`]] : []),
+      ...(job.remote ? [['Office', `@${job.remote.host}`]] : []),
       ['Agent', job.agentId ? this.app.staffName(job.agentId) : 'Unassigned'],
       ['Clearance', this.app.modes[job.mode] || job.mode],
       ['Model', [modelLabel(job.model), job.autoModel && 'chief’s pick',
@@ -663,7 +694,28 @@ export class Hud {
     if (stick) log.scrollTop = log.scrollHeight;
   }
 
+  // A guest's agent's work: Stop while it runs, then Apply or Discard. They
+  // can't be replied to here; the guest follows up from their own office.
+  visitFooter(job) {
+    const who = `${esc(job.visitor.name)} from ${esc(job.from)}`;
+    if (job.status === 'working') return `<button class="ghost danger" data-act="stop">Stop work</button>`;
+    const when = (t) => new Date(t).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    if (job.applied) return `<div class="notice visit-review"><span class="done">Applied to ${esc(job.repo)} ${esc(when(job.applied))}.</span></div>`;
+    if (job.discarded) return `<div class="notice visit-review"><span class="done">Thrown away ${esc(when(job.discarded))}. Nothing reached ${esc(job.repo)}.</span></div>`;
+    if (!job.changes?.count) return `<div class="notice visit-review"><span class="done">${job.access === 'edit' ? 'No files changed, so there’s nothing to apply.' : `Read only: ${who} couldn’t change anything.`}</span></div>`;
+    const err = this.applyError?.id === job.id ? `<span class="bad" role="alert">${esc(this.applyError.text)}</span>` : '';
+    return `<div class="notice visit-review">
+        <span>${who} changed ${num(job.changes.count)} file${job.changes.count === 1 ? '' : 's'} in a copy. Review them above; nothing reaches ${esc(job.repo)} until you apply.</span>
+        ${err}
+        <div class="link-row">
+          <button class="primary small" data-act="apply">Apply to ${esc(job.repo)}</button>
+          <button class="ghost small danger" data-act="discard">Discard</button>
+        </div>
+      </div>`;
+  }
+
   footer(job) {
+    if (job.visitor) return this.visitFooter(job);
     if (job.status === 'working') return `<button class="ghost danger" data-act="stop">Stop work</button>`;
     if (job.status === 'queued') return `<button class="ghost danger" data-act="stop">Pull from queue</button>`;
     const blocked = job.denials?.length
@@ -693,6 +745,24 @@ export class Hud {
     const act = async (fn) => {
       try { await fn(); } catch (err) { this.toast(err.message, 'bad'); }
     };
+    foot.querySelectorAll('[data-act="apply"]').forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = 'Applying…';
+      this.applyError = null;
+      try {
+        await api(jobPath(job.id, '/apply'), {});
+        this.toast(`Applied to ${job.repo}`, 'good');
+      } catch (err) {
+        // A 409 says, in plain words, why the changes no longer fit.
+        this.applyError = { id: job.id, text: err.message };
+      }
+      if (this.openId === job.id) this.renderDetail();
+    }));
+    foot.querySelectorAll('[data-act="discard"]').forEach((b) => (b.onclick = () => {
+      if (!confirm(`Throw away ${job.visitor.name}’s changes? Nothing reaches ${job.repo}, and they can’t be got back.`)) return;
+      this.applyError = null;
+      act(() => api(jobPath(job.id, '/discard'), {}));
+    }));
     foot.querySelectorAll('[data-act="stop"]').forEach((b) => (b.onclick = () => act(() => api(jobPath(job.id, '/stop'), {}))));
     foot.querySelectorAll('[data-act="grant"]').forEach((b) => (b.onclick = () => act(() => api(jobPath(job.id, '/reply'),
       replyBody('You now have permission to run the commands that were blocked. Carry on from where you stopped.', 'auto')))));
@@ -870,9 +940,9 @@ export class Hud {
       if (!ac.hidden) {
         const items = [...ac.children];
         const at = items.findIndex((i) => i.classList.contains('on'));
-        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || (ac.classList.contains('faces') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight'))) {
           e.preventDefault();
-          const next = (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+          const next = (at + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + items.length) % items.length;
           items.forEach((i, k) => i.classList.toggle('on', k === next));
           return;
         }
@@ -1025,28 +1095,48 @@ export class Hud {
   async suggest() {
     const input = $('input');
     const before = input.value.slice(0, input.selectionStart);
-    const m = before.match(/(^|\s)([@#])([\w.-]*)$/);
+    // `#web@host` and `@Ada@host` keep the menu open past the second @.
+    const m = before.match(/(^|\s)([@#])([\w.-]*(?:@[\w-]*)?)$/);
     const ac = $('ac');
     if (!m) { ac.hidden = true; return; }
     const [, , sigil, typed] = m;
     const q = typed.toLowerCase().replace(/[^a-z0-9]/g, '');
     let items;
     if (sigil === '@') {
-      items = this.app.roster().map((a) => ({ insert: `@${a.name}`, label: a.name, note: a.note, dot: a.color }));
+      items = this.app.roster().map((a) => ({ insert: a.insert || `@${a.name}`, label: a.name, key: a.host && `${a.name}${a.host}`, note: a.note, dot: a.color, look: a.look, host: a.host }));
     } else {
       if (!this.repos) {
         try { this.repos = allowRepos((await api('/api/repos')).repos); } catch { this.repos = []; }
+      } else {
+        this.syncRepos();
       }
       items = this.repos.map((r) => ({ insert: `#${r.replace(/\s+/g, '-')}`, label: r, note: this.app.busyIn(r) }));
+      // Projects at a host that lets our own agents in: `#web@host`.
+      if (!visiting.on) {
+        items.push(...this.app.away.map((a) => ({
+          insert: `#${a.repo.replace(/\s+/g, '-')}@${a.host}`, label: a.repo, host: a.host, key: `${a.repo}${a.host}`,
+          note: `@${a.host} · ${a.access === 'edit' ? 'edit a copy' : 'read only'}`,
+        })));
+      }
     }
-    items = items.filter((i) => i.label.toLowerCase().replace(/[^a-z0-9]/g, '').includes(q))
-      .sort((a, b) => a.label.toLowerCase().replace(/[^a-z0-9]/g, '').indexOf(q) - b.label.toLowerCase().replace(/[^a-z0-9]/g, '').indexOf(q))
-      .slice(0, 8);
+    const key = (i) => (i.key || i.label).toLowerCase().replace(/[^a-z0-9]/g, '');
+    items = items.filter((i) => key(i).includes(q))
+      .sort((a, b) => key(a).indexOf(q) - key(b).indexOf(q))
+      .slice(0, sigil === '@' ? 40 : 8);
     if (!items.length) { ac.hidden = true; return; }
+    ac.classList.toggle('faces', sigil === '@');
+    if (sigil === '@') {
+      ac.innerHTML = items.map((i, k) => `
+      <div class="item ${k === 0 ? 'on' : ''}" data-insert="${esc(i.insert)}" data-len="${typed.length + 1}" title="${esc(i.label)}${i.note ? ` · ${esc(i.note)}` : ''}">
+        ${avatar({ look: i.look }, i.host ? 'away' : '')}<span>${esc(i.label)}</span>${i.host ? `<small>@${esc(i.host)}</small>` : ''}${i.note ? `<em class="${i.note.endsWith('free') ? 'free' : 'busy'}"></em>` : ''}
+      </div>`).join('');
+      ac.hidden = false;
+      return;
+    }
     ac.innerHTML = items.map((i, k) => `
       <div class="item ${k === 0 ? 'on' : ''}" data-insert="${esc(i.insert)}" data-len="${typed.length + 1}">
         ${i.dot ? `<i style="background:${hex(i.dot)}"></i>` : '<i class="hash">#</i>'}
-        <span>${esc(i.label)}</span>${i.note ? `<em>${esc(i.note)}</em>` : ''}
+        <span>${esc(i.label)}${i.host ? `<small>@${esc(i.host)}</small>` : ''}</span>${i.note ? `<em>${esc(i.host ? i.note.replace(`@${i.host} · `, '') : i.note)}</em>` : ''}
       </div>`).join('');
     ac.hidden = false;
   }
@@ -1383,9 +1473,11 @@ export class Hud {
       const btn = form.querySelector('[type=submit]');
       btn.disabled = true;
       try {
+        const before = this.app.staffName(form.dataset.id);
         const p = await api(`/api/staff/${form.dataset.id}/profile`, Object.fromEntries(new FormData(form)));
-        Object.assign(this.app.staff.find((x) => x.id === form.dataset.id) || {}, p);
-        this.toast(`Saved. ${this.app.staffName(form.dataset.id)} takes it from their next job.`, 'good');
+        this.app.applyProfile(form.dataset.id, p);
+        const now = this.app.staffName(form.dataset.id);
+        this.toast(now !== before ? `${before} is now ${now}. Tag them as @${now}; it reaches their prompt from their next job.` : `Saved. ${now} takes it from their next job.`, 'good');
         this.editing = null;
         this.renderTeam(true);
       } catch (err) {
@@ -1404,7 +1496,7 @@ export class Hud {
     const form = $('team').querySelector('form');
     if (!form) return false;
     const s = this.app.staff.find((x) => x.id === form.dataset.id) || {};
-    return ['role', 'personality', 'background'].some((k) => form.elements[k].value.trim() !== (s[k] || ''));
+    return ['name', 'role', 'personality', 'background'].some((k) => form.elements[k].value.trim() !== (s[k] || ''));
   }
 
   // Live updates wait while a form has unsaved edits, so typing is never lost.
@@ -1413,6 +1505,7 @@ export class Hud {
     const { staff, progress, dismissed } = this.app;
     const cap = progress?.capacity || 0;
     const form = (s) => `<form data-id="${esc(s.id)}">
+          <label>Name<input name="name" maxlength="20" value="${esc(s.name)}" required pattern="[A-Za-z][A-Za-z0-9\\-]*" title="One word: letters, numbers or hyphens" autocomplete="off" spellcheck="false" /></label>
           <label>Role<input name="role" maxlength="80" value="${esc(s.role)}" placeholder="Backend engineer" /></label>
           <label>Personality<textarea name="personality" rows="3" maxlength="600" placeholder="How they come across: calm, chatty, blunt, funny…">${esc(s.personality)}</textarea></label>
           <label>Background<textarea name="background" rows="3" maxlength="600" placeholder="Where they've worked, what they know best">${esc(s.background)}</textarea></label>

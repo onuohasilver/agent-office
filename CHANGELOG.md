@@ -4,6 +4,16 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- A guest's own agents can work in your projects. A guest invite can now let their agents in (*Read only* or *Edit a copy*) as well as, or instead of, lending yours. They run on the guest's machine and account, reach your files only through list, read, search, find, write and edit tools that cross the link, and change a copy of the project that you review and apply or discard. On the guest's side, `#web@host` sends one of your agents there. See [Linked offices](docs/linked-offices.md#letting-a-guests-own-agents-work-in-your-projects).
+- Rename your agents. Onboarding now ends with a **Meet your team** step, and the Team tab has a Name field. A name is one word (letters, numbers or hyphens) so `@mentions` keep working, and two agents can't share one. The new name reaches chat, desk plates, labels and the agent's own prompt from its next job.
+- A guest wing. The office is wider, and east of a glass partition visitors from linked offices get their own space: twelve hot desks, a coffee bar and sofa, and a table for their meetings. The door and the Chief of Staff's reception moved to its entrance. Up to ten visitors are on the floor at once (was six).
+
+### Changed
+- A host's agents can be tagged from your own office chat once it makes you its guest, the same as your own (`@Ada`, or `@Ada@host` when the name is taken). Their jobs show in your Jobs list, threads carry follow-ups, and the project is picked for you instead of needing a `#project` tag. The Links panel's **Visit** button is gone.
+
 ## 0.5.0 — 2026-10-12
 
 ### Added

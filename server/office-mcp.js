@@ -63,6 +63,25 @@ const TOOLS = [
   },
 ];
 
+// A job whose project is at another office (OFFICE_FILES=read|edit) reaches
+// it only through these; the office passes each call to that office.
+const FILES = process.env.OFFICE_FILES;
+const relPath = { type: 'string', description: 'Path from the project root, like src/app.js' };
+if (FILES === 'read' || FILES === 'edit') {
+  TOOLS.push(
+    { name: 'files_list', description: 'List a folder of the project (folders end in /). depth 1-4, default 1.', inputSchema: obj({ path: relPath, depth: { type: 'integer' } }, []) },
+    { name: 'files_read', description: 'Read a text file with line numbers. offset is the first line (from 1), limit how many; long files come in pieces.', inputSchema: obj({ path: relPath, offset: { type: 'integer' }, limit: { type: 'integer' } }, ['path']) },
+    { name: 'files_search', description: 'Search file contents with an extended regex (grep -E). Optional path to narrow it and glob to filter names, like *.js.', inputSchema: obj({ pattern: { type: 'string' }, path: relPath, glob: { type: 'string' } }, ['pattern']) },
+    { name: 'files_find', description: 'Find files by name pattern, like **/*.test.js or package.json.', inputSchema: obj({ pattern: { type: 'string' } }, ['pattern']) },
+  );
+}
+if (FILES === 'edit') {
+  TOOLS.push(
+    { name: 'files_write', description: 'Create or overwrite a file (about 40 KB a call). append adds to the end instead, for longer files.', inputSchema: obj({ path: relPath, content: { type: 'string' }, append: { type: 'boolean' } }, ['path', 'content']) },
+    { name: 'files_edit', description: 'Replace exact text in a file. old must match exactly once, unless all is set.', inputSchema: obj({ path: relPath, old: { type: 'string' }, new: { type: 'string' }, all: { type: 'boolean' } }, ['path', 'old', 'new']) },
+  );
+}
+
 const out = (msg) => process.stdout.write(JSON.stringify(msg) + '\n');
 
 async function call(name, args) {

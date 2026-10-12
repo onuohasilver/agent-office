@@ -12,7 +12,7 @@ export const SETTINGS = [
   { key: 'owner', group: 'Office', label: 'Office owner', kind: 'text', max: 40, hint: 'Whose office this is. It names the office in the header. Blank uses the name on this account.', fallback: () => String(env('OFFICE_OWNER') || '').trim() },
   { key: 'shareTitles', group: 'Office', label: 'Share job titles with linked offices', kind: 'bool', hint: 'Off: linked offices only see that an agent is busy.', fallback: () => env('OFFICE_SHARE_JOB_TITLES') === '1' },
 
-  { key: 'tokenLimit', group: 'Agents', label: 'Token limit', kind: 'number', min: 0, max: 10_000_000, step: 10000, unit: 'tokens', hint: 'Past this much context, an agent is nudged to clear it and start fresh. 0 turns the nudge off.', fallback: () => Math.max(0, parseInt(env('AGENT_CLEAR_TOKENS') ?? '150000', 10) || 0) },
+  { key: 'tokenLimit', group: 'Agents', label: 'Token limit', kind: 'number', min: 0, max: 10_000_000, step: 10000, unit: 'tokens', hint: 'Past this much context, an agent is nudged to clear it; if it does not, the office clears it. 0 turns this off.', fallback: () => Math.max(0, parseInt(env('AGENT_CLEAR_TOKENS') ?? '150000', 10) || 0) },
   { key: 'compactPct', group: 'Agents', label: 'Compact at', kind: 'number', min: 10, max: 95, step: 5, unit: '%', hint: 'How full an agent’s context gets before Claude Code compacts it. Applies to jobs that start after you save.', fallback: () => Math.min(95, Math.max(10, parseInt(env('AGENT_COMPACT_PCT') ?? '60', 10) || 60)) },
   { key: 'chiefModel', group: 'Agents', label: 'Chief of staff model', kind: 'choice', options: ['haiku', 'sonnet', 'opus'], hint: 'Routes your messages and writes the standup.', fallback: () => env('CHIEF_MODEL') || 'sonnet' },
 

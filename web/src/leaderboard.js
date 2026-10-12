@@ -247,6 +247,9 @@ document.addEventListener('keydown', (e) => {
 // share anything; joining the board stays a separate choice.
 const ASKED = 'office.nameAsked';
 const NAME = 'office.name';
+// What comes next in onboarding (meeting the team); main.js sets it.
+let welcomed = () => {};
+export function onWelcomed(fn) { welcomed = fn; }
 const toHandle = (name) => name.trim().replace(/\s+/g, '_').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 20);
 
 function askName() {
@@ -264,7 +267,7 @@ function askName() {
     el('p', { className: 'acct-note', textContent: status?.configured ? 'What should we call you? Your name becomes your handle on the leaderboard. Nothing is shared until you join it.' : 'What should we call you?' }),
     row, err, skip);
   dlg.append(form);
-  const done = () => { try { localStorage.setItem(ASKED, '1'); } catch {} dlg.close(); dlg.remove(); };
+  const done = () => { try { localStorage.setItem(ASKED, '1'); } catch {} dlg.close(); dlg.remove(); welcomed(); };
   skip.addEventListener('click', done);
   dlg.addEventListener('cancel', done);
   form.addEventListener('submit', async (e) => {

@@ -11,6 +11,8 @@ const pop = document.getElementById('linkPop');
 const app = document.getElementById('app');
 
 const MODES = [{ id: 'plan', name: 'Plan only' }, { id: 'edit', name: 'Edit files' }, { id: 'auto', name: 'Full autonomy' }];
+// What a guest's own agents may do in the shared projects (server/visits.js).
+const THEIRS = [{ id: 'off', name: 'Off' }, { id: 'read', name: 'Read only' }, { id: 'edit', name: 'Edit a copy' }];
 const RANK = { plan: 0, edit: 1, auto: 2 };
 const TOKENS_PER_DAY = 2_000_000;
 // Crockford base32 reads I and L as 1 and O as 0, so a misread code still works.
@@ -20,7 +22,7 @@ let links = null;   // [{ id, peer, kind: 'link' | 'guest', role: 'peer' | 'host
 let line = {};      // { handle, connected, error }: this office on the link service
 let board = null;   // the leaderboard status, which also knows the handle
 let invite = null;  // { kind, code, expiresAt }
-let guestForm = null; // { repos: Set, clearance, full, tokensPerDay }
+let guestForm = null; // { repos: Set, clearance, full, tokensPerDay, ourAgents, theirAgents, edit: link id | null }
 let repos = null;
 let busy = '';
 let note = '';
@@ -67,12 +69,15 @@ function expiry(at) {
 function policy(g) {
   const n = g.repos?.length || 0;
   const mode = MODES.find((m) => m.id === g.clearance)?.name || g.clearance;
-  return `${n === 1 ? g.repos[0] : `${n} projects`} · ${mode} · ${tokens(g.tokensPerDay || 0)} tokens a day`;
+  const theirs = g.theirAgents === 'read' ? 'their agents read only' : g.theirAgents === 'edit' ? 'their agents edit a copy' : '';
+  return [n === 1 ? g.repos[0] : `${n} projects`,
+    ...(g.ourAgents === false ? ['our agents not lent'] : [mode, `${tokens(g.tokensPerDay || 0)} tokens a day`]),
+    theirs].filter(Boolean).join(' · ');
 }
 
 function kindOf(l) {
   if (l.kind !== 'guest') return 'Linked office';
-  return l.role === 'guest' ? 'Guest · you visit them' : 'Guest · they visit you';
+  return l.role === 'guest' ? 'Guest · you work with their agents' : 'Guest · they work with yours';
 }
 
 // ---------- the panel ----------
@@ -120,8 +125,8 @@ function actions() {
   const make = el('button', { type: 'button', className: 'ghost small', textContent: busy === 'link' ? 'Making a code…' : 'Invite an office', disabled: !!busy });
   make.addEventListener('click', () => { guestForm = null; makeInvite('link'); });
   const asGuest = el('button', { type: 'button', className: 'ghost small', textContent: 'Invite a guest', disabled: !!busy });
-  asGuest.setAttribute('aria-expanded', String(!!guestForm));
-  asGuest.addEventListener('click', openGuest);
+  asGuest.setAttribute('aria-expanded', String(!!guestForm && !guestForm.edit));
+  asGuest.addEventListener('click', () => openGuest());
 
   const form = el('form', { className: 'acct-form link-redeem' });
   const input = el('input', { type: 'text', placeholder: 'Enter a code, e.g. K7QX-M2PD', autocomplete: 'off', spellcheck: false, maxLength: 12 });
@@ -156,10 +161,16 @@ function code() {
   return box;
 }
 
-async function openGuest() {
-  if (guestForm) { guestForm = null; render(); return; }
-  guestForm = { repos: new Set(), clearance: 'edit', full: false, tokensPerDay: TOKENS_PER_DAY };
+async function openGuest(l) {
+  const same = l?.id ? guestForm?.edit === l.id : guestForm && !guestForm.edit;
+  if (same) { guestForm = null; render(); return; }
+  const g = l?.guest;
+  guestForm = g
+    ? { repos: new Set(g.repos || []), clearance: g.clearance === 'auto' ? 'edit' : g.clearance || 'edit', full: g.clearance === 'auto',
+      tokensPerDay: g.tokensPerDay || TOKENS_PER_DAY, ourAgents: g.ourAgents !== false, theirAgents: g.theirAgents || 'off', edit: l.id, peer: l.peer }
+    : { repos: new Set(), clearance: 'edit', full: false, tokensPerDay: TOKENS_PER_DAY, ourAgents: true, theirAgents: 'off', edit: null };
   invite = null;
+  note = '';
   render();
   if (!repos) {
     try { repos = (await call('/api/repos')).repos || []; } catch (err) { repos = []; note = err.message; }
@@ -170,17 +181,24 @@ async function openGuest() {
 function guest() {
   const f = guestForm;
   const form = el('form', { className: 'link-guest' });
-  form.append(el('p', { className: 'theme-k', textContent: 'Invite a guest' }),
-    say('A guest can start jobs with your agents in the projects you pick, at or below the clearance you set. Their jobs run on your Claude account.', 'acct-note acct-fine'));
+  form.append(el('p', { className: 'theme-k', textContent: f.edit ? `What @${f.peer} can do` : 'Invite a guest' }),
+    say('Pick the projects they can work in, then whose agents do the work: yours, on your Claude account, or their own, on theirs.', 'acct-note acct-fine'));
 
   const pick = el('fieldset', { className: 'link-repos' }, el('legend', { textContent: `Projects they can use (${f.repos.size} picked)` }));
   if (!repos) pick.append(say('Loading…', 'acct-note acct-fine'));
   else if (!repos.length) pick.append(say('No projects found.', 'acct-note acct-fine'));
-  for (const r of repos || []) {
+  // A project shared before but gone from disk still shows, so saving doesn't drop it silently.
+  for (const r of [...new Set([...(repos || []), ...(repos ? f.repos : [])])]) {
     const box = el('input', { type: 'checkbox', checked: f.repos.has(r) });
     box.addEventListener('change', () => { box.checked ? f.repos.add(r) : f.repos.delete(r); render(); });
     pick.append(el('label', {}, box, el('span', { textContent: r })));
   }
+
+  // Our agents: the clearance cap and the token allowance only mean anything while they're lent.
+  const lend = el('input', { type: 'checkbox', checked: f.ourAgents });
+  lend.addEventListener('change', () => { f.ourAgents = lend.checked; render(); });
+  const ours = el('fieldset', { className: 'link-ours', disabled: !f.ourAgents });
+  ours.classList.toggle('off', !f.ourAgents);
 
   const caps = el('div', { className: 'theme-modes acct-modes link-cap' });
   caps.setAttribute('role', 'radiogroup');
@@ -198,24 +216,55 @@ function guest() {
     el('p', { textContent: 'Full autonomy lets the guest run any command on this machine, with your files and your logins. Only allow it for someone you’d hand your laptop to.' }),
     el('label', {}, full, el('span', { textContent: 'Allow full autonomy anyway' })));
 
-  const perDay = el('input', { type: 'number', min: 100000, step: 100000, value: f.tokensPerDay, required: true });
+  const perDay = el('input', { type: 'number', min: 100000, step: 100000, value: f.tokensPerDay, required: f.ourAgents });
   perDay.setAttribute('aria-label', 'Tokens per day');
   const hint = el('span', { className: 'acct-fine', textContent: tokens(f.tokensPerDay) });
   perDay.addEventListener('input', () => { f.tokensPerDay = Math.floor(Number(perDay.value)) || 0; hint.textContent = tokens(f.tokensPerDay); });
+  ours.append(el('p', { className: 'link-k', textContent: 'Clearance cap' }), caps, warn,
+    el('label', { className: 'link-k link-tokens' }, el('span', { textContent: 'Tokens per day' }), perDay, hint));
 
-  const ready = f.repos.size > 0 && !busy;
+  // Their agents: run on their machine and account, in a copy of the project.
+  const theirs = el('div', { className: 'theme-modes acct-modes link-cap link-theirs' });
+  theirs.setAttribute('role', 'radiogroup');
+  theirs.setAttribute('aria-label', 'Their agents');
+  for (const m of THEIRS) {
+    const b = el('button', { type: 'button', textContent: m.name });
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(f.theirAgents === m.id));
+    b.addEventListener('click', () => { f.theirAgents = m.id; render(); });
+    theirs.append(b);
+  }
+
+  const neither = !f.ourAgents && f.theirAgents === 'off';
+  const ready = f.repos.size > 0 && !neither && !busy;
+  const why = !f.repos.size ? 'Pick at least one project.' : neither ? 'Lend your agents, or let theirs in.' : '';
   form.append(pick,
-    el('p', { className: 'link-k', textContent: 'Clearance cap' }), caps, warn,
-    el('label', { className: 'link-k link-tokens' }, el('span', { textContent: 'Tokens per day' }), perDay, hint),
+    el('label', { className: 'link-switch' }, lend, el('span', {}, el('strong', { textContent: 'Lend our agents' }),
+      el('span', { className: 'acct-fine', textContent: 'They start jobs with your agents, on your Claude account.' }))),
+    ours,
+    el('p', { className: 'link-k', textContent: 'Their agents' }), theirs,
+    say(f.theirAgents === 'off' ? 'Their own agents can’t work in your projects.'
+      : `Their own agents, on their account, work in a copy${f.theirAgents === 'edit' ? '. Nothing reaches your folder until you apply it from the job.' : ' and can’t change anything.'} They have no shell, so they can’t run anything here.`, 'acct-note acct-fine'),
     el('div', { className: 'link-row' },
-      el('button', { type: 'submit', className: 'primary small', textContent: busy === 'guest' ? 'Making a code…' : 'Make guest code', disabled: !ready }),
-      f.repos.size ? null : el('span', { className: 'acct-fine', textContent: 'Pick at least one project.' })));
+      el('button', { type: 'submit', className: 'primary small', disabled: !ready,
+        textContent: f.edit ? (busy === 'guest' ? 'Saving…' : 'Save') : busy === 'guest' ? 'Making a code…' : 'Make guest code' }),
+      f.edit ? cancel() : null,
+      why ? el('span', { className: 'acct-fine', textContent: why }) : null));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (!f.repos.size || f.tokensPerDay < 100000) { note = f.repos.size ? 'Allow at least 100,000 tokens a day.' : 'Pick at least one project.'; render(); return; }
-    makeInvite('guest', { repos: [...f.repos], clearance: f.full ? 'auto' : f.clearance, tokensPerDay: f.tokensPerDay });
+    if (!f.repos.size || neither) { note = why; render(); return; }
+    if (f.ourAgents && f.tokensPerDay < 100000) { note = 'Allow at least 100,000 tokens a day.'; render(); return; }
+    const g = { repos: [...f.repos], clearance: f.full ? 'auto' : f.clearance, tokensPerDay: Math.max(f.tokensPerDay, 100000), ourAgents: f.ourAgents, theirAgents: f.theirAgents };
+    if (f.edit) saveGuest(f.edit, g);
+    else makeInvite('guest', g);
   });
   return form;
+}
+
+function cancel() {
+  const b = el('button', { type: 'button', className: 'ghost small', textContent: 'Cancel' });
+  b.addEventListener('click', () => { guestForm = null; render(); });
+  return b;
 }
 
 function list() {
@@ -227,12 +276,15 @@ function list() {
     const li = el('li', { className: 'link-item' },
       el('span', { className: 'link-who' }, el('strong', { textContent: `@${l.peer}` }),
         el('span', { className: 'acct-fine', textContent: kindOf(l) }),
-        l.guest ? el('span', { className: 'acct-fine', textContent: policy(l.guest) }) : null));
+        l.guest ? el('span', { className: 'acct-fine link-policy', textContent: policy(l.guest) }) : null));
+    // Their agents are tagged from our own chat, like ours; nothing to open.
+    if (l.kind === 'guest' && l.role === 'guest') li.querySelector('.link-who').append(el('span', { className: 'acct-fine', textContent: 'Tag their agents in chat with @' }));
     const end = el('span', { className: 'link-row' });
-    if (l.kind === 'guest' && l.role === 'guest') {
-      const visit = el('button', { type: 'button', className: 'primary small', textContent: `Visit @${l.peer}` });
-      visit.addEventListener('click', () => { location.search = `?visit=${encodeURIComponent(l.id)}`; });
-      end.append(visit);
+    if (l.kind === 'guest' && l.role === 'host' && l.guest) {
+      const edit = el('button', { type: 'button', className: 'ghost small', textContent: 'Change', disabled: !!busy });
+      edit.setAttribute('aria-expanded', String(guestForm?.edit === l.id));
+      edit.addEventListener('click', () => openGuest(l));
+      end.append(edit);
     }
     const cut = el('button', { type: 'button', className: 'acct-forget', textContent: busy === l.id ? 'Unlinking…' : 'Unlink', disabled: !!busy });
     cut.addEventListener('click', () => unlink(l));
@@ -264,10 +316,17 @@ function makeInvite(kind, guestPolicy) {
   });
 }
 
+function saveGuest(id, g) {
+  return run('guest', async () => {
+    setLinks(await call(`/api/links/${encodeURIComponent(id)}/guest`, { guest: g }));
+    guestForm = null;
+  });
+}
+
 function unlink(l) {
   const why = l.kind !== 'guest' ? `You stop seeing each other’s agents.`
     : l.role === 'host' ? `Their running jobs stop and they lose access right away.`
-      : `You can’t visit their office again without a new code.`;
+      : `You can’t work with their agents again without a new code.`;
   if (!confirm(`Unlink @${l.peer}? ${why}`)) return;
   run(l.id, async () => {
     setLinks(await call(`/api/links/${encodeURIComponent(l.id)}`, undefined, 'DELETE'));

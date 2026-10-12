@@ -2,11 +2,12 @@
 // smoothing so people cut corners like people do.
 
 export class Grid {
-  constructor(w, d) {
+  // ox, oz: the world x/z of the grid's corner; centred on the origin unless given.
+  constructor(w, d, ox = -w / 2, oz = -d / 2) {
     this.w = w;
     this.d = d;
-    this.ox = -w / 2;
-    this.oz = -d / 2;
+    this.ox = ox;
+    this.oz = oz;
     this.cells = new Uint8Array(w * d);
   }
 

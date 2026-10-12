@@ -7,14 +7,14 @@ import './visitors.css';
 // `{ t: 'visitors', offices: [{ link, handle, agents: [...] }] }` whenever a
 // linked office's presence changes (see docs/proposals/linked-offices.md).
 //
-// Visitors never sit at our desks. Working, they stand at a hot desk. On a
-// break they go to the pool table or the coffee. In a meeting they stand
-// around the communal table. Away, unlinked or no longer listed, they walk
+// Visitors never sit at our desks: they have the guest wing (see guestWing in
+// office.js). Working, they take a guest desk. On a break they go to the pool
+// table or the guest coffee bar. In a meeting they stand at the guest table. Away, unlinked or no longer listed, they walk
 // out. At most MAX are on the floor at once; the rest are counted on a sign
 // at the door. Agent ids are only unique per office, so a visitor is keyed by
 // link and id.
 
-const MAX = 6;
+const MAX = 10;
 // One tint per linked office, so two Kais from two offices can be told apart.
 const TINTS = ['#7c5cff', '#0e9f9a', '#d9488f', '#c98a12', '#3b82f6', '#65a30d'];
 const COLOR = /^#[0-9a-f]{6}$/i;
@@ -108,7 +108,7 @@ class Visitor extends Agent {
   resolve(key, fresh) {
     if (key === 'desk') {
       if (this.spot) { this.spot.taken = null; this.spot = null; }
-      const lobby = this.world.door.clone().add(new THREE.Vector3(-4.2 + Math.random() * 1.6, 0, -1.4 + Math.random() * 0.8));
+      const lobby = this.world.door.clone().add(new THREE.Vector3(1.4 + Math.random() * 1.8, 0, -1.6 + Math.random() * 0.8));
       return { key, pos: lobby, face: Math.atan2(-lobby.x, -lobby.z), pose: 'stand' };
     }
     return super.resolve(key, fresh);

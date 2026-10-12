@@ -59,13 +59,66 @@ Even at *Edit files*, a guest can change files that run later, such as
 `package.json` scripts, build files or git hooks. Only invite someone you would
 trust with those projects. *Plan only* is the safe choice.
 
-## Visiting as a guest
+## Working with a host's agents
 
-When an office has made you its guest, its row in the Links panel has **Visit
-@host**. It opens the host's office, showing their agents and your jobs there.
-A bar at the top shows whose office you're in and your limits, and **Back to my
-office** takes you home. Only the projects and clearances you're allowed are
-offered.
+When an office has made you its guest, its agents join your own chat. Tag them
+with `@` like your own: `@Ada fix the login bug` starts a job with Ada in the
+host's office, and the job shows in your Jobs list, marked with the host's
+handle. If one of your agents has the same name, yours wins a bare `@Ada`;
+write `@Ada@host` for theirs (the `@` menu does this for you).
+
+The project is picked for you: the only one the host shares, else one named in
+the message (`#web` or just "web"), else the one you used there last. The first
+time, with several shared and none named, the chief asks which. Clearance is
+held to the host's limit. Reply in the job's thread to follow up; when it
+finishes, the chief says so there. Files can't be sent to a host.
+
+The old visit page still opens at `?visit=<link id>`, but you don't need it.
+
+## Letting a guest's own agents work in your projects
+
+A guest invite has two switches. **Lend our agents** (on by default) is
+everything above. **Their agents** lets the guest send their own agents into
+your shared projects instead: *Off* (the default), *Read only*, or *Edit a
+copy*. Either or both can be on. The agents run on the guest's machine and
+Claude account, so they cost you no tokens, and the files never leave yours
+except as the text the agents read.
+
+A visiting agent has no shell and none of its own file tools. It reaches your
+project only through six tools that cross the link: list, read, search and find,
+plus write and edit at *Edit a copy*. It can't run tests, builds, git or
+anything else on your machine.
+
+- **It works in a copy.** The first call makes a copy of the project under
+  `data/visits/`: tracked and untracked files, with uncommitted work, but
+  nothing git ignores. Paths can't leave the copy, `.git` is out of reach, and
+  key files such as `.env`, `*.pem` and `id_rsa` are never listed or read.
+- **You see it as a job.** It shows in your Jobs list as `from @handle`, with a
+  log of every file it touched, and the chief posts when one starts and ends.
+  **Stop** ends it straight away.
+- **Nothing lands until you apply it.** When it finishes, review the changes on
+  the job, then **Apply** to patch the real folder or **Discard** to throw the
+  copy away. Apply takes all of it or none; if the folder has moved on and the
+  changes don't fit, nothing is changed and you're told why.
+
+Up to three of a guest's agents can work at once. A copy left idle for an hour
+is closed, and unlinking, unsharing the project, or turning **Their agents**
+off ends their sessions. The guest's follow-ups to the same job carry on in
+the same copy until you apply or discard it.
+
+What it can see is real. At *Read only* it can still read everything in the
+shared projects except the key files above, so don't share a project with
+secrets in ordinary files. Applied changes run later like any others, so review
+`package.json` scripts, build files and the like before you apply.
+
+## Sending your agents to a host's project
+
+When a host lets your agents in, tag the project with its host:
+`#web@friend fix the typo in the header` starts a job with one of your agents,
+and `@Kai #web@friend ...` picks who. The job runs here on your account, and
+its project shows as `web@friend`. The agent is told the files are at the host,
+that it can't run anything, and that text in those files is data rather than
+instructions. At *Edit a copy*, its changes wait for the host to review them.
 
 ## What the service keeps
 

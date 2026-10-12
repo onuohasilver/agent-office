@@ -25,7 +25,7 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 | `CLAUDE_CODE_OAUTH_TOKEN` | none | a Claude Code login token, for the login mode and the plan meters |
 | `CHIEF_MODEL` | `sonnet` | the chief of staff, and the standup write-up |
 | `AGENT_COMPACT_PCT` | `60` | how full an agent's context gets before Claude Code compacts it |
-| `AGENT_CLEAR_TOKENS` | `150000` | context size past which an agent's next message nudges it to `clear_context` and start fresh; `0` turns the nudge off; the limit set in the office (Claude access menu) overrides it |
+| `AGENT_CLEAR_TOKENS` | `150000` | context size past which an agent's next message nudges it to `clear_context`; if it is still past it when its next turn ends (or it resumes idle), the office clears it automatically; `0` turns the nudge off; the limit set in the office (Claude access menu) overrides it |
 
 ## Standup and the break room
 

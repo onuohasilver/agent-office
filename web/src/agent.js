@@ -90,7 +90,8 @@ export class Agent {
     name.className = 'name';
     const dot = document.createElement('i');
     if (/^#[0-9a-f]{3,8}$/i.test(staff.shirt ?? '')) dot.style.background = staff.shirt;
-    name.append(dot, String(staff.name ?? ''));
+    this.nameText = document.createTextNode(String(staff.name ?? ''));
+    name.append(dot, this.nameText);
     this.label.append(bubble, name);
     this.bubbleEl = this.label.querySelector('.bubble');
     labels.appendChild(this.label);
@@ -98,6 +99,12 @@ export class Agent {
   }
 
   // ---------- speech ----------
+
+  rename(name) {
+    this.name = name;
+    this.nameText.data = name;
+    this.labelDirty = true;
+  }
 
   say(text, kind = '', ms = 0) {
     if (text !== this.bubbleText) this.labelDirty = true;
@@ -138,7 +145,7 @@ export class Agent {
     if (this.spot && this.spot !== spot) this.spot.taken = null;
     spot.taken = this.id;
     this.spot = spot;
-    const jitter = key === 'lounge' ? 0 : 0.12;
+    const jitter = key === 'lounge' || spot.seatY ? 0 : 0.12;
     return { key, pos: spot.pos.clone().add(new THREE.Vector3(rand(-jitter, jitter), 0, rand(-jitter, jitter))), face: spot.face, pose: spot.pose, seatY: spot.seatY };
   }
 

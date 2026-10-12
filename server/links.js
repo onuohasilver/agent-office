@@ -66,6 +66,20 @@ function cleanAgent(a) {
   };
 }
 
+// What a host lets a guest do, from the panel's form.
+function cleanPolicy(guest) {
+  const repos = Array.isArray(guest?.repos) ? [...new Set(guest.repos.map(String).filter(Boolean))] : [];
+  if (!repos.length) throw fail(400, 'Pick at least one project the guest can use.');
+  const clearance = CLEARANCES.has(guest?.clearance) ? guest.clearance : 'edit';
+  const tokensPerDay = Number.isInteger(guest?.tokensPerDay) && guest.tokensPerDay > 0 ? guest.tokensPerDay : 2_000_000;
+  // Whether they may use our agents (on our account), and whether their own
+  // agents may work in these projects (on theirs, in a copy; see visits.js).
+  const ourAgents = guest?.ourAgents !== false;
+  const theirAgents = ['read', 'edit'].includes(guest?.theirAgents) ? guest.theirAgents : 'off';
+  if (!ourAgents && theirAgents === 'off') throw fail(400, 'Let them use your agents, or let their agents work here, or both.');
+  return { repos, clearance, tokensPerDay, ourAgents, theirAgents };
+}
+
 export class Links {
   // board: the Leaderboard, which owns the handle, the secret and the service address.
   // presence(): this office's agents, as the presence frame lists them.
@@ -106,8 +120,26 @@ export class Links {
     };
   }
 
+  // One office can be linked more than once (we host its guest link and are
+  // its guest too), and each link carries its own presence. Visitors are one
+  // office to the floor, so those from the same handle are merged, an agent
+  // listed once however many links it came in on.
   visiting() {
-    return [...this.visitors.values()];
+    const byHandle = new Map();
+    for (const v of this.visitors.values()) {
+      const key = v.handle.toLowerCase();
+      const have = byHandle.get(key);
+      if (!have) { byHandle.set(key, { ...v, agents: [...v.agents] }); continue; }
+      for (const a of v.agents) if (!have.agents.some((x) => x.id === a.id)) have.agents.push(a);
+    }
+    return [...byHandle.values()];
+  }
+
+  // Who of a linked office is on its floor, across every link we have to it.
+  presentAt(linkId) {
+    const peer = this.visitors.get(linkId)?.handle.toLowerCase();
+    if (!peer) return null;
+    return this.visiting().find((v) => v.handle.toLowerCase() === peer)?.agents || null;
   }
 
   // A guest link's limits, as the host set them. Null if this isn't one we host.
@@ -300,14 +332,7 @@ export class Links {
   async invite({ kind = 'link', guest, handle } = {}) {
     await this.ensureHandle(handle);
     kind = kind === 'guest' ? 'guest' : 'link';
-    let policy = null;
-    if (kind === 'guest') {
-      const repos = Array.isArray(guest?.repos) ? [...new Set(guest.repos.map(String).filter(Boolean))] : [];
-      if (!repos.length) throw fail(400, 'Pick at least one project the guest can use.');
-      const clearance = CLEARANCES.has(guest?.clearance) ? guest.clearance : 'edit';
-      const tokensPerDay = Number.isInteger(guest?.tokensPerDay) && guest.tokensPerDay > 0 ? guest.tokensPerDay : 2_000_000;
-      policy = { repos, clearance, tokensPerDay };
-    }
+    const policy = kind === 'guest' ? cleanPolicy(guest) : null;
     const out = await this.board.call('POST', '/v1/invites', { body: { kind } });
     const expiresAt = Number(out.expiresAt) || Date.now() + 86_400_000;
     if (policy) this.saved.guests[`invite:${out.id}`] = { ...policy, expiresAt };
@@ -316,6 +341,20 @@ export class Links {
     this.connect();
     const code = normaliseCode(out.code);
     return { id: out.id, code: `${code.slice(0, 4)}-${code.slice(4)}`, kind, expiresAt, guest: policy };
+  }
+
+  // New limits for a guest we already host. Their office is told to ask
+  // again (onPolicy), and anything they had going that the new limits rule
+  // out is stopped by whoever owns it.
+  setGuest(id, guest) {
+    const l = this.links.find((x) => x.id === String(id));
+    if (!l || l.kind !== 'guest' || l.role !== 'host') throw fail(404, 'You don’t host a guest on that link.');
+    const policy = cleanPolicy(guest);
+    this.saved.guests[l.id] = policy;
+    this.save();
+    this.send({ t: 'feed', link: l.id, msgs: [{ t: 'policy' }] });
+    this.onChange();
+    return this.status();
   }
 
   async redeem({ code, handle } = {}) {

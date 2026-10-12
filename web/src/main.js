@@ -5,7 +5,8 @@ import './pwa.js';
 import './theme.js';
 import { setAccess, setContextLimit } from './account.js';
 import { initSettings, setSettings } from './settings.js';
-import { setLeaderboard } from './leaderboard.js';
+import { setLeaderboard, onWelcomed } from './leaderboard.js';
+import { meetTeam } from './meet.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
@@ -14,7 +15,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard } from './office.js';
+import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard, FLOOR } from './office.js';
 import { Agent } from './agent.js';
 import { BreakRoom } from './breakroom.js';
 import { PoolRoom } from './pool.js';
@@ -114,18 +115,19 @@ scene.environmentIntensity = 0.55;
 
 scene.add(new THREE.HemisphereLight('#fff8ef', '#b9ab99', 0.55));
 const sun = new THREE.DirectionalLight('#fff0d8', 1.75);
-sun.position.set(-18, 34, 20);
+sun.position.set(FLOOR.cx - 18, 34, 20);
+sun.target.position.set(FLOOR.cx, 0, 0);
 sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
-Object.assign(sun.shadow.camera, { left: -32, right: 32, top: 28, bottom: -28, near: 1, far: 100 });
+Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 30, bottom: -30, near: 1, far: 110 });
 sun.shadow.bias = -0.0003;
 sun.shadow.normalBias = 0.03;
-scene.add(sun);
+scene.add(sun, sun.target);
 
 // Map-style camera: drag moves you around, right-drag (or Q/E) turns
 // around whatever is in the middle of the view, scroll zooms to the cursor.
 const camera = new THREE.PerspectiveCamera(30, 1, 0.5, 400);
-const HOME = { target: new THREE.Vector3(0, 0, 0.5), radius: 60, phi: 0.86, theta: Math.PI / 4 };
+const HOME = { target: new THREE.Vector3(FLOOR.cx, 0, 0.5), radius: 60, phi: 0.86, theta: Math.PI / 4 };
 camera.position.setFromSpherical(new THREE.Spherical(HOME.radius, HOME.phi, HOME.theta)).add(HOME.target);
 const controls = new MapControls(camera, renderer.domElement);
 controls.target.copy(HOME.target);
@@ -136,7 +138,7 @@ Object.assign(controls, {
 
 // How far back the camera must sit for the whole office to fit the view.
 const CORNERS = [];
-for (const x of [-20.3, 20.3]) for (const z of [-15.3, 15.3]) for (const y of [-0.7, 3]) CORNERS.push(new THREE.Vector3(x, y, z));
+for (const x of [FLOOR.x0 - 0.3, FLOOR.x1 + 0.3]) for (const z of [FLOOR.z0 - 0.3, FLOOR.z1 + 0.3]) for (const y of [-0.7, 3]) CORNERS.push(new THREE.Vector3(x, y, z));
 // On a tall, narrow screen the whole room can only fit very small, so let the
 // sides run off the edge: the room fills the width and you pan to the rest.
 function fitRadius(phi, theta, target) {
@@ -213,6 +215,8 @@ const CHIEF = { id: 'chief', name: 'Chief', shirt: '#2b2d42', hair: '#8d8d8d', s
 
 const app = {
   staff: [],
+  away: [], // host projects our own agents may work in: [{ link, host, repo, access }]
+  remote: [], // linked offices we're a guest of: [{ link, host, repos, staff: [{ id: '<link>.<id>', name, here, ... }] }]
   chiefCost: 0,
   modes: {},
   progress: null,
@@ -221,7 +225,15 @@ const app = {
   dismissed: new Set(),
   selected: null,
   job: (id) => app.jobs.get(id),
-  staffName: (id) => app.staff.find((s) => s.id === id)?.name || '',
+  staffName: (id) => {
+    const s = app.staff.find((x) => x.id === id);
+    if (s) return s.name;
+    for (const o of app.remote) {
+      const r = o.staff.find((x) => x.id === id);
+      if (r) return `${r.name} @${o.host}`;
+    }
+    return '';
+  },
   person: (from) => {
     if (from === 'you') return { name: 'You', color: '#c9c1b4' };
     if (from === 'chief') return { name: 'Chief of Staff', color: CHIEF.shirt, look: CHIEF };
@@ -229,12 +241,23 @@ const app = {
     return { name: s?.name || from, color: s?.shirt || '#999', look: s };
   },
   onFloor: () => app.staff.slice(0, app.progress?.capacity || 0).filter((s) => !app.dismissed.has(s.id)),
-  roster: () => app.onFloor().map((s) => {
-    const job = [...app.jobs.values()].find((j) => j.status === 'working' && j.agentId === s.id);
-    return { name: s.name, color: s.shirt, note: job ? `on ${job.repo}` : 'free' };
-  }),
+  // A linked office's agents follow ours. One whose name is taken here (or
+  // in another linked office) is written @Name@host.
+  roster: () => {
+    const doing = (id) => [...app.jobs.values()].find((j) => j.status === 'working' && j.agentId === id);
+    const ours = app.onFloor().map((s) => ({ name: s.name, color: s.shirt, look: s, note: doing(s.id) ? `on ${doing(s.id).repo}` : 'free' }));
+    const key = (n) => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const theirs = app.remote.flatMap((o) => o.staff.filter((s) => s.here).map((s) => ({ s, o })));
+    const taken = (n) => ours.some((a) => key(a.name) === key(n)) || theirs.filter(({ s }) => key(s.name) === key(n)).length > 1;
+    return [...ours, ...theirs.map(({ s, o }) => ({
+      name: s.name, color: s.shirt, look: s, host: o.host, insert: taken(s.name) ? `@${s.name}@${o.host}` : `@${s.name}`,
+      note: `@${o.host} · ${doing(s.id) ? `on ${doing(s.id).repo}` : 'free'}`,
+    }))];
+  },
+  // Who's on a job: one of ours, or a guest office's own agent.
+  doer: (job) => (job.visitor ? `${job.visitor.name} from ${job.from}` : app.staffName(job.agentId)),
   busyIn: (repo) => {
-    const names = [...app.jobs.values()].filter((j) => j.status === 'working' && j.repo === repo).map((j) => app.staffName(j.agentId));
+    const names = [...app.jobs.values()].filter((j) => j.status === 'working' && j.repo === repo).map((j) => app.doer(j));
     return names.length ? `${names.join(', ')} here` : '';
   },
 };
@@ -253,6 +276,19 @@ app.mergeLog = (full) => {
   if (job) job.log = full.log;
   else app.jobs.set(full.id, full);
 };
+
+// A profile save, ours or another tab's. A new name reaches the figure's
+// label, the desk plate (redrawn when its key changes) and every list.
+app.applyProfile = (id, profile) => {
+  const s = app.staff.find((x) => x.id === id);
+  if (!s) return;
+  Object.assign(s, profile);
+  app.agents.get(id)?.rename(s.name);
+  app.refreshLists();
+  hud.renderTeam();
+};
+
+onWelcomed(() => meetTeam(app));
 
 app.refreshLists = () => {
   const jobs = [...app.jobs.values()];
@@ -370,6 +406,8 @@ function handle(msg) {
     app.progress = msg.progress;
     app.chiefCost = msg.chiefCost || 0;
     app.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
+    app.remote = msg.remote || [];
+    app.away = msg.away || [];
     hud.renderChannels(msg.channels || [{ id: 'general', name: 'general' }]);
     hud.renderChat(msg.chat || []);
     hud.chiefBusy(msg.chiefBusy);
@@ -410,10 +448,11 @@ function handle(msg) {
     }
     if (prev?.status !== job.status) {
       if (hud.openId === job.id) hud.renderDetail();
-      if (job.awaitingBoss && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} is waiting on you: “${job.title}”`, 'warn');
-      else if (job.status === 'done' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} shipped “${job.title}”`, 'good');
-      if (job.status === 'failed' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} hit a wall on “${job.title}”`, 'bad');
+      if (job.awaitingBoss && prev?.status === 'working') hud.toast(`${app.doer(job)} is waiting on you: “${job.title}”`, 'warn');
+      else if (job.status === 'done' && prev?.status === 'working') hud.toast(`${app.doer(job)} shipped “${job.title}”`, 'good');
+      if (job.status === 'failed' && prev?.status === 'working') hud.toast(`${app.doer(job)} hit a wall on “${job.title}”`, 'bad');
     }
+    else if (hud.openId === job.id && (prev?.applied !== job.applied || prev?.discarded !== job.discarded)) hud.renderDetail();
     else if (hud.openId === job.id && prev?.changes?.end !== job.changes?.end) hud.renderChanges(job);
     app.refreshLists();
   } else if (msg.t === 'log') {
@@ -424,6 +463,10 @@ function handle(msg) {
     for (const a of app.agents.values()) if (a.job?.id === job.id) a.onLog(msg.entry);
     if (msg.entry.todos) drawWhiteboard(office.scribble, msg.entry.todos);
     hud.appendLog(job.id, msg.entry);
+  } else if (msg.t === 'remote') {
+    app.remote = msg.offices || [];
+    app.away = msg.away || [];
+    app.refreshLists();
   } else if (msg.t === 'channels') {
     hud.renderChannels(msg.channels);
   } else if (msg.t === 'chat') {
@@ -462,9 +505,7 @@ function handle(msg) {
   } else if (msg.t === 'staff') {
     syncStaff(msg.dismissed, false);
   } else if (msg.t === 'profile') {
-    const s = app.staff.find((x) => x.id === msg.id);
-    if (s) Object.assign(s, msg.profile);
-    hud.renderTeam();
+    app.applyProfile(msg.id, msg.profile);
   } else if (msg.t === 'auth') {
     setAccess(msg.auth);
   } else if (msg.t === 'contextLimit') {
@@ -674,7 +715,7 @@ function steer(dt) {
   controls.update();
   // Never lose the office: keep the point you're looking at on the floor.
   const t = controls.target;
-  move.set(THREE.MathUtils.clamp(t.x, -19, 19) - t.x, -t.y, THREE.MathUtils.clamp(t.z, -14, 14) - t.z);
+  move.set(THREE.MathUtils.clamp(t.x, FLOOR.x0 + 1, FLOOR.x1 - 1) - t.x, -t.y, THREE.MathUtils.clamp(t.z, FLOOR.z0 + 1, FLOOR.z1 - 1) - t.z);
   t.add(move);
   camera.position.add(move);
 }
@@ -781,7 +822,7 @@ function frame() {
 
   composer.render(dt);
   // Zoomed far out, names stay but speech bubbles step back.
-  const isFar = camera.position.distanceTo(controls.target) > 74;
+  const isFar = camera.position.distanceTo(controls.target) > HOME.radius * 1.25;
   const onScreen = [];
   for (const a of [...app.agents.values(), chief, ...visitors.list]) {
     if (isFar !== far) { a.label.classList.toggle('far', isFar); a.labelDirty = true; }
