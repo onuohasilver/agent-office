@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Office — a 3D office where the staff are Claude Code agents</title>
+<meta name="description" content="Hand someone a job and they walk to a desk and do it for real, in your project folder, with Claude Code. Runs on your machine.">
+<meta property="og:title" content="Agent Office">
+<meta property="og:description" content="A 3D office where the staff are Claude Code agents.">
+<meta property="og:image" content="office.jpg">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<style>
+:root {
+  --ink: #1d1b18; --muted: #6b665e; --paper: #fbf9f5; --surface: #fff;
+  --line: rgba(29,27,24,.1); --accent: #2f6fae; --accent-bg: #dde9f6;
+  --sans: 'Inter Variable', Inter, system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --ease: cubic-bezier(.2,.8,.2,1);
+}
+@media (prefers-color-scheme: dark) {
+  :root { --ink: #efece6; --muted: #a29d93; --paper: #1b1a18; --surface: #242321;
+    --line: rgba(239,236,230,.12); --accent: #7fb0e6; --accent-bg: #223244; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.6 var(--sans); -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+nav .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; text-decoration: none; }
+nav .brand img { width: 28px; height: 28px; border-radius: 7px; }
+nav .links { display: flex; gap: 22px; font-size: 14px; color: var(--muted); }
+nav .links a { text-decoration: none; }
+nav .links a:hover { color: var(--ink); }
+.hero { padding: 64px 0 40px; text-align: center; }
+.hero h1 { font-size: clamp(2.2rem, 6vw, 4rem); line-height: 1.05; letter-spacing: -.03em; margin: 0 auto 20px; max-width: 14em; text-wrap: balance; }
+.hero p.lede { font-size: clamp(1.05rem, 2vw, 1.25rem); color: var(--muted); max-width: 36em; margin: 0 auto 32px; text-wrap: balance; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; align-items: center; }
+.btn { display: inline-block; padding: 11px 20px; border-radius: 10px; font-weight: 600; text-decoration: none; border: 1px solid var(--line); background: var(--surface); transition: transform .15s var(--ease); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn:focus-visible, a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.install { display: flex; align-items: center; gap: 10px; margin: 28px auto 0; width: fit-content; max-width: 100%; padding: 10px 10px 10px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font: 14px var(--mono); }
+.install code { overflow-x: auto; white-space: nowrap; }
+.install button { font: 600 12px var(--sans); padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); cursor: pointer; }
+.shot { margin: 48px 0 24px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px -30px rgba(29,27,24,.35); }
+.shot img { display: block; width: 100%; height: auto; }
+section { padding: 72px 0 0; }
+h2 { font-size: clamp(1.6rem, 3.5vw, 2.2rem); letter-spacing: -.02em; line-height: 1.15; margin: 0 0 12px; text-wrap: balance; }
+.sub { color: var(--muted); max-width: 40em; margin: 0 0 36px; }
+.grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.card h3 { margin: 0 0 6px; font-size: 1.05rem; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.steps { counter-reset: s; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); padding: 0; list-style: none; }
+.steps li { counter-increment: s; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.steps li::before { content: counter(s); display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-bg); color: var(--accent); font-weight: 700; font-size: 14px; margin-bottom: 12px; }
+.steps pre { margin: 10px 0 0; padding: 10px 12px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; font: 13px var(--mono); overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.steps h3 { margin: 0 0 4px; font-size: 1.05rem; }
+.steps p { margin: 0; color: var(--muted); font-size: .95rem; }
+.note { text-align: center; color: var(--muted); font-size: .95rem; }
+footer { margin-top: 96px; padding: 28px 0 48px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; gap: 16px; justify-content: space-between; flex-wrap: wrap; }
+footer a { margin-right: 16px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .btn { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><img src="icon.svg" alt="">Agent Office</a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/onuohasilver/agent-office/tree/master/docs">Docs</a>
+      <a href="https://github.com/onuohasilver/agent-office">GitHub</a>
+    </div>
+  </nav>
+
+  <header class="hero">
+    <h1>Hire a team of Claude Code agents. Watch them work.</h1>
+    <p class="lede">A 3D office where the staff are Claude Code agents. Hand someone a job and they walk to a desk and do it for real, in your project folder.</p>
+    <div class="cta">
+      <a class="btn primary" href="#start">Get started</a>
+      <a class="btn" href="https://github.com/onuohasilver/agent-office">View on GitHub</a>
+    </div>
+    <div class="install"><code id="cmd">npm install -g agent-office-studio</code><button type="button" id="copy">Copy</button></div>
+    <div class="shot"><img src="office.jpg" width="1600" height="960" alt="The office: chat on the left, the floor with desks, a break room, a pool table and the chief of staff at reception"></div>
+  </header>
+
+  <section id="features">
+    <h2>A team, not a queue</h2>
+    <p class="sub">Every job is a real <code>claude</code> process in your project. The office just makes it something you can see and steer.</p>
+    <div class="grid">
+      <div class="card"><h3>You chat; the office does the rest</h3><p><code>@Ada #storefront fix the checkout bar</code> goes straight to Ada. Anything untagged goes to the chief of staff, who works out the project and who's free.</p></div>
+      <div class="card"><h3>Real work, visibly</h3><p>Agents walk to the library to read, the server room to run commands and their desk to write. Each job's drawer shows its log, model and exactly which files changed.</p></div>
+      <div class="card"><h3>You stay in charge</h3><p>Pick clearance per job: plan only, edit files, or full autonomy. The chief picks Haiku, Sonnet or Opus to fit the work and steps up when a job fails.</p></div>
+      <div class="card"><h3>Agents talk to each other</h3><p>They message colleagues mid-task, hand work to whoever is free, hold a 9:30 standup and use Slack-style channels. When idle, they play pool in the break room.</p></div>
+      <div class="card"><h3>Talk to it</h3><p>Dictate with whisper.cpp and hear replies in a different voice per agent, all on your machine.</p></div>
+      <div class="card"><h3>Yours, on your machine</h3><p>It listens on localhost only. Use it on your Claude plan or with an API key.</p></div>
+    </div>
+  </section>
+
+  <section id="start">
+    <h2>Up and running in a minute</h2>
+    <p class="sub">You need Node.js 20+, git, and Claude Code signed in on this machine (or an Anthropic API key).</p>
+    <ol class="steps">
+      <li><h3>Install</h3><p>One global package.</p><pre>npm install -g agent-office-studio</pre></li>
+      <li><h3>Point it at your projects</h3><p>Run it from the folder whose subfolders are your projects.</p><pre>cd ~/projects
+agentoffice</pre></li>
+      <li><h3>Hand out a job</h3><p>Open the URL it prints (default <code>localhost:4317</code>) and say what you need.</p><pre>@Ada #storefront fix the checkout bar</pre></li>
+    </ol>
+  </section>
+
+  <section>
+    <p class="note">Open source under the MIT license. Built by a small team that outgrew its garage.</p>
+  </section>
+
+  <footer>
+    <span>© Agent Office</span>
+    <span>
+      <a href="https://github.com/onuohasilver/agent-office">GitHub</a>
+      <a href="https://github.com/onuohasilver/agent-office/blob/master/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/onuohasilver/agent-office/blob/master/LICENSE">MIT License</a>
+    </span>
+  </footer>
+</div>
+<script>
+document.getElementById('copy').addEventListener('click', async (e) => {
+  const b = e.currentTarget;
+  try { await navigator.clipboard.writeText(document.getElementById('cmd').textContent); b.textContent = 'Copied'; }
+  catch { b.textContent = 'Press ⌘C'; }
+  setTimeout(() => (b.textContent = 'Copy'), 1500);
+});
+</script>
+</body>
+</html>
