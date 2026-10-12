@@ -2,8 +2,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { summarizeTool, stationFor } from './tools.js';
 import { canSee, route } from './chief.js';
@@ -15,6 +15,7 @@ import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.j
 import { Terminals } from './terminal.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
+import { Leaderboard } from './leaderboard.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -26,6 +27,7 @@ const STATE_FILE = path.join(DATA, 'state.json');
 const DIST = path.join(APP, 'dist');
 const UPLOADS = path.join(DATA, 'uploads');
 const auth = new Auth(DATA);
+const board = new Leaderboard(DATA, { onChange: () => send({ t: 'leaderboard', leaderboard: board.status() }) });
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
 const MAX_CHAT = 300;
@@ -291,6 +293,7 @@ const snapshot = () => ({
   standup: standupNow && { who: standupNow.who },
   usage,
   auth: auth.status(),
+  leaderboard: board.status(),
   procs,
   machine,
   dismissed: state.dismissed,
@@ -519,6 +522,7 @@ const AUTOCOMPACT_PCT = process.env.AGENT_COMPACT_PCT || '60';
 const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
+  'mcp__office__restart_office',
 ];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
@@ -713,6 +717,8 @@ function onLine(job, line) {
     // carrying. Worth seeing: a long-resumed job pays it on every turn.
     const u = e.usage || {};
     job.context = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    board.addTokens((u.input_tokens || 0) + (u.output_tokens || 0));
+    board.addTime(e.duration_ms);
     nudgeUsage();
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
@@ -767,13 +773,18 @@ function finish(job, status, error) {
   tokens.delete(job.id);
   job.waiting = false;
   const before = progress();
+  // An agent that ended its turn still needing the boss's input has not
+  // finished: it is waiting. Nothing is marked, scored or announced as done.
+  const awaiting = status === 'done' && !!job.asking;
+  job.awaitingBoss = awaiting;
   job.status = status;
   job.error = error;
   job.endedAt = Date.now();
   // Capture the rung it failed on before bump() moves it.
   const was = TIER_LABEL[tierOf(job.model)] || job.model || 'the default model';
   const retry = status === 'failed' ? bump(job) : null;
-  const gained = status === 'done' ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
+  const gained = status === 'done' && !awaiting ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
+  if (status === 'done' && !awaiting) board.addJob();
   state.xp += gained;
   job.xp += gained;
   pushJob(job);
@@ -791,8 +802,9 @@ function finish(job, status, error) {
   // stop (the boss did that), or a colleague's handed-off piece (their asker
   // gets it, and the asker's own finish is the one worth announcing).
   if (!retry && status !== 'stopped' && !job.requestedBy) {
-    const line = status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
-    post('chief', `**${status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, jobId: job.id, thread: null, channel: GENERAL });
+    const line = awaiting ? `${nameOf(job.agentId)} is waiting on you for "${clip(job.title, 80)}": ${clip(job.asking.summary, 200)}`
+      : status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
+    post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL });
   }
 
   // Hand the result back to whoever delegated this, if they're still at it.
@@ -819,7 +831,7 @@ function finish(job, status, error) {
       post('chief', `A message for ${nameOf(job.agentId)} landed just as "${job.title}" was stopped, so nobody read it.`, { jobId: job.id });
       job.pending = null;
     } else {
-      Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+      Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null, asking: null, awaitingBoss: false });
       addLog(job, { kind: 'system', summary: 'A message landed as this job was closing. Picking it back up.' });
       pushJob(job);
     }
@@ -840,7 +852,7 @@ function finish(job, status, error) {
     ].filter(Boolean).join('\n\n');
     job.sessionId = null;
     job.pending = job.pending ? `${note}\n\n${job.pending}` : note;
-    if (job.status !== 'queued') Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null });
+    if (job.status !== 'queued') Object.assign(job, { status: 'queued', queuedAt: Date.now(), error: null, endedAt: null, asking: null, awaitingBoss: false });
     addLog(job, { kind: 'system', summary: `Hit a wall on ${was}; moving up to ${TIER_LABEL[retry]}` });
     pushJob(job);
     post('chief', `That hit a wall on ${was}. Running it again on ${TIER_LABEL[retry]}.`, { jobId: job.id, channel: job.channel });
@@ -899,7 +911,7 @@ function replyJob(job, { message, mode, files }) {
   if (!message) throw new Error('Say something first.');
   if (mode && !MODES[mode]) throw new Error('Unknown mode.');
   if (mode) job.mode = mode;
-  Object.assign(job, { status: 'queued', queuedAt: Date.now(), pending: message, error: null, endedAt: null });
+  Object.assign(job, { status: 'queued', queuedAt: Date.now(), pending: message, error: null, endedAt: null, asking: null, awaitingBoss: false });
   addLog(job, { kind: 'user', summary: message });
   pushJob(job);
   pump();
@@ -1116,6 +1128,11 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
     ...(root && { thread: root.id }),
   });
   if (/^\/standup$/i.test(text)) return void runStandup(true);
+  const restart = /^\/restart( now)?$/i.exec(text);
+  if (restart) {
+    try { requestRestart({ now: !!restart[1] }); } catch (err) { post('chief', err.message, { channel: where }); }
+    return;
+  }
   if (!text) text = files.length === 1 ? 'Take a look at the attached file.' : 'Take a look at the attached files.';
   // A reply in a job's thread goes straight to that job; no routing needed.
   const job = root && threadJob(root);
@@ -1125,6 +1142,88 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
     .catch((err) => post('chief', `I couldn't route that one: ${err.message}`, { channel: where }));
 }
 
+
+// ---------- restarting ----------
+//
+// Server changes only land on a restart, and stopping the server ends every
+// agent's session, including the one that asked. So a restart waits until
+// nobody is mid-turn, then exits with RESTART for server/supervise.js to start
+// a fresh server. Jobs still open come back on boot (see above), and whoever
+// asked is woken to carry on.
+
+const RESTART_EXIT = 75;
+const SUPERVISED = process.env.OFFICE_SUPERVISED === '1';
+const RESTART_WAIT_MS = 10 * 60 * 1000;
+let restarting = null;
+
+// Started a turn and not finished it. Between turns, or waiting on a
+// colleague, a session loses nothing it can't pick up from its transcript.
+const midTurn = () => state.jobs.filter((j) => j.status === 'working' && running.has(j.id) && !j.lastTurn && !j.waiting);
+
+// A server that won't load is worse than a stale one: nothing would bring the
+// office back to fix it. Syntax for every file, and a load for the modules
+// that are safe to load (not this one, the supervisor, or the stdio MCP).
+function serverProblem() {
+  const files = fs.readdirSync(HERE).filter((f) => f.endsWith('.js'));
+  for (const f of files) {
+    const r = spawnSync(process.execPath, ['--check', path.join(HERE, f)], { encoding: 'utf8', timeout: 15000 });
+    if (r.status !== 0) return (r.stderr || `${f} failed to parse`).trim().split('\n').slice(0, 6).join('\n');
+  }
+  const loadable = files.filter((f) => !['index.js', 'supervise.js', 'office-mcp.js'].includes(f)).map((f) => pathToFileURL(path.join(HERE, f)).href);
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', `for (const f of ${JSON.stringify(loadable)}) await import(f);`],
+    { encoding: 'utf8', timeout: 15000 });
+  if (r.status !== 0) return (r.stderr || 'A server module failed to load').trim().split('\n').slice(0, 6).join('\n');
+  return null;
+}
+
+function requestRestart({ by = 'you', jobId = null, now = false } = {}) {
+  if (!SUPERVISED) {
+    throw new Error('This office was started without its supervisor, so nothing would start it again. Restart it once by hand with npm start; after that it can restart itself.');
+  }
+  if (restarting) {
+    if (now) restartNow();
+    return now ? 'Restarting now.' : 'A restart is already on the way.';
+  }
+  const problem = serverProblem();
+  if (problem) throw new Error(`The server code doesn't load, so a restart would leave the office down. Fix this first:\n${problem}`);
+  // Kept in state, so the next server knows who to wake.
+  state.restart = { by, jobId, at: Date.now() };
+  // A turn that just ended has a moment's grace before its session closes;
+  // letting that run out closes the job cleanly instead of resuming it.
+  restarting = { timer: setInterval(() => (!midTurn().length && !graces.size && !chiefBusy) && restartNow(), 1000) };
+  restarting.deadline = setTimeout(restartNow, now ? 300 : RESTART_WAIT_MS);
+  save();
+  const busy = midTurn().filter((j) => j.id !== jobId);
+  const who = by === 'you' ? 'You asked' : `${nameOf(by)} asked`;
+  post('chief', `**Restarting** · ${who} for a restart to pick up server changes. ${now ? 'Going now.'
+    : busy.length ? `Waiting for ${names([...new Set(busy.map((j) => nameOf(j.agentId)))])} to finish their turn first.`
+    : 'Back in a few seconds.'}`, { kind: 'restart', thread: null, channel: GENERAL });
+  return now ? 'Restarting now.' : 'Restarting once everyone is between turns.';
+}
+
+function restartNow() {
+  if (!restarting || restarting.done) return;
+  restarting.done = true;
+  clearInterval(restarting.timer);
+  clearTimeout(restarting.deadline);
+  send({ t: 'restarting' });
+  shutdown(RESTART_EXIT);
+}
+
+// On the far side of a restart: say so, and wake whoever asked for it.
+function afterRestart() {
+  const r = state.restart;
+  if (!r) return;
+  delete state.restart;
+  save();
+  post('chief', `**Back** · The office restarted and is running the current server code.`, { kind: 'restart', thread: null, channel: GENERAL });
+  const job = r.jobId && state.jobs.find((j) => j.id === r.jobId);
+  // A job interrupted mid-turn already carries its own notice into the queue.
+  if (!job || job.status === 'queued') return;
+  try {
+    deliver(job, 'The office has restarted, as you asked, and is now running the current server code. Carry on: check that your change works.');
+  } catch {}
+}
 
 // ---------- daily standup ----------
 
@@ -1287,7 +1386,7 @@ function officePrompt(agentId, job) {
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
-    `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. ` +
+    `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
     `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId);
 }
 
@@ -1367,12 +1466,21 @@ const agentApi = {
     if (flagged.includes(summary)) return 'The chief already has that one.';
     if (flagged.length >= MAX_FLAGS) throw new Error("You've flagged a lot for the boss on this job. Put the rest in your reply.");
     flagged.push(summary);
+    // A question, decision or blocker means the boss's answer is still owed,
+    // so the job must not be reported as done when the agent's turn ends.
+    if (kind !== 'review') me.asking = { kind, summary };
     // Top level in #general on purpose: that is where the boss looks. jobId
     // keeps the "open job" link, and the explicit null thread keeps post()
     // from tucking it into the job's thread.
     post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
       { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL });
     return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
+  },
+
+  restart_office(me, { now = false } = {}) {
+    requestRestart({ by: me.agentId, jobId: me.id, now: !!now });
+    return 'The office will restart once everyone is between turns, and that includes you: end your turn now. ' +
+      "You'll get a message when it is back, running the current server code.";
   },
 
   list_channels(me) {
@@ -1691,6 +1799,19 @@ const server = http.createServer(async (req, res) => {
       if (req.method !== 'GET') { send({ t: 'auth', auth: status }); refreshUsage(); }
       return json(res, 200, status);
     }
+    // The leaderboard. Joining claims a handle with the service and starts
+    // sharing day counters; leaving asks it to forget this office.
+    if (url.pathname === '/api/leaderboard' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
+      let status;
+      try { status = req.method === 'GET' ? board.status() : req.method === 'DELETE' ? await board.leave() : await board.join((await readBody(req)).handle); }
+      catch (err) { return json(res, err.code >= 400 && err.code < 600 ? err.code : 400, { error: err.message }); }
+      if (req.method !== 'GET') send({ t: 'leaderboard', leaderboard: status });
+      return json(res, 200, status);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/leaderboard/board') {
+      try { return json(res, 200, await board.board(url.searchParams.get('period'))); }
+      catch (err) { return json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message }); }
+    }
     if (req.method === 'POST' && url.pathname === '/api/voice/replies') {
       const { on } = await readBody(req);
       state.voiceReplies = !!on;
@@ -1725,6 +1846,10 @@ const server = http.createServer(async (req, res) => {
       return p ? json(res, 200, p) : json(res, 404, { error: 'No such agent.' });
     }
     if (req.method === 'POST' && url.pathname === '/api/standup') { runStandup(true); return json(res, 202, { ok: true }); }
+    if (req.method === 'POST' && url.pathname === '/api/restart') {
+      const { now } = await readBody(req);
+      return json(res, 202, { text: requestRestart({ now: !!now }) });
+    }
     if (req.method === 'POST' && parts[1] === 'chat' && parts[2] && parts[3] === 'react' && !parts[4]) {
       react(parts[2], (await readBody(req)).emoji);
       return json(res, 200, { ok: true });
@@ -1807,19 +1932,21 @@ server.listen(PORT, '127.0.0.1', () => {
   terminals.status().then((t) => console.log(t.enabled
     ? `Terminal ON — anything in this browser gets a shell as ${process.env.USER || 'you'}. Up to ${t.max}, ${t.idleMinutes} min idle.`
     : `Terminal off. ${t.reason}`));
+  afterRestart();
   pump();
   refreshUsage();
   setInterval(standupDue, 60 * 1000);
   setTimeout(standupDue, 15 * 1000);
 });
 
-const shutdown = () => {
+function shutdown(code = 0) {
   for (const child of running.values()) child.kill('SIGTERM');
   terminals.killAll();
   clearTimeout(saveTimer);
+  board.flush();
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));
-  process.exit(0);
-};
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+  process.exit(code);
+}
+process.on('SIGINT', () => shutdown());
+process.on('SIGTERM', () => shutdown());

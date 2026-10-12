@@ -51,12 +51,27 @@ process.stdin.once('data', () => {
   fs.appendFileSync('README.md', 'edited by the stub\\n');
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
   out({ type: 'system', subtype: 'init', session_id: 'smoke-session', model: 'stub' });
-  out({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'smoke-session', total_cost_usd: 0 });
+  out({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'smoke-session', total_cost_usd: 0, duration_ms: 3000, usage: { input_tokens: 120, output_tokens: 80, cache_read_input_tokens: 5000 } });
   process.exit(0);
 });
 `, { mode: 0o755 });
 
-const env = { ...process.env, PORT: String(PORT), OFFICE_ROOT: root, CLAUDE_BIN: stub, STANDUP_AT: 'off', BANTER: 'off' };
+// A stand-in leaderboard service that remembers what it was sent. The real one
+// is checked by leaderboard/test.mjs; this checks what the office sends it.
+const sent = [];
+const service = http.createServer((req, res) => {
+  let body = '';
+  req.on('data', (d) => (body += d));
+  req.on('end', () => {
+    sent.push({ method: req.method, url: req.url, auth: req.headers.authorization || null, body: body ? JSON.parse(body) : null });
+    const out = req.url === '/v1/claim' ? { handle: JSON.parse(body).handle } : { ok: true };
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(out));
+  });
+});
+await new Promise((r) => service.listen(0, '127.0.0.1', r));
+
+const env = { ...process.env, PORT: String(PORT), OFFICE_ROOT: root, CLAUDE_BIN: stub, STANDUP_AT: 'off', BANTER: 'off', OFFICE_LEADERBOARD_URL: `http://127.0.0.1:${service.address().port}` };
 delete env.ANTHROPIC_API_KEY;
 const server = spawn(process.execPath, ['server/index.js'], { cwd: app, env, stdio: ['ignore', 'pipe', 'pipe'] });
 let log = '';
@@ -134,9 +149,39 @@ try {
     });
     assert(done.changes.count === 1 && done.changes.files[0].path === 'README.md', JSON.stringify(done.changes));
   });
+
+  await check('counts the job, tokens and agent time, without cached context', async () => {
+    const lb = await (await get('/api/leaderboard')).json();
+    assert(lb.configured && !lb.joined, JSON.stringify(lb));
+    assert(lb.today.jobs === 1 && lb.today.tokens === 200 && lb.today.seconds === 3, JSON.stringify(lb.today));
+  });
+  await check('sends nothing before joining', async () => {
+    await sleep(500);
+    assert(sent.length === 0, JSON.stringify(sent));
+  });
+  await check('joining claims a handle and shares only the day counters', async () => {
+    const res = await post('/api/leaderboard', { handle: 'smoke-tester' });
+    assert(res.status === 200 && (await res.json()).joined, `status ${res.status}`);
+    const put = await until('the counters to be sent', () => sent.find((r) => r.method === 'PUT'));
+    const claim = sent.find((r) => r.url === '/v1/claim');
+    assert(claim && claim.body.handle === 'smoke-tester', JSON.stringify(sent));
+    assert(/^Bearer [0-9a-f]{64}$/.test(put.auth) && put.auth === claim.auth, 'secret not used consistently');
+    assert(put.body.days.length === 1 && Object.keys(put.body).join() === 'days', JSON.stringify(put.body));
+    const day = put.body.days[0];
+    assert(Object.keys(day).sort().join() === 'day,jobs,seconds,tokens' && day.jobs === 1 && day.tokens === 200 && day.seconds === 3, JSON.stringify(day));
+    const idFile = path.join(app, 'data', 'leaderboard.json');
+    assert((fs.statSync(idFile).mode & 0o077) === 0, 'identity file is readable by others');
+  });
+  await check('leaving asks the service to forget and clears the identity', async () => {
+    const res = await fetch(BASE + '/api/leaderboard', { method: 'DELETE' });
+    assert(res.status === 200 && !(await res.json()).joined, `status ${res.status}`);
+    assert(sent.some((r) => r.method === 'DELETE' && r.url === '/v1/me'), JSON.stringify(sent));
+    assert(!fs.existsSync(path.join(app, 'data', 'leaderboard.json')), 'identity kept');
+  });
 } finally {
   server.kill('SIGTERM');
   await new Promise((r) => server.once('exit', r));
+  service.close();
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 

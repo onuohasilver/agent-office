@@ -12,6 +12,8 @@
   --accent: var(--work);
   --surface: #fff;
   --glass: color-mix(in srgb, var(--paper) 88%, transparent);
+  --pane: color-mix(in srgb, var(--paper) 58%, transparent);
+  --pane-edge: color-mix(in srgb, #fff 55%, var(--line));
   --t1: rgba(29, 27, 24, 0.05);
   --t2: var(--t2);
   --t3: rgba(29, 27, 24, 0.1);
@@ -58,6 +60,8 @@ html[data-mode="dark"] {
   --paper: oklch(20% 0.012 var(--h));
   --paper-2: oklch(25% 0.014 var(--h));
   --surface: oklch(24% 0.014 var(--h));
+  --pane: color-mix(in srgb, var(--paper) 52%, transparent);
+  --pane-edge: color-mix(in srgb, #fff 14%, transparent);
   --line: color-mix(in srgb, var(--ink) 12%, transparent);
   --t1: color-mix(in srgb, var(--ink) 6%, transparent);
   --t2: color-mix(in srgb, var(--ink) 9%, transparent);
@@ -89,12 +93,18 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- layout: three columns, nothing floats over the office ---------- */
 
-.app { display: grid; grid-template-columns: 360px minmax(0, 1fr) auto; height: 100vh; height: 100dvh; }
+/* The office backdrop is painted once on .app, behind all three columns, so the
+   side and detail panes can be frosted glass over it. */
+.app {
+  display: grid; grid-template-columns: 360px minmax(0, 1fr) auto; height: 100vh; height: 100dvh;
+  background:
+    radial-gradient(40% 36% at 8% 14%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 100%),
+    radial-gradient(38% 34% at 94% 86%, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 100%),
+    radial-gradient(120% 90% at 50% 38%, var(--view-1) 0%, var(--view-2) 58%, var(--view-3) 100%);
+}
 
 .view {
   position: relative; overflow: hidden; min-width: 0; container-type: inline-size;
-  background:
-    radial-gradient(120% 90% at 50% 38%, var(--view-1) 0%, var(--view-2) 58%, var(--view-3) 100%);
 }
 #stage { position: absolute; inset: 0; }
 #stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
@@ -104,7 +114,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .side {
   display: flex; flex-direction: column; min-height: 0;
-  background: var(--paper); border-right: 1px solid var(--line);
+  background: var(--pane); border-right: 1px solid var(--pane-edge);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
 }
 .brand { padding: 20px 20px 14px; position: relative; }
 .title-end { display: flex; align-items: center; gap: 6px; }
@@ -160,6 +171,20 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .acct-form input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .acct-forget { all: unset; cursor: pointer; margin: 8px 2px 0; font-size: 12px; color: var(--ink-3); text-decoration: underline; }
 .acct-forget:hover { color: var(--ink); }
+.lb-pop { width: 300px; }
+.lb-me { margin: 6px 2px 0; font-size: 12.5px; line-height: 1.4; color: var(--ink-2); }
+.lb-me strong { color: var(--ink); font-weight: 650; }
+.lb-tabs { margin-top: 10px; }
+.lb-period { grid-template-columns: 1fr 1fr; }
+.lb-metric { margin-top: 6px; }
+.lb-board { margin-top: 8px; }
+.lb-list { list-style: none; margin: 0; padding: 0; max-height: 232px; overflow-y: auto; }
+.lb-row { display: grid; grid-template-columns: 24px 1fr auto; gap: 6px; align-items: baseline; padding: 5px 6px; border-radius: 8px; font-size: 12.5px; color: var(--ink-2); }
+.lb-row:nth-child(-n+3) .lb-rank { color: var(--accent); font-weight: 700; }
+.lb-rank { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.lb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.lb-val { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+.lb-you { background: var(--t2); }
 .brand .title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.025em; }
 .lv {
@@ -451,7 +476,8 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; ba
 
 .detail {
   width: 440px; display: flex; flex-direction: column; min-height: 0; padding-top: 18px;
-  background: var(--paper); border-left: 1px solid var(--line);
+  background: var(--pane); border-left: 1px solid var(--pane-edge);
+  -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
   animation: open 0.3s var(--ease);
 }
 @keyframes open { from { opacity: 0; transform: translateX(12px); } }

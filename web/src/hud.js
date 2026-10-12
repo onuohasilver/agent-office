@@ -289,7 +289,7 @@ export class Hud {
   }
 
   renderStats(jobs, extra = 0) {
-    const count = (s) => jobs.filter((j) => j.status === s).length;
+    const count = (s) => jobs.filter((j) => j.status === s && !j.awaitingBoss).length;
     const spent = jobs.reduce((a, j) => a + (j.cost || 0), extra);
     $('stats').innerHTML = [
       `<span><b>${count('working')}</b> working</span>`,
@@ -692,7 +692,9 @@ export class Hud {
     const input = $('input');
     for (const id of ['mode', 'model']) {
       const saved = store(`office.${id}`);
-      if (saved !== null) $(id).value = saved;
+      // Only a value the picker offers: anything else leaves it blank and
+      // the server turns the message away.
+      if (saved !== null && [...$(id).options].some((o) => o.value === saved)) $(id).value = saved;
       $(id).onchange = () => store(`office.${id}`, $(id).value);
     }
     $('composer').onsubmit = (e) => { e.preventDefault(); this.send(); };

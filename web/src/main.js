@@ -4,6 +4,7 @@ import './style.css';
 import './pwa.js';
 import './theme.js';
 import { setAccess } from './account.js';
+import { setLeaderboard } from './leaderboard.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -311,6 +312,7 @@ function handle(msg) {
     hud.renderLevel(app.progress);
     hud.renderUsage(msg.usage);
     setAccess(msg.auth);
+    setLeaderboard(msg.leaderboard);
     hud.renderProc(msg.procs, msg.machine);
     app.refreshLists();
     const todos = latestTodos();
@@ -327,15 +329,17 @@ function handle(msg) {
     } else {
       for (const a of app.agents.values()) {
         if (a.job?.id !== job.id) continue;
-        a.finish(job.status);
-        if (job.status === 'done') confetti.burst(a.pos, [a.staff.shirt, '#f2cc8f', '#81b29a', '#3d7ea6', '#ffffff']);
-        if (job.status === 'done') { sound.ship(); notify(`${a.name} shipped`, job.title); }
+        const shipped = job.status === 'done' && !job.awaitingBoss;
+        a.finish(shipped ? 'done' : job.awaitingBoss ? 'waiting' : job.status);
+        if (shipped) confetti.burst(a.pos, [a.staff.shirt, '#f2cc8f', '#81b29a', '#3d7ea6', '#ffffff']);
+        if (shipped) { sound.ship(); notify(`${a.name} shipped`, job.title); }
         if (job.status === 'failed') { sound.fail(); notify(`${a.name} hit a wall`, job.title); }
       }
     }
     if (prev?.status !== job.status) {
       if (hud.openId === job.id) hud.renderDetail();
-      if (job.status === 'done' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} shipped “${job.title}”`, 'good');
+      if (job.awaitingBoss && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} is waiting on you: “${job.title}”`, 'warn');
+      else if (job.status === 'done' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} shipped “${job.title}”`, 'good');
       if (job.status === 'failed' && prev?.status === 'working') hud.toast(`${app.staffName(job.agentId)} hit a wall on “${job.title}”`, 'bad');
     }
     else if (hud.openId === job.id && prev?.changes?.end !== job.changes?.end) hud.renderChanges(job);
@@ -391,6 +395,8 @@ function handle(msg) {
     hud.renderTeam();
   } else if (msg.t === 'auth') {
     setAccess(msg.auth);
+  } else if (msg.t === 'leaderboard') {
+    setLeaderboard(msg.leaderboard);
   } else if (msg.t === 'usage') {
     hud.renderUsage(msg.usage);
   } else if (msg.t === 'proc') {

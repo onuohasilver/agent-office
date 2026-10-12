@@ -250,7 +250,7 @@ export class Agent {
   finish(status) {
     const now = this.now || 0;
     this.anim = { kind: status === 'done' ? 'celebrate' : 'slump', until: now + 2.2 };
-    this.say(status === 'done' ? 'Shipped it!' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
+    this.say(status === 'done' ? 'Shipped it!' : status === 'waiting' ? 'Need your answer' : status === 'stopped' ? 'Okay, stopping' : 'Hit a wall', status === 'done' ? 'good' : 'warn', 4000);
     this.job = null;
     this.afterVisit = null;
     this.want = 'lounge';

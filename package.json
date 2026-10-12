@@ -25,7 +25,7 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c blue,magenta \"node --watch server/index.js\" \"vite\"",
     "build": "vite build",
-    "start": "vite build && node server/index.js",
+    "start": "vite build && node server/supervise.js",
     "voice:model": "mkdir -p data/whisper && curl -L --progress-bar -o data/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
     "voice:piper": "python3 -m venv data/piper/venv && data/piper/venv/bin/pip install -q piper-tts && data/piper/venv/bin/python -m piper.download_voices --data-dir data/piper/voices en_GB-cori-high en_US-amy-medium en_GB-alan-medium en_US-kristin-medium en_US-ryan-high en_GB-alba-medium en_GB-aru-medium en_US-john-medium en_US-hfc_female-medium",
     "test": "node scripts/smoke.mjs"

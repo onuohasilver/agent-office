@@ -47,6 +47,8 @@ If the server restarts mid-job, jobs with a session resume where they left off.
 | Path | What |
 |---|---|
 | `data/state.json` | jobs, chat, channels, XP, team profiles |
+| `data/activity.json` | per-day jobs, tokens and agent time |
+| `data/leaderboard.json` | leaderboard handle and secret, if you joined (mode 0600) |
 | `data/auth.json` | how Claude is signed in to, and the API key if you gave one (mode `0600`) |
 | `data/uploads/` | attachments and voice notes |
 | `data/whisper/`, `data/piper/` | speech models, if you installed them |
@@ -64,6 +66,8 @@ If the server restarts mid-job, jobs with a session resume where they left off.
 | `server/standup.js`, `server/banter.js` | standup write-up, break-room small talk |
 | `server/auth.js` | Claude access: login or API key |
 | `server/usage.js` | plan usage meters |
+| `server/leaderboard.js` | the activity ledger and the optional leaderboard |
+| `leaderboard/` | the leaderboard service (a Cloudflare Worker) |
 | `server/changes.js` | the "what changed" snapshots and diffs |
 | `server/voice.js` | whisper.cpp transcription and Piper voices |
 | `server/terminal.js` | the in-app terminal |

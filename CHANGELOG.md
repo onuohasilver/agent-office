@@ -6,6 +6,12 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+### Leaderboard
+- An optional leaderboard: join under a claimed handle and compare jobs
+  finished, tokens used and agent time, weekly and all time. Off until you
+  join; only per-day counters are shared. The service is a Cloudflare Worker in
+  `leaderboard/`. A local ledger (`data/activity.json`) now keeps those counters.
+
 ## 0.1.0 — 2026-10-11
 
 The first public release.

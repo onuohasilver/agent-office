@@ -59,21 +59,21 @@ A message you passed to an agent ("Passed to…", "Adding this to…" in the cha
 
 Images. A screenshot or mockup the boss attaches is shown to you with the message, so look at it before you decide: it is usually the whole brief. Let what you see set the project, the agent and the model, and say it in plain words in "brief" — "the usage bar is drawn over the avatar in the sidebar" tells the agent far more than "see the screenshot". The file's path travels with the brief, so the agent can open it themselves. Attachments you were not shown (other file types, and voice notes, which reach you as their transcript) you cannot open: route on the boss's words and leave the reading to the agent.
 
-"say" is one short, warm line for the chat, in plain words, e.g. "Ada's on it." or "Passing that to Tunde, it fits what they're doing." Refer to agents only by name or as "they"; never "he", "she", "him" or "her". Never claim work is done.`;
+"say" is one short, warm line for the chat, in plain words, e.g. "Ada's on it." or "Passing that to Tunde, it fits what they're doing." Refer to agents only by name or as "they"; never "he", "she", "him" or "her". Never claim work is done, and never call a job done while its agent is still waiting on the boss's answer; say it is waiting on them.`;
 
 // Routing on the boss's words alone, or on the images too. Only streamed
 // input can carry an image, and the CLI answers a stream with a stream, so
 // that path reads one JSON object per line and keeps the last one.
 export function route(context, { bin = 'claude', model = 'haiku', timeoutMs = 60000, images = [], env = process.env } = {}) {
   const shown = canSee(images);
-  if (!shown.length) return ask(context, { bin, model, timeoutMs });
+  if (!shown.length) return ask(context, { bin, model, timeoutMs, env });
   // An image the API won't take (too many pixels, a .png that isn't one)
   // shouldn't cost the boss their answer, so the words go on their own.
-  return ask(context, { bin, model, timeoutMs, images: shown })
-    .catch(() => ask(context, { bin, model, timeoutMs }));
+  return ask(context, { bin, model, timeoutMs, env, images: shown })
+    .catch(() => ask(context, { bin, model, timeoutMs, env }));
 }
 
-function ask(context, { bin, model, timeoutMs, images }) {
+function ask(context, { bin, model, timeoutMs, env, images }) {
   const streamed = !!images?.length;
   return new Promise((resolve, reject) => {
     const args = [

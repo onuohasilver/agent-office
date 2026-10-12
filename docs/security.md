@@ -33,6 +33,14 @@ command you could.
   characters.
 - `data/` is git-ignored.
 
+## The leaderboard
+
+Off until you join, and then the only thing besides Claude that the office
+talks to. It sends a handle and three counters per day (jobs, tokens, agent
+time) to the service named by `OFFICE_LEADERBOARD_URL`, signed with a random
+secret kept in `data/leaderboard.json` (mode `0600`). Never prompts, projects,
+files, chat or cost. Details in [The leaderboard](leaderboard.md).
+
 ## The terminal
 
 Off unless `OFFICE_TERMINAL=1`. A session needs a single-use ticket from the

@@ -55,6 +55,7 @@ folders next to this one — see [Getting started](docs/getting-started.md).
 | [Getting started](docs/getting-started.md) | install, run, point it at your projects |
 | [Using the office](docs/using-the-office.md) | the chat, channels, threads, standup, the break room |
 | [Jobs](docs/jobs.md) | clearance, which model, what changed |
+| [The leaderboard](docs/leaderboard.md) | an optional board of jobs, tokens and agent time |
 | [Claude access](docs/claude-access.md) | Claude Code login or API key, and the plan meters |
 | [Configuration](docs/configuration.md) | every setting |
 | [Talking out loud](docs/voice.md) | speech in and voices out |

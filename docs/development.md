@@ -27,10 +27,25 @@ it on macOS and Linux for every push and pull request.
 request. A web-only change goes live with a build and a reload — no server
 restart.
 
-Server changes need a restart, and stopping the server stops every running
-job (they resume when it comes back). If you are an agent working inside the
-office, **never restart the server you are running under**: its shutdown ends
-your own process. Ask the person at the keyboard to do it.
+## Shipping a server change
+
+Server changes need a restart. `npm start` runs the server under a small
+supervisor (`server/supervise.js`) so the office can restart itself:
+
+- **You:** type `/restart` in the chat (`/restart now` skips the wait).
+- **An agent:** calls its `restart_office` tool, then ends its turn. It gets a
+  message when the office is back, so it can check its change.
+
+A restart waits until nobody is mid-turn (up to 10 minutes, then it goes
+anyway), exits with code 75, and the supervisor starts a fresh server. Open
+jobs resume on their sessions. Before exiting, the server checks that its own
+code parses and loads, and refuses if it doesn't, because a broken server would
+leave nothing running to fix it. If the server crashes three times in a row
+within seconds of starting, the supervisor gives up.
+
+A server started with plain `node server/index.js`, or with `npm run dev`, has
+no supervisor and refuses to restart itself. Agents must never kill the server
+by signal: its shutdown ends their own process along with everyone else's.
 
 ## Testing without touching the live office
 

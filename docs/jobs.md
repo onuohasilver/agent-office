@@ -48,4 +48,7 @@ repositories don't get a card.
 
 ## When the server restarts
 
-Jobs with a session resume where they left off.
+Jobs with a session resume where they left off. A restart asked for from
+inside the office (`/restart`, or an agent's `restart_office`) waits for
+everyone to finish their turn first; see
+[Development](development.md#shipping-a-server-change).

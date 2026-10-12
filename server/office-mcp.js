@@ -35,6 +35,11 @@ const TOOLS = [
     description: 'Surface something in the main chat for the boss: a question, decision, blocker, or work ready to review. Not for routine progress. One or two self-contained sentences.',
     inputSchema: obj({ kind: { type: 'string', enum: ['question', 'decision', 'blocker', 'review'] }, summary: { type: 'string' } }, ['kind', 'summary']),
   },
+  {
+    name: 'restart_office',
+    description: 'Restart the office server so changes to its own code (agent-office/server) take effect. Waits until nobody is mid-turn, so end your turn right after; you are messaged when it is back. Not needed for web changes: a build is enough.',
+    inputSchema: obj({ now: { type: 'boolean', description: 'Skip the wait and interrupt anyone mid-turn. Only if asked to.' } }, []),
+  },
   { name: 'list_channels', description: 'List chat channels: purpose, members, and which one your work is in.', inputSchema: NONE },
   {
     name: 'create_channel',

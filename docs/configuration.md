@@ -45,6 +45,7 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 
 | Env | Default | |
 |---|---|---|
+| `OFFICE_LEADERBOARD_URL` | unset | address of a leaderboard service; see [The leaderboard](leaderboard.md) |
 | `OFFICE_TERMINAL` | unset | `1` opens the in-app terminal |
 | `OFFICE_TERMINAL_SHELL` | your `$SHELL` | |
 | `OFFICE_TERMINAL_MAX` | `4` | sessions at once |
