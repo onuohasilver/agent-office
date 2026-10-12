@@ -13,6 +13,7 @@ Notable changes to Agent Office. The format follows
 
 ### Changed
 - The office header shows whose office it is (`OFFICE_OWNER`, else the first name on the account), your level as a progress ring, and the usage gauges as rings behind a fold button. The glass styling is reworked to match.
+- A Settings page, from the sliders icon in the header. It changes the owner, token limit, compaction point, chief model, standup time and weekends, sharing of job titles, and the break-room talk without restarting. A value saved there wins over its environment variable, which becomes the default; "Use the default" puts it back. A context limit set before upgrading carries over. See [Configuration](docs/configuration.md).
 
 ### Fixed
 - An agent whose brief was itself "clear your context" looped on `clear_context`: each fresh session re-read the brief and cleared again until the cap. The restart now says the clear is done and not to repeat it.
