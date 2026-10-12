@@ -11,8 +11,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 
-// Where the hosted service lives. OFFICE_LEADERBOARD_URL overrides it.
-const DEFAULT_URL = '';
+// Where the hosted service lives (leaderboard/, deployed on Cloudflare).
+// OFFICE_LEADERBOARD_URL overrides it, for a self-hosted board or a test.
+const DEFAULT_URL = 'https://agent-office-leaderboard.agent-office-leaderboard.workers.dev';
 const WINDOW_DAYS = 14;
 const DEBOUNCE_MS = 45 * 1000;
 const RETRY_MS = 10 * 60 * 1000;
@@ -39,7 +40,7 @@ export class Leaderboard {
     try { this.me = JSON.parse(fs.readFileSync(this.idFile, 'utf8')); } catch {}
     this.error = null;
     this.lastSync = this.me.lastSync || 0;
-    this.dirty = !!this.me.secret;
+    this.dirty = this.joined;
     this.timer = null;
     this.saveTimer = null;
     this.busy = false;
@@ -47,12 +48,18 @@ export class Leaderboard {
   }
 
   get url() { return (process.env.OFFICE_LEADERBOARD_URL || DEFAULT_URL).replace(/\/+$/, ''); }
-  get joined() { return !!(this.me.secret && this.me.handle); }
+  // A handle is this office's name to the service, and linked offices need
+  // one too. Being on the board is a separate choice: `share` is false for an
+  // office that only claimed a handle. Older files have no `share`, and they
+  // all joined to share.
+  get named() { return !!(this.me.secret && this.me.handle); }
+  get joined() { return this.named && this.me.share !== false; }
 
   status() {
     return {
       configured: !!this.url,
       joined: this.joined,
+      sharing: this.joined,
       handle: this.me.handle || null,
       lastSync: this.lastSync || null,
       error: this.error,
@@ -108,12 +115,31 @@ export class Leaderboard {
     this.timer.unref?.();
   }
 
+  // The service address, checked, for anything that talks to it: https (or
+  // this machine), and, when the office's secret goes along, the very service
+  // that secret was made for. Older files don't say which that was, so the
+  // first service they are used with is taken as it.
+  endpoint({ withSecret = true } = {}) {
+    const url = this.url;
+    if (!url) throw fail(400, 'No leaderboard is set up for this office yet. Set OFFICE_LEADERBOARD_URL.');
+    if (!/^https:\/\//.test(url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(url)) throw fail(400, 'The leaderboard address must be https.');
+    if (withSecret && this.me.secret) {
+      if (!this.me.service) {
+        this.me.service = url;
+        writeAtomic(this.idFile, this.me, 0o600);
+      } else if (this.me.service !== url) {
+        throw fail(421, `This office’s handle belongs to ${this.me.service}, so its secret isn’t sent to ${url}. Set OFFICE_LEADERBOARD_URL back to use it.`);
+      }
+    }
+    return url;
+  }
+
   async call(method, route, { body, secret = this.me.secret } = {}) {
-    if (!this.url) throw fail(400, 'No leaderboard is set up for this office yet. Set OFFICE_LEADERBOARD_URL.');
-    if (!/^https:\/\//.test(this.url) && !/^http:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(this.url)) throw fail(400, 'The leaderboard address must be https.');
+    // A brand-new secret (a first claim) is made for whichever service this is.
+    const url = this.endpoint({ withSecret: !!secret && secret === this.me.secret });
     let res;
     try {
-      res = await fetch(this.url + route, {
+      res = await fetch(url + route, {
         method,
         headers: { 'content-type': 'application/json', ...(secret ? { authorization: `Bearer ${secret}` } : {}) },
         body: body === undefined ? undefined : JSON.stringify(body),
@@ -127,16 +153,27 @@ export class Leaderboard {
     return out;
   }
 
-  async join(handle) {
+  // Claims a handle without joining the board. An office that already has
+  // one keeps it; the service holds one handle per secret.
+  async claim(handle) {
+    if (this.named && (handle === undefined || String(handle).trim().toLowerCase() === this.me.handle.toLowerCase())) return this.status();
     handle = String(handle ?? '').trim();
     if (!HANDLE_RE.test(handle)) throw fail(400, 'A handle is 3 to 20 letters, numbers, - or _.');
     // A secret made once and kept: if the answer to a claim is lost, asking
     // again with the same secret is safe.
     const secret = this.me.secret || crypto.randomBytes(32).toString('hex');
     const out = await this.call('POST', '/v1/claim', { body: { handle }, secret });
-    this.me = { ...this.me, secret, handle: out.handle, lastSync: 0 };
+    this.me = { share: false, ...this.me, secret, service: this.url, handle: out.handle, lastSync: 0 };
     writeAtomic(this.idFile, this.me, 0o600);
     this.error = null;
+    this.onChange();
+    return this.status();
+  }
+
+  async join(handle) {
+    await this.claim(handle);
+    this.me.share = true;
+    writeAtomic(this.idFile, this.me, 0o600);
     this.dirty = true;
     this.later(500);
     return this.status();
@@ -167,11 +204,23 @@ export class Leaderboard {
     }
   }
 
-  // Stops sharing and asks the service to forget this office. If it can't be
-  // reached nothing local changes, so the boss can try again rather than be
-  // left believing it is gone.
-  async leave() {
-    if (this.joined) {
+  // Stops sharing and asks the service to delete the counters. With
+  // `keepHandle` (the office has linked offices) the handle stays, so the
+  // links do; otherwise the service forgets this office entirely. If it can't
+  // be reached nothing local changes, so the boss can try again rather than
+  // be left believing it is gone.
+  async leave({ keepHandle = false } = {}) {
+    if (keepHandle && this.named) {
+      try { await this.call('DELETE', '/v1/days'); }
+      catch (err) { if (err.code !== 401) throw err; }
+      clearTimeout(this.timer);
+      this.me.share = false;
+      writeAtomic(this.idFile, this.me, 0o600);
+      this.dirty = false;
+      this.error = null;
+      return this.status();
+    }
+    if (this.named) {
       try { await this.call('DELETE', '/v1/me'); }
       catch (err) { if (err.code !== 401) throw err; } // 401: the service has already forgotten it
     }

@@ -18,7 +18,10 @@ npm install
 npm start            # builds, then serves on http://localhost:4317
 ```
 
-Open <http://localhost:4317>.
+Open the link it prints, `Agent Office open on http://localhost:4317/?key=…`.
+The key keeps other accounts on the machine out; your browser remembers it, so
+after that <http://localhost:4317> is enough. Lost the link? `agentoffice --link`,
+or from a clone, the key is in `data/office-key`.
 
 ## Where your projects are
 

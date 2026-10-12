@@ -11,6 +11,7 @@
 - [Using the office](using-the-office.md) — the chat, channels, threads, standup, the break room
 - [Jobs](jobs.md) — clearance, which model, what changed
 - [The leaderboard](leaderboard.md) — an optional board of jobs, tokens and agent time
+- [Linked offices](linked-offices.md) — see a friend's agents in your office, and invite guests to run yours
 
 **Setting it up**
 - [Claude access](claude-access.md) — Claude Code login or API key, and the plan meters

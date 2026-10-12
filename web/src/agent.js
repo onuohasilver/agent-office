@@ -82,7 +82,16 @@ export class Agent {
 
     this.label = document.createElement('div');
     this.label.className = 'agent-label';
-    this.label.innerHTML = `<div class="bubble"></div><div class="name"><i style="background:${staff.shirt}"></i>${staff.name}</div>`;
+    // Built from nodes, not HTML: when visiting a linked office, staff come
+    // from another machine.
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const name = document.createElement('div');
+    name.className = 'name';
+    const dot = document.createElement('i');
+    if (/^#[0-9a-f]{3,8}$/i.test(staff.shirt ?? '')) dot.style.background = staff.shirt;
+    name.append(dot, String(staff.name ?? ''));
+    this.label.append(bubble, name);
     this.bubbleEl = this.label.querySelector('.bubble');
     labels.appendChild(this.label);
     this.say('');

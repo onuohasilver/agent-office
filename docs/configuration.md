@@ -10,8 +10,9 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 |---|---|---|
 | `OFFICE_ROOT` | the folder above this one; with `agentoffice`, the folder you run it from | its subfolders are the projects |
 | `OFFICE_DATA` | `data/` here; with `agentoffice`, `~/.agent-office` | where the office keeps its state |
-| `PORT` | `4317` | |
+| `PORT` | `4317` | with `agentoffice`, a free port is chosen if this is taken (or `--port <n>`); one you set is used as given |
 | `OFFICE_ALLOWED_HOSTS` | none | extra hostnames to accept, comma-separated; see [On your phone](phone.md) |
+| `OFFICE_SHARE_JOB_TITLES` | unset | `1` lets linked offices see your agents' job titles, not just that they're busy |
 
 ## Claude
 
@@ -46,7 +47,7 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 
 | Env | Default | |
 |---|---|---|
-| `OFFICE_LEADERBOARD_URL` | unset | address of a leaderboard service; see [The leaderboard](leaderboard.md) |
+| `OFFICE_LEADERBOARD_URL` | the hosted board | address of a different leaderboard service; see [The leaderboard](leaderboard.md) |
 | `OFFICE_TERMINAL` | unset | `1` opens the in-app terminal |
 | `OFFICE_TERMINAL_SHELL` | your `$SHELL` | |
 | `OFFICE_TERMINAL_MAX` | `4` | sessions at once |

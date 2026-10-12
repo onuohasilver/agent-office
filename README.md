@@ -11,7 +11,7 @@ walk to a desk and do it for real, in that project folder, with `claude -p`.
 ```bash
 npm install -g agent-office-studio
 cd ~/projects        # the folder whose subfolders are your projects
-agentoffice          # or: agentstudio. Serves on http://localhost:4317
+agentoffice          # or: agentstudio. Serves on http://localhost:4317, or any free port (`--port <n>` to choose; the URL is printed)
 ```
 
 Or from source:

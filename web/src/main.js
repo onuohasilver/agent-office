@@ -5,6 +5,7 @@ import './pwa.js';
 import './theme.js';
 import { setAccess } from './account.js';
 import { setLeaderboard } from './leaderboard.js';
+import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -16,11 +17,80 @@ import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard } from '.
 import { Agent } from './agent.js';
 import { BreakRoom } from './breakroom.js';
 import { PoolRoom } from './pool.js';
+import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
 import { TerminalDrawer } from './terminal.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
+
+// ---------- side panel width: drag the grip, arrow keys nudge, remembered ----------
+
+{
+  const app = document.getElementById('app');
+  const grip = document.getElementById('side-grip');
+  const KEY = 'office.sideWidth', MIN = 320, STEP = 24;
+  const max = () => Math.max(MIN, Math.min(900, innerWidth - 420));
+  const set = (w) => app.style.setProperty('--side-w', `${Math.round(Math.min(max(), Math.max(MIN, w)))}px`);
+  const saved = Number(localStorage.getItem(KEY));
+  if (saved) set(saved);
+  const current = () => grip.parentElement.getBoundingClientRect().width;
+  const save = () => localStorage.setItem(KEY, String(Math.round(current())));
+  grip.addEventListener('pointerdown', (e) => {
+    grip.setPointerCapture(e.pointerId);
+    app.classList.add('resizing');
+    e.preventDefault();
+  });
+  grip.addEventListener('pointermove', (e) => {
+    if (grip.hasPointerCapture(e.pointerId)) set(e.clientX);
+  });
+  const end = (e) => {
+    if (!grip.hasPointerCapture(e.pointerId)) return;
+    grip.releasePointerCapture(e.pointerId);
+    app.classList.remove('resizing');
+    save();
+  };
+  grip.addEventListener('pointerup', end);
+  grip.addEventListener('pointercancel', end);
+  grip.addEventListener('dblclick', () => { app.style.removeProperty('--side-w'); localStorage.removeItem(KEY); });
+  grip.addEventListener('keydown', (e) => {
+    const d = e.key === 'ArrowLeft' ? -STEP : e.key === 'ArrowRight' ? STEP : 0;
+    if (!d) return;
+    e.preventDefault();
+    set(current() + d);
+    save();
+  });
+}
+
+// ---------- text zoom: Ctrl/Cmd + / - / 0 scales the side panel, not the whole page ----------
+
+{
+  const app = document.getElementById('app');
+  const KEY = 'office.sideZoom', MIN = 0.8, MAX = 1.8;
+  const set = (z) => {
+    z = Math.round(Math.min(MAX, Math.max(MIN, z)) * 100) / 100;
+    app.style.setProperty('--side-zoom', String(z));
+    if (z === 1) localStorage.removeItem(KEY); else localStorage.setItem(KEY, String(z));
+    return z;
+  };
+  let zoom = Number(localStorage.getItem(KEY)) || 1;
+  set(zoom);
+  addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+    const k = e.key;
+    if (k === '+' || k === '=') zoom = set(zoom + 0.1);
+    else if (k === '-' || k === '_') zoom = set(zoom - 0.1);
+    else if (k === '0') zoom = set(1);
+    else return;
+    e.preventDefault();
+  });
+  // Ctrl + wheel / trackpad pinch over the panel zooms it the same way.
+  document.querySelector('.side').addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    zoom = set(zoom - Math.sign(e.deltaY) * 0.05);
+  }, { passive: false });
+}
 
 // ---------- renderer, camera, light ----------
 
@@ -185,6 +255,7 @@ const terminal = new TerminalDrawer({ api, toast: (t, k) => hud.toast(t, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
 const poolRoom = new PoolRoom(scene, office);
+const visitors = new Visitors({ world, labels, camera, canvas: renderer.domElement });
 chief.want = 'desk';
 chief.teleport('desk');
 
@@ -222,8 +293,9 @@ app.select = (agentId, openJob = true) => {
   if (current?.status !== 'working') hud.toast(`${agent.name} is between jobs. Press N to give them one.`, '', { label: 'Send home', run: () => app.dismiss(agent.id) });
 };
 
-app.dismiss = (id) => hud.post(`/api/staff/${id}/dismiss`);
-app.recall = (id) => hud.post(`/api/staff/${id}/recall`);
+// A guest can't change the host's staff.
+app.dismiss = (id) => !visiting.on && hud.post(`/api/staff/${id}/dismiss`);
+app.recall = (id) => !visiting.on && hud.post(`/api/staff/${id}/recall`);
 
 function hire(firstLoad, greeting) {
   app.onFloor().forEach((s) => {
@@ -283,21 +355,28 @@ function adjourn() {
 
 let firstHello = true;
 function connect() {
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  const path = visiting.on ? `/ws/visit/${encodeURIComponent(visiting.link)}` : '/ws';
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}${path}`);
   ws.onmessage = (ev) => handle(JSON.parse(ev.data));
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    // The host unlinked us (4404) or can't be reached (4502): say so, and
+    // only keep trying in the second case.
+    const wait = visitClosed(ev.code);
+    if (wait != null) { if (wait) setTimeout(connect, wait); return; }
     hud.toast('Lost the office line. Reconnecting…', 'bad');
     setTimeout(connect, 1500);
   };
 }
 
 function handle(msg) {
+  if (visitors.handle(msg)) return;
   if (msg.t === 'hello') {
+    setVisiting(msg.visiting);
     app.staff = msg.staff;
     app.voice = msg.voice;
     tts = msg.tts || tts;
     paintSpeak();
-    app.modes = msg.modes;
+    app.modes = capModes(msg.modes);
     app.progress = msg.progress;
     app.chiefCost = msg.chiefCost || 0;
     app.jobs = new Map(msg.jobs.map((j) => [j.id, j]));
@@ -313,6 +392,7 @@ function handle(msg) {
     hud.renderUsage(msg.usage);
     setAccess(msg.auth);
     setLeaderboard(msg.leaderboard);
+    setLinks(msg.links);
     hud.renderProc(msg.procs, msg.machine);
     app.refreshLists();
     const todos = latestTodos();
@@ -397,6 +477,8 @@ function handle(msg) {
     setAccess(msg.auth);
   } else if (msg.t === 'leaderboard') {
     setLeaderboard(msg.leaderboard);
+  } else if (msg.t === 'links') {
+    setLinks(msg);
   } else if (msg.t === 'usage') {
     hud.renderUsage(msg.usage);
   } else if (msg.t === 'proc') {
@@ -690,6 +772,7 @@ function frame() {
   breakRoom.update([...app.agents.values()], t);
   poolRoom.update([...app.agents.values()], t, dt);
   chief.update(dt, t);
+  visitors.update(dt, t);
   confetti.update(dt);
   office.globe.rotation.y += dt * 0.4;
 
@@ -703,12 +786,13 @@ function frame() {
   // Zoomed far out, names stay but speech bubbles step back.
   const isFar = camera.position.distanceTo(controls.target) > 74;
   const onScreen = [];
-  for (const a of [...app.agents.values(), chief]) {
+  for (const a of [...app.agents.values(), chief, ...visitors.list]) {
     if (isFar !== far) { a.label.classList.toggle('far', isFar); a.labelDirty = true; }
     a.placeLabel(camera, viewW, viewH);
     if (a.onScreen) onScreen.push(a);
   }
   declutter(onScreen, dt, t);
+  visitors.placeSign(viewW, viewH);
   far = isFar;
   requestAnimationFrame(frame);
 }

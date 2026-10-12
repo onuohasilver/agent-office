@@ -5,8 +5,9 @@ Find the message you're seeing, or the symptom.
 ## The office won't start
 
 **`Error: listen EADDRINUSE: address already in use 127.0.0.1:4317`**
-Something is already on that port — usually another office. Find it with
-`lsof -i :4317`, or start this one elsewhere: `PORT=4400 npm start`.
+Something is already on that port — usually another office. `agentoffice`
+picks a free port on its own; to choose, use `agentoffice --port 4400`. With
+`npm start`, find the other one with `lsof -i :4317` or set `PORT=4400`.
 
 **The page says "No build yet."**
 The server is running but `dist/` is empty. Run `npm run build`, or use
@@ -17,6 +18,16 @@ Open the browser console. The office needs WebGL; if it's disabled (some
 remote desktops and VMs), the 3D view can't draw.
 
 ## Jobs don't run
+
+**Every message gets "I couldn't route that one".**
+The chief is a short `claude -p` call, and it failed. The words after the colon
+say why: an error from `claude` itself (signed out, out of credit, a model your
+plan can't use), a timeout, or `claude` exiting without answering. To see the
+same thing yourself, run this in the terminal you start the office from:
+`claude -p --model sonnet "hi"`. It should answer within a few seconds. Fix
+whatever it complains about, then send the message again. Versions before
+0.3.0 only ever said "The chief could not decide"; update to see the reason.
+`/standup` and `/restart` don't go through the chief.
 
 **A job fails with "Could not start claude: spawn claude ENOENT".**
 Claude Code isn't on the `PATH` the office was started with. Check

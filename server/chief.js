@@ -90,7 +90,8 @@ function ask(context, { bin, model, timeoutMs, env, images }) {
     let out = '', err = '';
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
-    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', () => {
       clearTimeout(timer);
@@ -99,7 +100,7 @@ function ask(context, { bin, model, timeoutMs, env, images }) {
         const decision = r.structured_output || JSON.parse(r.result);
         resolve({ ...decision, cost: r.total_cost_usd || 0 });
       } catch {
-        reject(new Error(err.trim().split('\n').pop() || 'The chief could not decide.'));
+        reject(new Error(whyNot(out, err, streamed, timedOut, timeoutMs)));
       }
     });
     child.stdin.on('error', () => {});
@@ -119,6 +120,21 @@ function message(context, images) {
 }
 
 // The decision is in the last line of the stream, the one the run ends on.
+// Why a routing call gave no decision, in words the boss can act on. claude
+// reports most failures (not signed in, out of credit, a model the account
+// can't use) inside its JSON on stdout with nothing on stderr, so read that
+// before falling back.
+function whyNot(out, err, streamed, timedOut, timeoutMs) {
+  if (timedOut) return `The chief took longer than ${Math.round(timeoutMs / 1000)} seconds to answer. Check that \`claude -p "hi"\` answers in a terminal.`;
+  let r = null;
+  try { r = streamed ? result(out) : JSON.parse(out); } catch {}
+  const said = String(r?.is_error ? r.result || r.subtype || '' : '').trim();
+  if (said) return `claude said: ${said.split('\n')[0].slice(0, 300)}`;
+  const last = err.trim().split('\n').pop();
+  if (last) return last.slice(0, 300);
+  return out.trim() ? 'The chief could not decide.' : 'claude exited without answering. Check that `claude -p "hi"` answers in a terminal.';
+}
+
 function result(out) {
   for (const line of out.trim().split('\n').reverse()) {
     try {

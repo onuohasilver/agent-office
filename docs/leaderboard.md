@@ -1,7 +1,8 @@
 # The leaderboard
 
 An optional board where offices compare how much they got done. It is off
-until you join, and it needs a leaderboard service somebody hosts (see
+until you join. Every office uses the same hosted service, https://agent-office-leaderboard.agent-office-leaderboard.workers.dev,
+so there is nothing to set up (the service's code is in
 [`leaderboard/`](../leaderboard/README.md)).
 
 ## What is ranked
@@ -49,17 +50,18 @@ those day counters. Boards list handles and totals.
 ## Leaving
 
 "Leave and delete my data" asks the service to delete your handle and counters,
-then forgets the secret here. If the service can't be reached, nothing changes
+then forgets the secret here. If you have [linked offices](linked-offices.md), only your counters are deleted: the handle stays, because the links need it. If the service can't be reached, nothing changes
 and you can try again. Your local `data/activity.json` stays; delete it if you
 want that gone too.
 
-## Setting it up
+## Using a different service
 
-Set the address of your service and restart the office:
+The hosted address is built in. To use a board you host yourself instead, set
+its address and restart the office:
 
 ```
 OFFICE_LEADERBOARD_URL=https://your-service.example npm start
 ```
 
-It must be `https` (plain `http` works only for `localhost`). Without it the
-panel says no leaderboard is set up and nothing is ever sent.
+It must be `https` (plain `http` works only for `localhost`). Either way,
+nothing is sent until you join.

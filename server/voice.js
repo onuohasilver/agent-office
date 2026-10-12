@@ -89,7 +89,9 @@ export async function transcribe(file, { dataDir, prompt = '', threads = Math.ma
   if (!model) throw new Error(`No speech model installed. ${MODEL_HINT}`);
   const wav = path.join(path.dirname(file), 'voice.wav');
   try {
-    await run(FFMPEG, ['-nostdin', '-loglevel', 'error', '-y', '-i', file, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav]);
+    // Local files and pipes only: a crafted upload (an HLS playlist, say) could
+    // otherwise have ffmpeg fetch URLs, from this machine's network position.
+    await run(FFMPEG, ['-nostdin', '-loglevel', 'error', '-y', '-protocol_whitelist', 'file,pipe', '-i', file, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', wav]);
     const out = await run(WHISPER, [
       '-m', model, '-f', wav,
       '-nt', '-np', '-l', 'en', '-sns', '-t', String(threads),

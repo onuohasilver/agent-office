@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const RESTART = 75;
+const FATAL = 78; // a setup problem (port taken) that another go won't fix
 const SERVER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'index.js');
 // A server that falls over this soon after a restart won't fare better on
 // the next go, so a few of those in a row ends it rather than spinning.
@@ -31,6 +32,7 @@ function run() {
       console.log('Restarting the office…');
       return run();
     }
+    if (code === FATAL) return process.exit(1);
     // Ctrl-C reaches the server too, and it exits 0: that's closing time.
     if (code === 0 || signal) return process.exit(code ?? 0);
     if (Date.now() - startedAt < BOOT_MS && ++quickFails >= MAX_QUICK_FAILS) {

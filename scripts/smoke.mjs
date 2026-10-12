@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { WebSocket } from 'ws';
 
 const APP = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const PORT = 4300 + Math.floor(Math.random() * 600);
@@ -46,7 +47,11 @@ git('-c', 'user.email=smoke@example.com', '-c', 'user.name=smoke', 'commit', '-q
 const stub = path.join(tmp, 'claude');
 fs.writeFileSync(stub, `#!${process.execPath}
 const fs = require('fs');
-fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), key: process.env.ANTHROPIC_API_KEY || null }) + '\\n');
+const args = process.argv.slice(2);
+const mcpAt = args[args.indexOf('--mcp-config') + 1];
+let mcp = null;
+try { mcp = { path: mcpAt, mode: fs.statSync(mcpAt).mode & 0o777, body: JSON.parse(fs.readFileSync(mcpAt, 'utf8')) }; } catch {}
+fs.appendFileSync(${JSON.stringify(record)}, JSON.stringify({ args, cwd: process.cwd(), key: process.env.ANTHROPIC_API_KEY || null, mcp }) + '\\n');
 process.stdin.once('data', () => {
   fs.appendFileSync('README.md', 'edited by the stub\\n');
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
@@ -85,8 +90,11 @@ async function check(name, fn) {
   catch (err) { failed++; console.log(`FAIL  ${name}: ${err.message}`); }
 }
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
-const get = (p, headers) => fetch(BASE + p, { headers });
-const post = (p, body) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+// The office key, as the browser holds it after opening the printed link.
+const keyFile = path.join(app, 'data', 'office-key');
+const cookie = () => (fs.existsSync(keyFile) ? `office_key_${PORT}=${fs.readFileSync(keyFile, 'utf8').trim()}` : '');
+const get = (p, headers = {}) => fetch(BASE + p, { headers: { cookie: cookie(), ...headers } });
+const post = (p, body) => fetch(BASE + p, { method: 'POST', headers: { 'content-type': 'application/json', cookie: cookie() }, body: JSON.stringify(body) });
 const calls = () => (fs.existsSync(record) ? fs.readFileSync(record, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 async function until(what, fn, ms = 15000) {
   for (const end = Date.now() + ms; Date.now() < end; await sleep(150)) {
@@ -110,6 +118,49 @@ try {
   await check('refuses other origins', async () => {
     const res = await get('/api/repos', { origin: 'https://evil.example' });
     assert(res.status === 403, `status ${res.status}`);
+  });
+  await check('locks the office without its key', async () => {
+    const page = await fetch(BASE + '/');
+    assert(page.status === 401 && (await page.text()).includes('locked'), `page: status ${page.status}`);
+    const api = await fetch(BASE + '/api/repos');
+    assert(api.status === 401, `api: status ${api.status}`);
+    const wrong = await fetch(BASE + '/?key=' + '0'.repeat(64), { redirect: 'manual' });
+    assert(wrong.status === 401 && !wrong.headers.get('set-cookie'), `wrong key: status ${wrong.status}`);
+    const asset = await fetch(BASE + '/manifest.webmanifest');
+    assert(asset.status === 200, `asset: status ${asset.status}`);
+    const st = fs.statSync(keyFile);
+    assert((st.mode & 0o077) === 0, `key file mode ${(st.mode & 0o777).toString(8)}`);
+  });
+  await check('the printed link opens it', async () => {
+    const link = /Agent Office open on (\S+)/.exec(log)?.[1];
+    assert(link?.includes('?key='), 'no key in the startup line');
+    const res = await fetch(link.replace(/localhost/, '127.0.0.1'), { redirect: 'manual' });
+    const set = res.headers.get('set-cookie') || '';
+    assert(res.status === 303 && res.headers.get('location') === '/', `status ${res.status}`);
+    assert(set.startsWith(cookie() + ';') && /HttpOnly/.test(set) && /SameSite=Strict/.test(set), set);
+  });
+  await check('the socket needs the key too', async () => {
+    const open = (headers) => new Promise((resolve) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers });
+      ws.on('message', (d) => { ws.close(); resolve(JSON.parse(d).t); });
+      ws.on('error', () => resolve('refused'));
+      ws.on('unexpected-response', (_, res) => resolve(`refused ${res.statusCode}`));
+    });
+    const without = await open({});
+    assert(without.startsWith('refused'), `without the key: ${without}`);
+    const withKey = await open({ cookie: cookie() });
+    assert(withKey === 'hello', `with the key: ${withKey}`);
+  });
+  await check('refuses other localhost ports', async () => {
+    const res = await get('/api/repos', { origin: 'http://localhost:3000' });
+    assert(res.status === 403, `status ${res.status}`);
+    const own = await get('/api/repos', { origin: `http://localhost:${PORT}` });
+    assert(own.status === 200, `own origin: status ${own.status}`);
+  });
+  await check('survives a malformed path', async () => {
+    const res = await get('/%E0');
+    assert(res.status === 400, `status ${res.status}`);
+    assert((await get('/api/repos')).ok, 'server down after it');
   });
   await check('refuses other hosts', async () => {
     // fetch won't send a Host header of our choosing, so this one goes raw.
@@ -137,6 +188,15 @@ try {
     assert(call.args.join(' ').includes('--permission-mode acceptEdits'), 'clearance not passed');
     assert(fs.realpathSync(call.cwd) === fs.realpathSync(project), `ran in ${call.cwd}`);
     assert(call.key === null, 'an API key reached claude in login mode');
+  });
+  await check("keeps the job's office token off claude's command line", async () => {
+    const call = calls()[0];
+    assert(call?.mcp, 'no readable --mcp-config file');
+    const token = call.mcp.body.mcpServers?.office?.env?.OFFICE_TOKEN;
+    assert(token && call.mcp.body.mcpServers.office.env.OFFICE_JOB, 'the config file has no job or token');
+    assert(!call.args.join(' ').includes(token), 'the token is on the command line');
+    assert(call.mcp.mode === 0o600, `config file mode ${call.mcp.mode.toString(8)}`);
+    await until('the config file to go with the session', () => !fs.existsSync(call.mcp.path));
   });
   await check('the job finishes and records what changed', async () => {
     assert(job, 'no job');
@@ -173,7 +233,7 @@ try {
     assert((fs.statSync(idFile).mode & 0o077) === 0, 'identity file is readable by others');
   });
   await check('leaving asks the service to forget and clears the identity', async () => {
-    const res = await fetch(BASE + '/api/leaderboard', { method: 'DELETE' });
+    const res = await fetch(BASE + '/api/leaderboard', { method: 'DELETE', headers: { cookie: cookie() } });
     assert(res.status === 200 && !(await res.json()).joined, `status ${res.status}`);
     assert(sent.some((r) => r.method === 'DELETE' && r.url === '/v1/me'), JSON.stringify(sent));
     assert(!fs.existsSync(path.join(app, 'data', 'leaderboard.json')), 'identity kept');

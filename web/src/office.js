@@ -1029,6 +1029,16 @@ export function buildOffice(scene) {
     { pos: new THREE.Vector3(POOL.x + 0.9, 0, POOL.z + 1.65), face: face.n, pose: 'stand', taken: null, game: true },
   );
 
+  // Visitors from linked offices never take a desk. Working, they stand at a
+  // hot-desk spot under the kanban wall. On a break they watch the pool or
+  // take a coffee (the same mug spots as ours, so nobody shares a spot). In a
+  // meeting they stand around the communal table.
+  const toward = (x, z, cx, cz, pose) => ({ pos: new THREE.Vector3(x, 0, z), face: Math.atan2(cx - x, cz - z), pose, taken: null });
+  stations.hotdesk = { label: 'Hot desks', spots: [-4.5, -2.7, -0.9, 0.9, 2.7, 4.5].map((x) => toward(x, -13.4, x, -15, 'read')) };
+  stations.poolside = { label: 'Pool table', spots: [[4.9, 10.9], [10.3, 10.9], [9.6, 8.8], [5.6, 8.8]].map(([x, z]) => toward(x, z, POOL.x, POOL.z, 'mug')) };
+  stations.coffee = { label: 'Coffee', spots: stations.lounge.spots.filter((s) => s.pose === 'mug') };
+  stations.huddle = { label: 'Break-room table', spots: [[-4.5, 11], [-4.5, 12.2], [2.5, 11], [2.5, 12.2], [-1.85, 9.6], [-0.15, 9.6]].map(([x, z]) => toward(x, z, -1, 11.6, 'stand')) };
+
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
   return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(18.6, 0, 14.4), reception: { seat: new THREE.Vector3(15.5, 0, 9.6), seatY: SEAT } };
 }
