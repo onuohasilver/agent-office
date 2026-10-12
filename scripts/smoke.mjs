@@ -63,6 +63,7 @@ process.stdin.once('data', (buf) => setTimeout(async () => {
   fs.appendFileSync('README.md', 'edited by the stub\\n');
   const out = (o) => process.stdout.write(JSON.stringify(o) + '\\n');
   out({ type: 'system', subtype: 'init', session_id: 'smoke-session', model: 'stub' });
+  out({ type: 'assistant', message: { content: [{ type: 'text', text: 'Working on it.' }], usage: { input_tokens: 120, cache_read_input_tokens: 5000 } } });
   out({ type: 'result', subtype: 'success', is_error: false, result: 'Done.', session_id: 'smoke-session', total_cost_usd: 0, duration_ms: 3000, usage: { input_tokens: 120, output_tokens: 80, cache_read_input_tokens: 5000 } });
   process.exit(0);
 }, 2000));
