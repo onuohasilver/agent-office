@@ -6,6 +6,11 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+## 0.7.0 — 2026-10-12
+
+### Added
+- A host's lent agent can work in your own projects. Make the host your guest as well, with **Their agents** on and the project shared, then tag it as usual: `@Ada@friend #mine ...`. The agent runs at the host, on the host's account and within your token allowance there, and reaches your project through the same six file tools, in a copy you review and apply like any other visit. Both offices need 0.7.0 or later; if something is missing, the chief says what to change instead of running the agent in the host's folder. See [Linked offices](docs/linked-offices.md#using-a-lent-agent-in-your-own-projects).
+
 ## 0.6.0 — 2026-10-12
 
 ### Added

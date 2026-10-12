@@ -128,7 +128,7 @@ you. To have one work in one of yours, make the host your guest as well, with
 `@Ada@friend #mine what is this project about`. The agent runs at the host,
 on the host's account and within your token allowance there, and reaches
 `mine` through the same six file tools, in a copy you review and apply like any
-other visit. Both offices need a version newer than 0.6.0. If something is missing, the chief
+other visit. Both offices need 0.7.0 or later. If something is missing, the chief
 tells you what to change rather than running the agent in the host's folder.
 
 ## What the service keeps

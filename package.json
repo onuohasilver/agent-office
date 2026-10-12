@@ -1,6 +1,6 @@
 {
   "name": "agent-office-studio",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A 3D office where the staff are Claude Code agents.",
   "license": "MIT",
   "files": [
