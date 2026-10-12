@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -342,8 +343,17 @@ const publicJob = (j, tail = 40) => {
   const { stopRequested, lastTurn, sent, handoffs, ...rest } = j;
   return { ...rest, log: j.log.slice(-tail) };
 };
+// Whose office this is: OFFICE_OWNER, else the first name on this account.
+const OWNER = (() => {
+  const set = String(process.env.OFFICE_OWNER || '').trim();
+  if (set) return set.slice(0, 40);
+  let full = '';
+  if (process.platform === 'darwin') full = spawnSync('/usr/bin/id', ['-F'], { encoding: 'utf8' }).stdout?.trim() || '';
+  return (full.split(/\s+/)[0] || os.userInfo().username || '').slice(0, 40);
+})();
 const snapshot = () => ({
   t: 'hello',
+  owner: OWNER,
   staff: STAFF,
   modes: Object.fromEntries(Object.entries(MODES).map(([k, v]) => [k, v.label])),
   progress: progress(),

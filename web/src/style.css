@@ -15,7 +15,7 @@
   --pane: color-mix(in srgb, var(--paper) 58%, transparent);
   --pane-edge: color-mix(in srgb, #fff 55%, var(--line));
   --t1: rgba(29, 27, 24, 0.05);
-  --t2: var(--t2);
+  --t2: rgba(29, 27, 24, 0.07);
   --t3: rgba(29, 27, 24, 0.1);
   --good-bg: #dcefe2; --good-fg: #25653f;
   --bad-bg: #f7e0db; --bad-fg: #9a3424;
@@ -262,33 +262,73 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .app.visiting :is(#termToggle, #term, #lbBtn, #linkBtn, #acctBtn, #lbPop, #linkPop, #acctPop, #clear, #standup, #away),
 .app.visiting :is(.tabs [data-tab="team"], .mnav [data-m="team"], #teamPane) { display: none !important; }
 .brand .title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
-.brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.025em; }
-.lv {
-  padding: 3px 9px; border-radius: 999px; background: var(--ink); color: var(--paper);
-  font-size: 11.5px; font-weight: 640; font-variant-numeric: tabular-nums;
+.title-start { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand h1 {
+  margin: 0; font-size: 20px; font-weight: 720; letter-spacing: -0.03em; white-space: nowrap;
+  background: linear-gradient(120deg, var(--ink) 40%, color-mix(in srgb, var(--accent) 75%, var(--ink)) 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
-.level { display: flex; gap: 10px; align-items: center; }
-.xpbar { flex: 1; height: 4px; border-radius: 2px; background: var(--t2); overflow: hidden; }
-.xpbar i { display: block; height: 100%; width: 0; background: var(--accent); border-radius: 2px; transition: width 0.8s var(--ease); }
-.xp { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 
-/* plan usage: two small tiles under the level */
-.usage { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.usage[hidden], .meter[hidden] { display: none; }
-#load { margin-top: 8px; }
-.meter {
-  display: grid; grid-template-columns: 1fr auto; row-gap: 6px; align-items: baseline;
-  padding: 9px 11px 8px; border-radius: 10px; background: var(--paper-2); cursor: default;
+/* Progress is drawn as SVG rings: --p (0-100) is set from hud.js, and the
+   arc's pathLength of 100 lets the dash offset take it straight. */
+.lv svg, .meter .bar { display: block; overflow: visible; transform: rotate(-90deg); }
+.trk, .arc { fill: none; stroke-width: 3; }
+.trk { stroke: var(--t3); }
+.arc {
+  stroke: var(--ring, var(--bar, var(--accent))); stroke-linecap: round;
+  stroke-dasharray: 100; stroke-dashoffset: calc(100 - max(var(--p, 0), 0.01));
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--ring, var(--bar, var(--accent))) 45%, transparent));
+  transition: stroke-dashoffset 0.9s var(--ease), stroke 0.3s;
 }
-.meter .k { font-size: 11px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.02em; }
-.meter .v { font-size: 14px; font-weight: 680; color: var(--ink); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
-.meter .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--t2); overflow: hidden; }
-.meter .bar i { display: block; height: 100%; width: 0; background: var(--work); border-radius: 2px; transition: width 0.8s var(--ease), background 0.3s; }
-.meter .r { grid-column: 1 / -1; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.meter .r:empty { display: none; }
-.meter.warm .bar i { background: var(--wait); }
-.meter.hot .bar i { background: var(--bad); }
+/* the level badge: the ring is the XP, the number sits in the middle */
+.lv { --ring: var(--accent); position: relative; flex: none; width: 34px; height: 34px; display: grid; place-items: center; cursor: default; }
+.lv svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.lv .trk, .lv .arc { stroke-width: 2.6; }
+.lv b {
+  position: relative; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, #fff), color-mix(in srgb, var(--accent) 80%, #000));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.3), 0 2px 6px -2px color-mix(in srgb, var(--accent) 70%, transparent);
+  color: #fff; font-size: 11.5px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+}
+.level { display: none; }
+
+/* plan usage and machine load: one flat strip of ring gauges, split by hairlines */
+.gauges[hidden] { display: none; }
+.brand h1 { cursor: pointer; }
+.fold {
+  all: unset; cursor: pointer; flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; color: var(--ink-3);
+  transition: color 0.15s, background 0.15s;
+}
+.fold:hover { color: var(--ink); background: var(--t2); }
+.fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fold svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s var(--ease); }
+.fold[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .fold svg { transition: none; } }
+.gauges {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+  padding: 10px 0 2px; border-top: 1px solid var(--line);
+}
+.usage, #load { display: contents; }
+.usage[hidden], #load[hidden], .meter[hidden] { display: none; }
+.meter {
+  --bar: var(--work);
+  display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "ring v" "ring k"; column-gap: 8px; align-items: center;
+  padding: 0 10px; min-width: 0; cursor: default; position: relative;
+}
+#useSession { padding-left: 0; }
+.meter:not(#useSession)::before {
+  content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 1px; background: var(--line);
+}
+.meter .bar { grid-area: ring; width: 30px; height: 30px; }
+.meter .ico { fill: none; stroke: var(--ink-3); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; transform: rotate(90deg); transform-origin: 18px 18px; }
+.meter.hot .ico { stroke: var(--bad); }
+.meter .k { grid-area: k; font-size: 9.5px; font-weight: 650; color: var(--ink-3); letter-spacing: 0.07em; text-transform: uppercase; line-height: 1.2; }
+.meter .v { grid-area: v; font-size: 13.5px; font-weight: 700; color: var(--ink); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.2; white-space: nowrap; }
+.meter .r { display: none; }
+.meter.warm { --bar: var(--wait); }
+.meter.hot { --bar: var(--bad); }
 .meter.hot .v { color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .arc { transition: none; } }
 .u-err { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--ink-3); }
 
 .tabs { display: flex; gap: 2px; padding: 0 12px 8px; border-bottom: 1px solid var(--line); }
@@ -374,7 +414,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 .channels {
   flex: none; display: flex; gap: 4px; align-items: center; overflow-x: auto; scrollbar-width: none;
-  padding: 8px 12px 0;
+  padding: 8px 12px 6px;
 }
 .channels::-webkit-scrollbar { display: none; }
 .channel {
@@ -400,7 +440,14 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- chat ---------- */
 
-.msgs { flex: 1; overflow-y: auto; padding: 14px 20px 8px; display: flex; flex-direction: column; gap: 16px; }
+.msgs {
+  flex: 1; overflow-y: auto; padding: 10px 20px 8px; display: flex; flex-direction: column; gap: 4px;
+  /* messages dissolve under the channel bar instead of being sliced off by it */
+  -webkit-mask-image: linear-gradient(transparent, #000 14px); mask-image: linear-gradient(transparent, #000 14px);
+}
+/* Each message is a row with a little air around it, so the hover wash and the
+   gap between messages come from the same padding and stay even. */
+.msg { position: relative; margin: 0 -10px; padding: 7px 10px; border-radius: 12px; transition: background 0.15s; }
 .msg .who { display: flex; align-items: center; gap: 6px; font-size: 12.5px; margin-bottom: 3px; }
 .msg .who i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .msg .who b { font-weight: 640; }
@@ -421,9 +468,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .msg .kind { font-size: 11px; font-weight: 620; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 3px 14px; }
 .msg.clamp:not(.full) .body { max-height: 190px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
 .msg .acts { display: flex; gap: 12px; align-items: center; padding-left: 14px; margin-top: 6px; flex-wrap: wrap; }
-.msg { position: relative; }
 .msg .reacts { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding-left: 14px; margin-top: 5px; }
-.msg .reacts:not(.some) { position: absolute; top: -4px; right: 0; margin: 0; }
+.msg .reacts:not(.some) { position: absolute; top: 5px; right: 8px; margin: 0; }
 .msg .reacts button { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; font-size: 13px; line-height: 1; }
 .msg .reacts .pill { padding: 3px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--paper); }
 .msg .reacts .pill span { font-size: 11.5px; font-weight: 620; color: var(--ink-2); font-variant-numeric: tabular-nums; }
@@ -443,6 +489,12 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .msg .acts .icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .msg .acts .icon.quiet { opacity: 0; transition: opacity 120ms; }
 .msg:hover .acts .icon.quiet, .msg .acts .icon.quiet:focus-visible { opacity: 1; }
+@media (hover: hover) {
+  .msg:hover { background: var(--t1); }
+  /* A row of nothing but hover-only icons used to hold open an empty line under
+     the message. It floats by the reaction button instead and shows on hover. */
+  .msg .acts:not(:has(> :not(.quiet))) { position: absolute; top: 9px; right: 46px; margin: 0; padding: 0; }
+}
 .msg .thread-sum {
   all: unset; cursor: pointer; display: flex; align-items: center; gap: 6px; margin: 6px 0 0 8px; padding: 4px 8px;
   border-radius: 8px; font-size: 12.5px; max-width: calc(100% - 24px); box-sizing: border-box;
@@ -457,7 +509,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .thread-count::after { content: ''; flex: 1; height: 1px; background: var(--line); }
 .msg .blocked { margin: 6px 0 0 14px; font-size: 12.5px; color: var(--bad); }
 .link { all: unset; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--accent); }
-.link:hover { text-decoration: underline; }
+.link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.msg .acts .link { font-weight: 560; }
 .tag { font-weight: 600; color: var(--accent); }
 
 .typing { flex: none; padding: 0 20px 8px 34px; font-size: 12px; color: var(--ink-3); display: flex; align-items: center; gap: 3px; }
@@ -703,10 +756,7 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
   .brand h1 { font-size: 18px; }
   /* Plan usage and machine load stay visible, just tighter: the reset time is
      kept for the plan (it's the useful bit) and dropped for CPU/memory. */
-  .usage { gap: 6px; margin-top: 8px; }
-  #load { margin-top: 6px; }
   .meter { padding: 6px 10px 6px; row-gap: 4px; }
-  #load .meter .r { display: none; }
   .tabs { display: none; }
   .msgs { padding: 12px 14px 8px; }
   .channels { padding: 8px 10px 0; }

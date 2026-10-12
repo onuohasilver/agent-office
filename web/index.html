@@ -24,7 +24,7 @@
         } catch (e) {}
       })();
     </script>
-    <title>Agent Office</title>
+    <title>Office</title>
   </head>
   <body>
     <div class="app" id="app" data-m="office">
@@ -32,9 +32,12 @@
         <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
         <header class="brand">
           <div class="title">
-            <h1>Agent Office</h1>
+            <span class="title-start">
+              <span class="lv" role="img" id="lv" aria-label="Level 1"><svg viewBox="0 0 36 36" aria-hidden="true"><circle class="trk" cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15" pathLength="100"/></svg><b id="lvNum">1</b></span>
+              <h1 id="officeName">Your Office</h1>
+              <button type="button" class="fold" id="fold" aria-label="Show usage" aria-expanded="false" aria-controls="gaugesBox" title="Show usage"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            </span>
             <span class="title-end">
-              <span class="lv" id="lv">Lv 1</span>
               <button type="button" class="theme-btn" id="lbBtn" aria-label="Leaderboard" aria-haspopup="true" aria-expanded="false" title="Leaderboard">
                 <svg viewBox="0 0 24 24"><path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5v1a3 3 0 0 0 3 3"/><path d="M16 6h3v1a3 3 0 0 1-3 3"/><path d="M12 13v4"/><path d="M8.5 20h7"/></svg>
               </button>
@@ -57,17 +60,18 @@
             <div class="xpbar"><i id="xpbar"></i></div>
             <span class="xp" id="xptext">0 / 100 XP</span>
           </div>
+          <div class="gauges" id="gaugesBox" hidden>
           <div class="usage" id="usage" aria-label="Plan usage">
             <div class="meter" id="useSession">
               <span class="k">Session</span>
               <span class="v"></span>
-              <div class="bar"><i></i></div>
+              <svg class="bar" viewBox="0 0 36 36" aria-hidden="true"><circle class="trk" cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15" pathLength="100"/><g class="ico"><path d="M18 13v5l3 2"/></g></svg>
               <span class="r"></span>
             </div>
             <div class="meter" id="useWeek">
               <span class="k">Week</span>
               <span class="v"></span>
-              <div class="bar"><i></i></div>
+              <svg class="bar" viewBox="0 0 36 36" aria-hidden="true"><circle class="trk" cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15" pathLength="100"/><g class="ico"><rect x="13" y="14" width="10" height="9" rx="1.5"/><path d="M13 17.5h10M16 12.5v2.5M20 12.5v2.5"/></g></svg>
               <span class="r"></span>
             </div>
             <p class="u-err" id="useErr" hidden></p>
@@ -76,15 +80,16 @@
             <div class="meter" id="loadCpu">
               <span class="k">CPU</span>
               <span class="v"></span>
-              <div class="bar"><i></i></div>
+              <svg class="bar" viewBox="0 0 36 36" aria-hidden="true"><circle class="trk" cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15" pathLength="100"/><g class="ico"><rect x="14" y="14" width="8" height="8" rx="1.5"/><path d="M16.5 12v2M19.5 12v2M16.5 22v2M19.5 22v2M12 16.5h2M12 19.5h2M22 16.5h2M22 19.5h2"/></g></svg>
               <span class="r"></span>
             </div>
             <div class="meter" id="loadMem">
               <span class="k">Memory</span>
               <span class="v"></span>
-              <div class="bar"><i></i></div>
+              <svg class="bar" viewBox="0 0 36 36" aria-hidden="true"><circle class="trk" cx="18" cy="18" r="15"/><circle class="arc" cx="18" cy="18" r="15" pathLength="100"/><g class="ico"><rect x="12.5" y="14.5" width="11" height="7" rx="1"/><path d="M15.5 21.5v1.5M18 21.5v1.5M20.5 21.5v1.5M15.5 17h1M19.5 17h1"/></g></svg>
               <span class="r"></span>
             </div>
+          </div>
           </div>
         </header>
         <nav class="tabs">

@@ -373,6 +373,7 @@ function handle(msg) {
   if (msg.t === 'hello') {
     setVisiting(msg.visiting);
     app.staff = msg.staff;
+    if (!msg.visiting) hud.renderOwner(msg.owner);
     app.voice = msg.voice;
     tts = msg.tts || tts;
     paintSpeak();

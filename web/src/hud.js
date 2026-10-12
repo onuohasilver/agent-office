@@ -225,6 +225,7 @@ export class Hud {
     this.bindTeam();
     this.bindChat();
     this.bindChannels();
+    this.bindFold();
     this.renderChannels();
     addEventListener('keydown', (e) => {
       const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName);
@@ -236,11 +237,36 @@ export class Hud {
 
   // ---------- top bar ----------
 
+  renderOwner(name) {
+    name = String(name || '').trim();
+    const title = name ? `${name}${/s$/i.test(name) ? '’' : '’s'} Office` : 'Your Office';
+    $('officeName').textContent = title;
+    document.title = title;
+  }
+
+  bindFold() {
+    const btn = $('fold'), box = $('gaugesBox');
+    const set = (open) => {
+      box.hidden = !open;
+      btn.setAttribute('aria-expanded', String(open));
+      const t = open ? 'Hide usage' : 'Show usage';
+      btn.setAttribute('aria-label', t); btn.title = t;
+      try { localStorage.setItem('office.gauges', open ? '1' : '0'); } catch {}
+    };
+    let open = false;
+    try { open = localStorage.getItem('office.gauges') === '1'; } catch {}
+    set(open);
+    btn.addEventListener('click', () => set(box.hidden));
+    $('officeName').addEventListener('click', () => set(box.hidden));
+  }
+
   renderLevel(p) {
-    $('lv').textContent = `Lv ${p.level}`;
-    $('lv').title = `Level ${p.level}`;
-    $('xpbar').style.width = `${Math.min(100, ((p.xp - p.floor) / (p.next - p.floor)) * 100)}%`;
-    $('xptext').textContent = `${p.xp - p.floor} / ${p.next - p.floor} XP`;
+    const into = `${p.xp - p.floor} / ${p.next - p.floor} XP`;
+    $('lvNum').textContent = p.level;
+    $('lv').title = `Level ${p.level} · ${into}`;
+    $('lv').setAttribute('aria-label', `Level ${p.level}, ${into}`);
+    $('lv').style.setProperty('--p', Math.min(100, ((p.xp - p.floor) / (p.next - p.floor)) * 100));
+    $('xptext').textContent = into;
   }
 
   // Plan usage: how much of the 5-hour session and the week is gone, and
@@ -259,10 +285,10 @@ export class Hud {
       if (!m) continue;
       const left = m.resetsAt ? m.resetsAt - Date.now() : null;
       el.className = `meter ${m.pct >= 90 ? 'hot' : m.pct >= 70 ? 'warm' : ''}`;
-      el.querySelector('i').style.width = `${Math.min(100, m.pct)}%`;
+      el.style.setProperty('--p', Math.min(100, m.pct));
       el.querySelector('.v').textContent = `${m.pct}%`;
       el.querySelector('.r').textContent = left === null ? '' : left <= 0 ? 'Resetting now' : `Resets in ${countdown(left)}`;
-      el.title = m.resetsAt ? `Resets ${resetsAt(m.resetsAt)}` : '';
+      el.title = [m.resetsAt ? `Resets ${resetsAt(m.resetsAt)}` : '', el.querySelector('.r').textContent].filter(Boolean).join(' · ');
     }
   }
 
@@ -290,10 +316,10 @@ export class Hud {
     const el = $(id);
     el.hidden = false;
     el.className = `meter ${share >= 90 ? 'hot' : share >= 70 ? 'warm' : ''}`;
-    el.querySelector('i').style.width = `${Math.min(100, share)}%`;
+    el.style.setProperty('--p', Math.min(100, share));
     el.querySelector('.v').textContent = value;
     el.querySelector('.r').textContent = note;
-    el.title = title;
+    el.title = `${title} · ${note}`;
   }
 
   renderStats(jobs, extra = 0) {
