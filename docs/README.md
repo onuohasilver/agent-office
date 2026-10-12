@@ -17,7 +17,6 @@
 - [Claude access](claude-access.md) — Claude Code login or API key, and the plan meters
 - [Configuration](configuration.md) — every setting
 - [Talking out loud](voice.md) — speech in and voices out, all on this machine
-- [The terminal](terminal.md) — a real shell under the office
 - [On your phone](phone.md) — install it like an app, reach it over Tailscale
 
 **Under the hood**

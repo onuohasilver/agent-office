@@ -44,7 +44,6 @@ the chat with `#`, e.g. `#storefront`.
 | Extra | What it adds | How |
 |---|---|---|
 | Voice | talk to the office, hear it answer | [Talking out loud](voice.md) |
-| Terminal | a real shell in a drawer under the office | [The terminal](terminal.md) |
 | Phone | the office on your phone, installed like an app | [On your phone](phone.md) |
 
 ## Next

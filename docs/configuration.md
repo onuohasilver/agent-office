@@ -46,12 +46,8 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 | `PIPER_BIN` | `data/piper/venv/bin/python` | the voices live in `data/piper/voices` |
 | `FFMPEG_BIN` | `ffmpeg` | |
 
-## Terminal
+## Leaderboard
 
 | Env | Default | |
 |---|---|---|
 | `OFFICE_LEADERBOARD_URL` | the hosted board | address of a different leaderboard service; see [The leaderboard](leaderboard.md) |
-| `OFFICE_TERMINAL` | unset | `1` opens the in-app terminal |
-| `OFFICE_TERMINAL_SHELL` | your `$SHELL` | |
-| `OFFICE_TERMINAL_MAX` | `4` | sessions at once |
-| `OFFICE_TERMINAL_IDLE_MIN` | `30` | `0` never closes an idle shell |

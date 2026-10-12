@@ -27,6 +27,5 @@ On the phone, open the tailnet address once with the office key on the end,
 printed, or `agentoffice --link`). The phone keeps it after that.
 
 **Read this first.** Whoever can open that address can run Claude in your
-projects with full autonomy, and — if started with `--terminal` — get a shell on
-this machine. Only expose it on a tailnet that is just you. Never put it on
+projects with full autonomy. Only expose it on a tailnet that is just you. Never put it on
 the open internet. See [Security](security.md).

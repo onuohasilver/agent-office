@@ -13,8 +13,7 @@ The key button beside Appearance chooses how the office signs in to Claude:
 The choice applies to every `claude` the office starts: jobs, the chief,
 standup and break-room talk. With the login chosen, a stray
 `ANTHROPIC_API_KEY` in your shell is kept away from them, since `claude` would
-otherwise prefer it. Jobs already running finish the way they started. The
-in-app terminal is your own shell and never gets the office's key.
+otherwise prefer it. Jobs already running finish the way they started.
 
 ## Plan usage
 

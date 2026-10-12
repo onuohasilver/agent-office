@@ -38,5 +38,3 @@ Then restart it with `npm start`. To stay on a release, check out its tag
 - **Keep a way back:** copy the data folder before updating. Going back is
   then: stop the office, install the previous version, restore the folder,
   start.
-- **The terminal stops working after an update:** node-pty needs rebuilding;
-  see [Troubleshooting](troubleshooting.md#the-terminal-wont-open).

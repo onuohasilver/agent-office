@@ -16,7 +16,7 @@ the package.
 |---|---|---|---|
 | **npm CLI** (`npx agent-office`) | Best: the audience already has Node and Claude Code | ~1 week | data and project root must move out of the package |
 | **Homebrew tap** | Good extra for Mac users | ~1 day on top of npm | another channel to release to |
-| **Desktop app** (Electron) | Friendlier, but still needs the `claude` CLI | 3–5 weeks | signing and notarisation, auto-update, `node-pty` rebuilds |
+| **Desktop app** (Electron) | Friendlier, but still needs the `claude` CLI | 3–5 weeks | signing and notarisation, auto-update |
 | **Docker** | Poor for a local tool | ~1 week | agents edit *host* repos: bind mounts, file ownership, git/SSH keys, login inside the container |
 | **Hosted** | A different product | months | accounts, a sandbox per user, repos via GitHub, a database, API billing; the local-only security model goes |
 
@@ -34,14 +34,13 @@ if users ask for one; leave hosted until the local version has users.
       `OFFICE_DATA` override, migrating an existing `<app>/data` on first run.
 - [ ] **Project root:** default to the current directory, `--root <dir>`,
       remembered after the first run.
-- [ ] **`bin/agent-office.js`:** `--port`, `--root`, `--open`, `--terminal`;
+- [ ] **`bin/agent-office.js`:** `--port`, `--root`, `--open`;
       pick another port if 4317 is taken; open the browser.
 - [ ] **Preflight:** `claude` on `PATH`, recent enough, and signed in or given a
       key — one clear fix for each problem.
 - [ ] **Package:** publish a prebuilt `dist/`; move the web-only dependencies
-      (`three`, `marked`, `xterm`, fonts) to devDependencies so the runtime
+      (`three`, `marked`, fonts) to devDependencies so the runtime
       needs only `ws`.
-- [ ] **Terminal:** a `node-pty` build with prebuilt binaries, still optional.
 - [ ] **Voice:** `agent-office voice setup` in place of the two npm scripts.
 - [ ] **Plan meters:** hide quietly if the usage endpoint goes away.
 - [ ] **Platforms:** CI on clean macOS and Ubuntu; Windows via WSL.

@@ -86,16 +86,6 @@ browser's built-in voices.
 Browsers only allow it on `localhost` or HTTPS. Open the office at
 `http://localhost:4317`, not an IP address.
 
-## The terminal won't open
-
-**There's no terminal button, or it says the terminal is off.**
-It's off by default. Start the office with `OFFICE_TERMINAL=1 npm start`.
-
-**"node-pty is not installed."**
-It's a native module and needs build tools. On macOS:
-`xcode-select --install`, then `npm install`. On Linux: install
-`build-essential` and `python3`, then `npm install`.
-
 ## On a phone
 
 **"Local only." (HTTP 403)**

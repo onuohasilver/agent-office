@@ -21,7 +21,6 @@ import { PoolRoom } from './pool.js';
 import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
-import { TerminalDrawer } from './terminal.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -188,9 +187,6 @@ function backdrop() {
 let viewW = 1, viewH = 1;
 let touched = false;
 function resize() {
-  // The stage, not the whole column: the terminal drawer takes a bite out of
-  // the bottom of the view and the camera should be framed for what's left.
-  const prevH = viewH;
   viewW = stage.clientWidth;
   viewH = stage.clientHeight;
   renderer.setSize(viewW, viewH, false);
@@ -203,14 +199,6 @@ function resize() {
     HOME.radius = fitRadius(HOME.phi, HOME.theta, HOME.target);
     camera.position.setFromSpherical(new THREE.Spherical(HOME.radius, HOME.phi, HOME.theta)).add(HOME.target);
     controls.target.copy(HOME.target);
-  } else if (prevH > 1 && viewH > 1 && viewH !== prevH) {
-    // The vertical field of view is fixed, so a shorter stage would shrink the
-    // whole room — open the terminal and the desk you were leaning into halves
-    // in size. Pull the camera in by the same ratio so your zoom survives: the
-    // drawer takes a bite out of the view instead of rescaling it.
-    const off = camera.position.clone().sub(controls.target);
-    const r = THREE.MathUtils.clamp(off.length() * (viewH / prevH), controls.minDistance, controls.maxDistance);
-    camera.position.copy(controls.target).add(off.setLength(r));
   }
 }
 new ResizeObserver(resize).observe(stage);
@@ -253,7 +241,6 @@ const app = {
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
 initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
-const terminal = new TerminalDrawer({ api, toast: (t, k) => hud.toast(t, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
 const poolRoom = new PoolRoom(scene, office);

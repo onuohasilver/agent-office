@@ -57,7 +57,7 @@ Drag to move, right-drag (or `Q` / `E`) to turn around what's in the middle
 of the view, scroll to zoom toward the cursor, double-click to glide somewhere.
 `W A S D` pan, `R` recenters. The walls nearest you drop down so you can always
 see in. Chat and job details sit in their own columns and never cover the
-office, and `⌃`` opens the terminal drawer beneath it.
+office.
 
 ## Daily standup
 

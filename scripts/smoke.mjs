@@ -218,24 +218,6 @@ try {
     assert(done.changes.count === 1 && done.changes.files[0].path === 'README.md', JSON.stringify(done.changes));
   });
 
-  // The terminal's native half. node-pty is optional, so a machine without it
-  // skips this; one with it must be able to start a shell. (1.1.0 installed
-  // fine, then couldn't spawn anything on macOS.)
-  let pty = null;
-  try { pty = await import('node-pty'); } catch {}
-  if (pty) {
-    await check('node-pty can start a shell', async () => {
-      const out = await new Promise((resolve, reject) => {
-        let text = '';
-        const p = pty.spawn('/bin/sh', ['-c', 'echo pty-$((40+2))'], { cols: 80, rows: 10, cwd: tmp, env: process.env });
-        p.onData((d) => (text += d));
-        p.onExit(() => resolve(text));
-        setTimeout(() => reject(new Error('no exit within 5s')), 5000);
-      });
-      assert(out.includes('pty-42'), `got ${JSON.stringify(out)}`);
-    });
-  } else console.log('skip  node-pty is not installed');
-
   await check('counts the job, tokens and agent time, without cached context', async () => {
     const lb = await (await get('/api/leaderboard')).json();
     assert(lb.configured && !lb.joined, JSON.stringify(lb));

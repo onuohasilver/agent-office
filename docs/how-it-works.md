@@ -52,7 +52,6 @@ If the server restarts mid-job, jobs with a session resume where they left off.
 | `data/auth.json` | how Claude is signed in to, and the API key if you gave one (mode `0600`) |
 | `data/uploads/` | attachments and voice notes |
 | `data/whisper/`, `data/piper/` | speech models, if you installed them |
-| `data/terminal.log` | when terminal sessions opened and closed |
 
 `data/` is git-ignored. State is written shortly after every change, and the server stops its jobs cleanly on Ctrl-C so they can resume.
 
@@ -70,7 +69,6 @@ If the server restarts mid-job, jobs with a session resume where they left off.
 | `leaderboard/` | the leaderboard service (a Cloudflare Worker) |
 | `server/changes.js` | the "what changed" snapshots and diffs |
 | `server/voice.js` | whisper.cpp transcription and Piper voices |
-| `server/terminal.js` | the in-app terminal |
 | `server/procstat.js` | agents' CPU and memory |
 | `web/src/main.js` | browser entry: socket, state, wiring |
 | `web/src/office.js`, `figure.js`, `agent.js` | the 3D office and the people in it |

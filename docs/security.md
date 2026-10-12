@@ -64,7 +64,7 @@ enforced on your side and the guest's office is never trusted:
 - only the projects you picked;
 - at or below the clearance cap you set;
 - within the tokens per day you set;
-- no terminal, settings, chat, or other people's jobs;
+- no settings, chat, or other people's jobs;
 - their agents can't reach your other agents;
 - their jobs don't get your MCP servers or claude.ai connectors, your
   user-level Claude Code settings and hooks, or your Claude Code memory.
@@ -72,9 +72,3 @@ enforced on your side and the guest's office is never trusted:
 Even *Edit files* can change scripts or hooks that run later, so invite only
 people you would trust with those projects. Details in
 [Linked offices](linked-offices.md).
-
-## The terminal
-
-Off unless started with `--terminal` (`OFFICE_TERMINAL=1`). A session needs a single-use ticket from the
-origin-checked API, no agent can open one, and keystrokes are never logged. It
-is not a sandbox. Details in [The terminal](terminal.md).

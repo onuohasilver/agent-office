@@ -259,7 +259,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .job .m .from { font-weight: 600; color: var(--accent); }
 .visit-note { flex-basis: 100%; margin: 0; font-size: 12px; color: var(--bad); }
 .app.visiting :is(#attach, #mic, #channels, #detail .reply .attach),
-.app.visiting :is(#termToggle, #term, #lbBtn, #linkBtn, #acctBtn, #lbPop, #linkPop, #acctPop, #clear, #standup, #away),
+.app.visiting :is(#lbBtn, #linkBtn, #acctBtn, #lbPop, #linkPop, #acctPop, #clear, #standup, #away),
 .app.visiting :is(.tabs [data-tab="team"], .mnav [data-m="team"], #teamPane) { display: none !important; }
 .brand .title { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .title-start { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -774,7 +774,7 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
   .chip.tools button { width: 36px; height: 36px; }
   .chip.away { max-width: 100%; height: auto; min-height: 38px; flex-wrap: wrap; padding: 4px 6px 4px 12px; }
   .hint, #stats { display: none; }
-  .toast { max-width: calc(100% - 24px); bottom: calc(18px + var(--term-h, 0px)); }
+  .toast { max-width: calc(100% - 24px); bottom: 18px; }
   .banner b { font-size: 40px; }
 
   .detail { position: fixed; inset: 0; width: auto; z-index: 30; padding-top: calc(14px + env(safe-area-inset-top)); padding-bottom: env(safe-area-inset-bottom); border-left: 0; }
@@ -783,10 +783,6 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
   .d-head { padding: 0 16px; }
   .x { font-size: 28px; padding: 4px 12px; }
 
-  .term-grip { height: 18px; top: -9px; }
-  .term-icon { width: 34px; height: 34px; }
-  .term-tab > button:first-child { padding: 8px 6px 8px 12px; }
-  .term-bar select { max-width: 110px; font-size: 16px; }
 
   .mnav {
     display: grid; grid-template-columns: repeat(5, 1fr); grid-row: 2; z-index: 25;
@@ -811,7 +807,6 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
 
 /* Touch screens have no hover, so hover-only reveals have to stay visible. */
 @media (hover: none) {
-  .term-tab .x { opacity: 1; }
   .chip.tools button:hover, .channel:hover { background: none; }
 }
 body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
@@ -869,82 +864,6 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .tray .file b { white-space: nowrap; }
 
 .chip.tools button.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
-
-/* ---------- the terminal drawer ---------- */
-
-/* #stage and #labels stop short of the drawer, so the renderer and the label
-   layer are sized to what you can actually see rather than drawing the office
-   behind a panel. */
-#stage, #labels { bottom: var(--term-h, 0px); }
-.hint { bottom: calc(14px + var(--term-h, 0px)); }
-.toast { bottom: calc(44px + var(--term-h, 0px)); }
-
-.term {
-  position: absolute; left: 0; right: 0; bottom: 0; height: var(--term-h, 300px);
-  display: flex; flex-direction: column; min-height: 0; z-index: 8;
-  background: #221e18; border-top: 1px solid rgba(29, 27, 24, 0.18);
-  box-shadow: 0 -8px 26px rgba(40, 30, 15, 0.14);
-}
-.term-grip {
-  position: absolute; top: -3px; left: 0; right: 0; height: 7px; cursor: ns-resize; z-index: 1;
-}
-.term-grip:hover, .term-grip:focus-visible { background: rgba(127, 178, 221, 0.5); outline: none; }
-
-.term-bar {
-  display: flex; align-items: center; gap: 6px; padding: 5px 8px 0 8px; flex: 0 0 auto;
-  color: #b2a894; font-size: 12px; min-height: 34px;
-}
-.term-fill { flex: 1 1 auto; }
-.term-note { font-family: var(--mono); font-size: 11px; color: #776c5b; white-space: nowrap; }
-.term-bar select {
-  border: 1px solid rgba(236, 228, 214, 0.16); background: #2c261e; color: #cdc3b1;
-  border-radius: 7px; padding: 3px 6px; font-size: 11.5px; max-width: 150px;
-}
-.term-icon {
-  all: unset; cursor: pointer; width: 24px; height: 24px; flex: 0 0 auto;
-  display: grid; place-items: center; border-radius: 7px; color: #9d917d; transition: background 0.15s, color 0.15s;
-}
-.term-icon:hover { background: rgba(236, 228, 214, 0.1); color: #ece4d6; }
-.term-icon svg, .term-tab .x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-
-.term-tabs { display: flex; gap: 3px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
-.term-tabs::-webkit-scrollbar { display: none; }
-.term-tab {
-  display: flex; align-items: center; border-radius: 8px 8px 0 0; background: transparent;
-  max-width: 220px; transition: background 0.15s;
-}
-.term-tab:hover { background: rgba(236, 228, 214, 0.07); }
-.term-tab.on { background: #2f2820; }
-.term-tab > button:first-child {
-  all: unset; cursor: pointer; padding: 5px 4px 6px 10px; font-size: 12px; color: #9d917d;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 520;
-}
-.term-tab.on > button:first-child { color: #ece4d6; }
-/* A shell that has exited keeps its scrollback but stops pretending to be live. */
-.term-tab.dead > button:first-child { color: #6f6454; text-decoration: line-through; text-decoration-thickness: 1px; }
-.term-tab .x {
-  all: unset; cursor: pointer; width: 18px; height: 18px; margin: 0 5px 1px 0;
-  display: grid; place-items: center; border-radius: 5px; color: #6f6454; opacity: 0; transition: opacity 0.15s, background 0.15s;
-}
-.term-tab:hover .x, .term-tab.on .x { opacity: 1; }
-.term-tab .x:hover { background: rgba(236, 228, 214, 0.14); color: #ece4d6; }
-
-.term-body { position: relative; flex: 1 1 auto; min-height: 0; background: #2f2820; }
-.term-pane { position: absolute; inset: 0; padding: 8px 4px 4px 10px; visibility: hidden; }
-.term-pane.on { visibility: visible; }
-.term-pane .xterm, .term-pane .xterm-viewport { background: transparent !important; }
-.term-pane .xterm-viewport { scrollbar-width: thin; scrollbar-color: #534a3c transparent; }
-
-.term-off { flex: 1 1 auto; overflow-y: auto; padding: 4px 18px 18px; color: #b2a894; max-width: 720px; }
-.term-off p { margin: 8px 0; }
-.term-off b { color: #ece4d6; font-weight: 640; }
-.term-off .term-why { color: #8d8270; }
-.term-off pre {
-  margin: 12px 0 0; padding: 10px 12px; border-radius: 9px; background: #191510; color: #e8bb63;
-  font-family: var(--mono); font-size: 12px; overflow-x: auto;
-}
-
-@media (max-width: 860px) { .term { z-index: 19; } .toast { bottom: calc(18px + var(--term-h, 0px)); } }
 
 /* "What changed" card on a job */
 .changes { margin: 0 20px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); overflow: hidden; }

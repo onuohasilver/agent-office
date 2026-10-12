@@ -47,7 +47,7 @@ account. Pick **Invite a guest** and choose:
 
 A guest can start up to three jobs at a time, reply to them, stop them, and see
 their logs and changes. They can't see your other jobs, chat or channels, and
-they can't use the terminal, restart the office, or change staff or settings.
+they can't restart the office, or change staff or settings.
 Their jobs show `from @handle` in your job list, and you can stop any of them.
 Agents working for a guest can't message or hand work to your other agents.
 They also don't get your MCP servers or claude.ai connectors (mail, Slack,

@@ -67,7 +67,6 @@ folders next to this one (or, with `agentoffice`, in the folder you run it from)
 | [Claude access](docs/claude-access.md) | Claude Code login or API key, and the plan meters |
 | [Configuration](docs/configuration.md) | every setting |
 | [Talking out loud](docs/voice.md) | speech in and voices out |
-| [The terminal](docs/terminal.md) | a real shell under the office |
 | [On your phone](docs/phone.md) | install it like an app |
 | [How the office works](docs/how-it-works.md) | jobs, office tools, where things are kept |
 | [Security](docs/security.md) | who can reach it and what jobs may do |

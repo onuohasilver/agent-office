@@ -195,9 +195,6 @@
             <button type="button" id="standup" title="Call a standup" aria-label="Call a standup">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="15" r="2"/><circle cx="19" cy="15" r="2"/><path d="M8.5 20.5a7.5 7.5 0 0 0 7 0M3.5 10.5a8.5 8.5 0 0 1 4.5-5M20.5 10.5a8.5 8.5 0 0 0-4.5-5"/></svg>
             </button>
-            <button type="button" id="termToggle" title="Terminal (⌃`)" aria-label="Terminal">
-              <svg viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="16" rx="2.5"/><path d="M7 9.5l2.6 2.5L7 14.5"/><path d="M12.6 15h4.6"/></svg>
-            </button>
             <span class="sep"></span>
             <button type="button" class="sound" id="sound" aria-label="Sound on" title="Sound on"></button>
             <button type="button" class="sound" id="speak" aria-label="Read replies aloud" title="Read replies aloud"></button>
@@ -207,24 +204,6 @@
         <div class="banner" id="banner"></div>
         <div class="toast" id="toast"></div>
         <p class="hint">Drag to move · Right-drag or Q / E to turn · Scroll to zoom · Double-click to go there</p>
-
-        <section class="term" id="term" hidden aria-label="Terminal">
-          <div class="term-grip" id="termGrip" role="separator" aria-orientation="horizontal" aria-label="Resize the terminal" tabindex="0"></div>
-          <header class="term-bar">
-            <div class="term-tabs" id="termTabs" role="tablist" aria-label="Terminal sessions"></div>
-            <select id="termFolder" aria-label="Folder for the next terminal"></select>
-            <button type="button" class="term-icon" id="termNew" title="New terminal" aria-label="New terminal">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
-            </button>
-            <span class="term-fill"></span>
-            <span class="term-note" id="termNote"></span>
-            <button type="button" class="term-icon" id="termHide" title="Hide the terminal (⌃`)" aria-label="Hide the terminal">
-              <svg viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          </header>
-          <div class="term-body" id="termBody"></div>
-          <div class="term-off" id="termOff" hidden></div>
-        </section>
       </main>
 
       <aside class="detail" id="detail" hidden></aside>

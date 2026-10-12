@@ -13,7 +13,6 @@ import { writeStandup, dueToday } from './standup.js';
 import { writeBanter } from './banter.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
-import { Terminals } from './terminal.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
 import { Leaderboard } from './leaderboard.js';
@@ -1973,10 +1972,6 @@ function serveUpload(res, id, name) {
 
 // ---------- http ----------
 
-// The in-app terminal. Off unless OFFICE_TERMINAL=1; see server/terminal.js
-// for why its door is built the way it is.
-const terminals = new Terminals({ root: ROOT, dataDir: DATA, folders: listRepos });
-
 // OFFICE_ALLOWED_HOSTS adds exact hostnames (comma-separated), e.g. this
 // machine's Tailscale name when `tailscale serve` fronts the office. Everything
 // else is still refused, which is what keeps rebinding sites out.
@@ -2114,13 +2109,6 @@ const server = http.createServer(async (req, res) => {
 
   try {
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
-    // The terminal. Both of these ran the host and origin checks above, which
-    // is the whole reason the socket can trust a ticket that came from here.
-    if (req.method === 'GET' && url.pathname === '/api/terminal') return json(res, 200, await terminals.status());
-    if (req.method === 'POST' && url.pathname === '/api/terminal/ticket') {
-      try { return json(res, 201, await terminals.ticket(await readBody(req))); }
-      catch (err) { return json(res, err.code || 400, { error: err.message }); }
-    }
     if (req.method === 'POST' && parts[1] === 'agent' && agentApi[parts[2]]) {
       const me = caller(req);
       if (!me) return json(res, 403, { error: 'Not on the clock.' });
@@ -2308,9 +2296,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ noServer: true });
-// A keystroke at a time, so nothing here needs a big frame; a terminal that
-// could be fed a megabyte per message is just a memory hole.
-const termWss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url, 'http://x');
   if (!trusted(req)) return socket.destroy();
@@ -2330,11 +2315,6 @@ server.on('upgrade', (req, socket, head) => {
       ...snapshot(), dismissed: [], standup: null, chiefBusy: false, procs: null, visitors: [],
     })));
   }
-  // No terminal, no socket: with the door shut there is nothing to hold open
-  // while someone guesses at tickets.
-  if (url.pathname === '/ws/terminal' && terminals.on) {
-    return termWss.handleUpgrade(req, socket, head, (ws) => terminals.open(ws, url.searchParams.get('ticket')));
-  }
   socket.destroy();
 });
 
@@ -2351,10 +2331,6 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
   // For `agentoffice --link`, which can't know which free port we got.
   try { fs.writeFileSync(path.join(DATA, 'office-port'), String(PORT)); } catch {}
-  // Shell access being open is not something to find out by accident.
-  terminals.status().then((t) => console.log(t.enabled
-    ? `Terminal ON — anything in this browser gets a shell as ${process.env.USER || 'you'}. Up to ${t.max}, ${t.idleMinutes} min idle.`
-    : `Terminal off. ${t.reason}`));
   afterRestart();
   pump();
   refreshUsage();
@@ -2364,7 +2340,6 @@ server.listen(PORT, '127.0.0.1', () => {
 
 function shutdown(code = 0) {
   for (const child of running.values()) child.kill('SIGTERM');
-  terminals.killAll();
   clearTimeout(saveTimer);
   board.flush();
   fs.mkdirSync(DATA, { recursive: true });

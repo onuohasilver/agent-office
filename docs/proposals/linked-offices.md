@@ -192,7 +192,7 @@ A guest **can**:
 
 A guest **can't**:
 
-- open the terminal, restart the office, change staff, auth, leaderboard or
+- restart the office, change staff, auth, leaderboard or
   links, or clear jobs;
 - see or steer the host's other jobs, chat or channels.
 
