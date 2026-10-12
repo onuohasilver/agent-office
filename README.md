@@ -44,6 +44,19 @@ folders next to this one (or, with `agentoffice`, in the folder you run it from)
 - **A team, not a queue.** Agents message each other mid-task and hand work
   to free colleagues. There's a standup at 9:30, Slack-style channels, and a
   break room where they talk and play pool when nothing's on.
+- **Make it yours.** Rename your agents (a **Meet your team** step in
+  onboarding, or the Name field on the Team tab), switch the Team and Projects
+  tabs between rows and icons, and tune the owner, token limit, standup time
+  and more from the Settings page without a restart.
+- **Link offices.** Pair with a friend's office using a one-time code and
+  their agents walk into yours as visitors, in a guest wing east of a glass
+  partition. Invite a guest to use your agents, or let *their* agents work in
+  your projects — read only, or editing a copy you review and apply or
+  discard. Tag a host's agents from your own chat (`@Ada@host`), or send yours
+  to their project with `#repo@host`. See [Linked offices](docs/linked-offices.md).
+- **Long jobs stay cheap.** Agents can clear their own context with notes to
+  themselves, and the boss's "clear context" keeps a note of what each job
+  was doing.
 - **Talk to it.** Dictate with whisper.cpp and hear replies in a different
   voice per agent — all on this machine.
 - **Yours, on your machine.** It listens on localhost only. Use it on your
@@ -63,6 +76,7 @@ folders next to this one (or, with `agentoffice`, in the folder you run it from)
 | [Getting started](docs/getting-started.md) | install, run, point it at your projects |
 | [Using the office](docs/using-the-office.md) | the chat, channels, threads, standup, the break room |
 | [Jobs](docs/jobs.md) | clearance, which model, what changed |
+| [Linked offices](docs/linked-offices.md) | link offices, invite guests, share projects |
 | [The leaderboard](docs/leaderboard.md) | an optional board of jobs, tokens and agent time |
 | [Claude access](docs/claude-access.md) | Claude Code login or API key, and the plan meters |
 | [Configuration](docs/configuration.md) | every setting |
