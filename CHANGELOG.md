@@ -6,6 +6,8 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+## 0.6.0 — 2026-10-12
+
 ### Added
 - A guest's own agents can work in your projects. A guest invite can now let their agents in (*Read only* or *Edit a copy*) as well as, or instead of, lending yours. They run on the guest's machine and account, reach your files only through list, read, search, find, write and edit tools that cross the link, and change a copy of the project that you review and apply or discard. On the guest's side, `#web@host` sends one of your agents there. See [Linked offices](docs/linked-offices.md#letting-a-guests-own-agents-work-in-your-projects).
 - Rename your agents. Onboarding now ends with a **Meet your team** step, and the Team tab has a Name field. A name is one word (letters, numbers or hyphens) so `@mentions` keep working, and two agents can't share one. The new name reaches chat, desk plates, labels and the agent's own prompt from its next job.

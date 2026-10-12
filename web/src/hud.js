@@ -1295,7 +1295,7 @@ export class Hud {
     const to = m.to && this.app.person(m.to);
     const time = new Date(m.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     const body = m.from === 'you'
-      ? `<p>${esc(m.text).replace(/(^|\s)([@#][\w.-]+)/g, '$1<span class="tag">$2</span>')}</p>`
+      ? `<p>${esc(m.text).replace(/(^|\s)([@#][\w.-]+(?:@[\w-]+)?)/g, '$1<span class="tag">$2</span>')}</p>`
       : rich(m.text);
     const long = m.from !== 'you' && m.from !== 'chief' && !m.to && m.text.length > 420;
     const project = m.project || (m.jobId && this.app.jobs.get(m.jobId)?.repo) || '';
