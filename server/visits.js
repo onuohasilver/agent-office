@@ -23,6 +23,7 @@ import { snapshotTree, summarize, fileDiff } from './changes.js';
 
 export const ACCESS = ['off', 'read', 'edit'];
 const MAX_OPEN = 3; // working visits per guest link
+const MAX_COPIES = 6; // copies on disk per guest link, working or waiting for review
 const MAX_READ = 24 * 1024; // what one answer carries, under the relay's 64 KB a frame
 const MAX_WRITE = 40 * 1024; // what one write may carry, likewise
 const MAX_FILE = 2 * 1024 * 1024; // the most a file may grow to
@@ -111,6 +112,11 @@ export class Visits {
       this.log(v, `${agent.name} came back to it.`, 'system');
       this.push(v);
       return { sid: v.sid, access };
+    }
+    // Each new job of theirs is a whole copy of the project, so they can't
+    // leave more than a few lying about.
+    if (this.list.filter((x) => x.guest.link === link.id && !x.applied && !x.discarded && fs.existsSync(x.dir)).length >= MAX_COPIES) {
+      throw fail(429, `You have ${MAX_COPIES} copies of this office’s projects open or waiting for review. Ask the owner to apply or discard some first.`);
     }
     const src = this.office.repoPath(repo);
     if (!src) throw fail(404, 'That project folder is gone.');
@@ -347,6 +353,9 @@ export class Visits {
     if (summary) this.log(v, summary, 'text');
     await this.record(v);
     const n = v.changes?.count || 0;
+    // Nothing to review, so nothing to keep: a follow-up gets a fresh copy.
+    // (If the copy couldn't be read there is no telling, so it stays.)
+    if (v.changes && !n) this.drop(v);
     const what = v.access !== 'edit' ? '' : n ? ` ${n} file${n === 1 ? '' : 's'} changed in the copy. Review them on the job and apply or discard.` : ' Nothing changed.';
     this.log(v, `${{ done: 'Finished', failed: 'Hit a wall', stopped: 'Stopped' }[status] || 'Ended'}.${what}`, 'result', { ok: status === 'done' });
     this.push(v);
