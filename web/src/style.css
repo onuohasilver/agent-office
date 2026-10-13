@@ -1052,3 +1052,15 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .set-foot .acct-forget { margin: 0; }
 @media (max-width: 520px) { .set-row { grid-template-columns: 1fr; } .set-switch { justify-self: start; } }
 @media (prefers-reduced-motion: reduce) { .set-switch, .set-switch::after { transition: none; } }
+
+/* ---------- first run ---------- */
+
+.first-job { margin: 12px 4px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--t1); }
+.first-job h3 { margin: 0 0 4px; font-size: 14px; }
+.first-job p { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); text-wrap: pretty; }
+.first-job .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.first-job select { max-width: 160px; }
+.add-folder { padding: 8px 12px 12px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-3); }
+.add-folder .row { display: flex; gap: 6px; margin-top: 4px; }
+.add-folder input { flex: 1; min-width: 0; }
+.add-folder .note { margin: 4px 0 0; min-height: 1em; text-wrap: pretty; }

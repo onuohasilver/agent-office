@@ -6,6 +6,11 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+### Added
+- `agentoffice doctor` checks Node 20+, git, Claude Code (installed and signed in, or `ANTHROPIC_API_KEY`) and the port, with one line and the exact fix per problem, and exits 1 on any. The same checks run at start-up as warnings that never stop the office.
+- Zero-config projects: started inside a git repo, that repo is the project. Elsewhere the subfolders are, as before, and `OFFICE_ROOT` still wins. Add other folders from the Projects tab; the office remembers them.
+- A guided first job in a new office: *Summarise it*, read-only (Plan only clearance).
+
 ## 0.7.0 — 2026-10-12
 
 ### Added

@@ -22,6 +22,11 @@ export OFFICE_ROOT="$TMP/projects" OFFICE_DATA="$TMP/data"
 mkdir -p "$OFFICE_ROOT/storefront"
 
 echo "version: $(agentoffice --version)"
+# The packed command can check this machine: the stand-in claude reports a
+# version but has no `auth status`, so the sign-in check passes with a note.
+agentoffice doctor | grep -q 'All good' || { echo "doctor did not pass"; agentoffice doctor; exit 1; }
+CLAUDE_BIN="$TMP/missing-claude" agentoffice doctor > "$TMP/doctor.log" 2>&1 && { echo "doctor passed without claude"; exit 1; }
+grep -q 'Fix: ' "$TMP/doctor.log" || { echo "doctor gave no fix"; cat "$TMP/doctor.log"; exit 1; }
 [ "$(agentstudio --version)" = "$(agentoffice --version)" ] || { echo "agentstudio is not the same command"; exit 1; }
 
 PORT=$(node -e "const s=require('net').createServer().listen(0,'127.0.0.1',()=>{console.log(s.address().port);s.close()})")

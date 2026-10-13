@@ -123,6 +123,10 @@ const avatar = (p, cls = '') => `<span class="av ${cls}">${p.look
   ? portrait(p.look)
   : '<svg class="face" viewBox="0 0 48 48" aria-hidden="true" style="background:#c9c1b455"><path d="M6 48c1-9 8-13 18-13s17 4 18 13z" fill="#a39a8a"/><ellipse cx="24" cy="21" rx="9" ry="10" fill="#a39a8a"/></svg>'}</span>`;
 
+// What the guided first job asks for. It reads and reports; the job runs with
+// Plan only clearance as well, so this wording is a courtesy, not the guard.
+const FIRST_JOB = 'Summarise this project for me, read only: what it does, how the code is laid out, how to run it and its tests, and one thing worth a closer look. Don’t change anything.';
+
 const store = (k, v) => {
   try {
     if (v === undefined) return localStorage.getItem(k);
@@ -308,6 +312,7 @@ export class Hud {
       if (b.dataset.m === 'office') this.mobile('office');
       else this.tab(b.dataset.m);
     }));
+    $('addFolder').onsubmit = (e) => { e.preventDefault(); this.addFolder(e.target); };
     this.bindViewToggle();
     this.bindTeam();
     this.bindChat();
@@ -964,6 +969,9 @@ export class Hud {
       if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); this.sendThread(); }
     };
     $('msgs').onclick = $('threadMsgs').onclick = (e) => {
+      const tour = e.target.closest('[data-first-job]');
+      if (tour) return this.firstJob(tour.closest('.first-job'));
+      if (e.target.closest('[data-first-skip]')) { store('office.firstJob', 'skipped'); return this.paintChat(); }
       const thread = e.target.closest('[data-thread]');
       if (thread) return this.openThread(thread.dataset.thread);
       const pick = e.target.closest('[data-pick]');
@@ -1165,13 +1173,67 @@ export class Hud {
     const roots = [...this.chat.values()].filter((m) => this.here(m) && !this.inThread(m));
     $('msgs').innerHTML = roots.length
       ? roots.map((m) => this.message(m)).join('')
-      : `<p class="empty">${visiting.on
+      : this.firstJobCard() || `<p class="empty">${visiting.on
         ? `Start a job${visiting.host ? ` at @${esc(visiting.host)}` : ''}: say what you need and tag ${visiting.repos?.length === 1 ? 'the project' : 'one of your projects'} with #${visiting.repos?.length ? ` (${visiting.repos.map((r) => esc(`#${r.replace(/\s+/g, '-')}`)).join(', ')})` : ''}. Only your own jobs show here.`
         : this.channel === 'general'
         ? 'Tell the office what you need. Tag someone with @, or a project with #. The chief of staff hands everything else to whoever fits.'
         : `Nothing in #${esc(this.channel)} yet. Whatever you ask for here stays here.`}</p>`;
     this.scrollChat(true);
     if (this.thread) this.renderThread();
+  }
+
+  // The guided first job: until the boss has started any job (or waved it
+  // off), offer one that cannot change anything. Plan-only clearance means
+  // the agent reads and reports; it has no way to edit or run a command.
+  firstJobCard() {
+    if (visiting.on || this.channel !== 'general' || store('office.firstJob')) return '';
+    if (this.app.jobs?.size) return '';
+    if (!this.repos) {
+      if (!this.reposLoading) {
+        this.reposLoading = true;
+        api('/api/repos').then((r) => { this.repos = allowRepos(r.repos); }).catch(() => { this.repos = []; })
+          .finally(() => { this.reposLoading = false; this.paintChat(); });
+      }
+      return '';
+    }
+    if (!this.repos.length) return '';
+    const pick = this.repos.length === 1
+      ? `<b>${esc(this.repos[0])}</b><input type="hidden" name="repo" value="${esc(this.repos[0])}">`
+      : `<select name="repo" aria-label="Project">${this.repos.map((r) => `<option>${esc(r)}</option>`).join('')}</select>`;
+    return `<div class="first-job">
+      <h3>Try a first job</h3>
+      <p>Ask an agent to read ${this.repos.length === 1 ? 'this project' : 'a project'} and tell you what it is. It is read-only: the clearance is <b>Plan only</b>, so nothing gets edited and no commands run.</p>
+      <div class="row">${pick}<button type="button" class="primary" data-first-job>Summarise it</button><button type="button" class="ghost" data-first-skip>Not now</button></div>
+    </div>`;
+  }
+
+  async firstJob(card) {
+    const repo = card.querySelector('[name=repo]').value;
+    store('office.firstJob', 'started');
+    try {
+      await api('/api/chat', {
+        text: `#${repo.replace(/\s+/g, '-')} ${FIRST_JOB}`,
+        channel: 'general', mode: 'plan', model: $('model').value,
+      });
+    } catch (err) {
+      store('office.firstJob', '');
+      this.toast(err.message, 'bad');
+    }
+  }
+
+  // Add a folder from anywhere on this machine as a project; the office keeps it.
+  async addFolder(form) {
+    const input = form.querySelector('input');
+    const note = form.querySelector('.note');
+    note.textContent = '';
+    try {
+      const r = await api('/api/projects', { path: input.value });
+      this.repos = allowRepos(r.repos);
+      input.value = '';
+      note.textContent = `Added ${r.name}.`;
+      this.renderProjects();
+      this.paintChat();
+    } catch (err) { note.textContent = err.message; }
   }
 
   here(m) {

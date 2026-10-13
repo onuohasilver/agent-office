@@ -10,7 +10,7 @@ voice toggle, team profiles, theme — are made in the office and remembered.
 
 | Env | Default | |
 |---|---|---|
-| `OFFICE_ROOT` | the folder above this one; with `agentoffice`, the folder you run it from | its subfolders are the projects |
+| `OFFICE_ROOT` | the folder above this one; with `agentoffice`, the git repo you run it in (that repo is the one project), otherwise the folder you run it from | its subfolders are the projects. Set explicitly, it always means subfolders |
 | `OFFICE_DATA` | `data/` here; with `agentoffice`, `~/.agent-office` | where the office keeps its state |
 | `PORT` | `4317` | with `agentoffice`, a free port is chosen if this is taken (or `--port <n>`); one you set is used as given |
 | `OFFICE_ALLOWED_HOSTS` | none | extra hostnames to accept, comma-separated; see [On your phone](phone.md) |

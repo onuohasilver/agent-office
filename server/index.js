@@ -21,10 +21,13 @@ import { Settings } from './settings.js';
 import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
+import { projectMap, acceptFolder } from './projects.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
 const ROOT = path.resolve(process.env.OFFICE_ROOT || path.join(APP, '..'));
+// Set by `agentoffice` when it was started inside a git repo: that repo is the project.
+const SINGLE = process.env.OFFICE_PROJECT ? path.resolve(process.env.OFFICE_PROJECT) : '';
 const PORT = Number(process.env.PORT || 4317);
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 // OFFICE_DATA is set by the agentoffice command; a clone keeps it beside the code.
@@ -183,6 +186,8 @@ try {
 // What the boss sets on the Settings page, over the environment's defaults.
 // The context limit used to live at state.clearTokens.
 if (!state.settings || typeof state.settings !== 'object') state.settings = {};
+// Folders the boss added from the UI, as absolute paths.
+if (!Array.isArray(state.projects)) state.projects = [];
 if (Number.isInteger(state.clearTokens) && !('tokenLimit' in state.settings)) state.settings.tokenLimit = state.clearTokens;
 delete state.clearTokens;
 const settings = new Settings(state.settings, () => save());
@@ -656,18 +661,15 @@ const OFFICE_TOOLS = [
 const GUEST_TOOLS = ['mcp__office__office_roster', 'mcp__office__flag_for_boss'];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
+const projectIndex = () => projectMap({ root: ROOT, project: SINGLE, added: state.projects });
+
 function repoPath(name) {
   if (typeof name !== 'string' || !name || /[\/\\]/.test(name) || name.startsWith('.')) return null;
-  const p = path.join(ROOT, name);
-  try { if (fs.statSync(p).isDirectory()) return p; } catch {}
-  return null;
+  return projectIndex().get(name) || null;
 }
 
 function listRepos() {
-  return fs.readdirSync(ROOT, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
-    .map((d) => d.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  return [...projectIndex().keys()];
 }
 
 // `extra` tags a job, as a guest's (`from`, `guest`); it must be set before the job can start.
@@ -982,9 +984,10 @@ async function recordChanges(job) {
 function adoptNewProject(job) {
   if (!job.startedAt || !job.endedAt || job.guest || job.away) return false;
   const text = norm(`${job.title || ''} ${job.prompt || ''}`);
-  const born = listRepos().filter((r) => {
+  const known = projectIndex();
+  const born = [...known.keys()].filter((r) => {
     if (r === job.repo || norm(r).length < 4 || !text.includes(norm(r))) return false;
-    try { const t = fs.statSync(path.join(ROOT, r)).birthtimeMs; return t >= job.startedAt - 1000 && t <= job.endedAt + 1000; } catch { return false; }
+    try { const t = fs.statSync(known.get(r)).birthtimeMs; return t >= job.startedAt - 1000 && t <= job.endedAt + 1000; } catch { return false; }
   });
   if (born.length !== 1) return false;
   const from = job.repo;
@@ -2279,7 +2282,23 @@ const server = http.createServer(async (req, res) => {
       });
       return fs.createReadStream(icon.file).pipe(res);
     }
-    if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, single: !!SINGLE, repos: listRepos(), added: state.projects });
+    // Add a folder as a project, or forget one; the choice is kept in the office's state.
+    if (req.method === 'POST' && url.pathname === '/api/projects') {
+      try {
+        const dir = acceptFolder((await readBody(req)).path);
+        if (!state.projects.includes(dir) && ![...projectIndex().values()].includes(dir)) { state.projects.push(dir); save(); }
+        const name = [...projectIndex()].find(([, d]) => d === dir)?.[0];
+        return json(res, 201, { name, repos: listRepos(), added: state.projects });
+      } catch (err) { return json(res, err.code === 400 ? 400 : 500, { error: err.message }); }
+    }
+    if (req.method === 'DELETE' && url.pathname === '/api/projects') {
+      const dir = url.searchParams.get('path');
+      if (!state.projects.includes(dir)) return json(res, 404, { error: 'That folder was not added by hand.' });
+      state.projects = state.projects.filter((d) => d !== dir);
+      save();
+      return json(res, 200, { repos: listRepos(), added: state.projects });
+    }
     // An away job's file tools, passed to the host that has the project.
     if (req.method === 'POST' && parts[1] === 'agent' && /^files_[a-z]+$/.test(parts[2] || '')) {
       const me = caller(req);
@@ -2552,7 +2571,7 @@ server.on('error', (err) => {
 server.listen(PORT, '127.0.0.1', () => {
   // The key is in this line on purpose: it's how the boss gets in. It only
   // goes to this terminal (or the supervisor's), never to a log file.
-  console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
+  console.log(`Agent Office open on ${keyLink()}  (${SINGLE ? `project: ${SINGLE}` : `projects in ${ROOT}`})`);
   // For `agentoffice --link`, which can't know which free port we got.
   try { fs.writeFileSync(path.join(DATA, 'office-port'), String(PORT)); } catch {}
   afterRestart();

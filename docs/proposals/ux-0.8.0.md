@@ -20,9 +20,9 @@ Branch per owner: ux/<area>, own worktree, no direct pushes to master.
 - [ ] todo: low-power mode + reduced motion
 
 ## Kai (first run)
-- [ ] todo: `agentoffice doctor` + startup preflight
-- [ ] todo: zero-config project discovery
-- [ ] todo: guided read-only first job
+- [ ] review: `agentoffice doctor` + startup preflight (server/preflight.js exports runPreflight/formatReport for `doctor --bundle`)
+- [ ] review: zero-config project discovery (git repo = project; subfolders otherwise; add folders in UI; docs/getting-started.md)
+- [ ] review: guided read-only first job (Plan only card in the empty chat)
 
 ## Zola (release)
 - [ ] todo: /api/version npm check
