@@ -32,6 +32,9 @@ const REMOTE_LOG = 600;
 const MAX_THREADS = 300;
 const utcDay = (ms = Date.now()) => new Date(ms).toISOString().slice(0, 10);
 const fail = (code, message) => Object.assign(new Error(message), { code });
+// Handles and project names match exactly, ignoring case only: the relay
+// treats bob-x and bobx as two people, and so must we.
+const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
 // ---------- what a host may put on our page ----------
 //
@@ -288,13 +291,12 @@ export class Guests {
   // host, as an away job's `away`. The relay names both ends of a link, so a
   // guest can only point us at its own office.
   async homeFolder(link, repo) {
-    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
-    let e = [...this.remote.values()].find((x) => norm(x.host) === norm(link.peer));
-    const back = !e && this.links.links.find((l) => l.kind === 'guest' && l.role === 'guest' && norm(l.peer) === norm(link.peer));
+    let e = [...this.remote.values()].find((x) => same(x.host, link.peer));
+    const back = !e && this.links.links.find((l) => l.kind === 'guest' && l.role === 'guest' && same(l.peer, link.peer));
     if (back) e = await this.remoteHello(back).catch(() => null);
     if (!e) throw fail(403, `To use our agents in your own projects, make @${this.links.status().handle || 'us'} your guest too, with their agents allowed in your projects.`);
     if (!['read', 'edit'].includes(e.theirAgents)) throw fail(403, `You haven’t let @${this.links.status().handle || 'us'}’s agents work in your projects. Turn that on where we’re your guest.`);
-    const r = e.repos.find((x) => norm(x) === norm(repo));
+    const r = e.repos.find((x) => same(x, repo));
     if (!r) throw fail(403, `You haven’t shared ${repo} with @${this.links.status().handle || 'us'}. Add it where we’re your guest.`);
     return { link: e.link, host: e.host, repo: r, access: e.theirAgents };
   }
@@ -611,7 +613,7 @@ export class Guests {
     const offices = this.remoteStatus();
     const find = (name, host) => {
       for (const o of offices) {
-        if (host && norm(o.host) !== norm(host)) continue;
+        if (host && !same(o.host, host)) continue;
         const s = o.staff.find((x) => x.here && norm(x.name) === norm(name));
         if (s) return { link: o.link, host: o.host, staff: s };
       }
@@ -636,14 +638,13 @@ export class Guests {
   // file tools come back to us over the link where the host is our guest
   // (visits.js), so that link must let their agents into this project.
   lentHome(entry, repo) {
-    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
     const h = entry.host;
     if (!entry.home) throw fail(400, `@${h}’s office is on an older version that can only run its agents in its own projects. Ask @${h} to update.`);
-    const back = this.links.links.find((l) => l.kind === 'guest' && l.role === 'host' && norm(l.peer) === norm(h));
+    const back = this.links.links.find((l) => l.kind === 'guest' && l.role === 'host' && same(l.peer, h));
     const p = back && this.links.guestPolicy(back.id);
     if (!p) throw fail(400, `To use @${h}’s agents in #${repo}, make @${h} your guest too, with their agents allowed in your projects.`);
     if (!['read', 'edit'].includes(p.theirAgents)) throw fail(400, `To use @${h}’s agents in #${repo}, let their agents work in your projects: Change, where @${h} is your guest.`);
-    const r = p.repos.find((x) => norm(x) === norm(repo));
+    const r = p.repos.find((x) => same(x, repo));
     if (!r) throw fail(400, `You haven’t shared ${repo} with @${h}. Add it under Change, where @${h} is your guest, and ask again.`);
     return r;
   }
@@ -657,11 +658,11 @@ export class Guests {
     const tags = [...text.matchAll(/(^|\s)#([\w.-]+)/g)];
     // A project of ours, not theirs: their agent would run in their folder
     // and never see ours. Say so, rather than quietly working somewhere else.
-    const ours = tags.find((t) => !repos.some((r) => norm(r) === norm(t[2])) && this.office.repoPath(t[2]));
+    const ours = tags.find((t) => !repos.some((r) => same(r, t[2])) && this.office.repoPath(t[2]));
     if (ours) return { repo: this.lentHome(entry, ours[2]), home: true, text: text.replace(ours[0], ' ').replace(/[ \t]+/g, ' ').trim() };
     if (repos.length === 1) return { repo: repos[0], text };
     for (const t of tags) {
-      const repo = repos.find((r) => norm(r) === norm(t[2]));
+      const repo = repos.find((r) => same(r, t[2]));
       if (repo) return { repo, text: text.replace(t[0], ' ').replace(/[ \t]+/g, ' ').trim() };
     }
     const said = norm(text);
@@ -680,10 +681,9 @@ export class Guests {
 
   // `#web@friend`: a host's project our agents may work in, or null.
   awayFolder(repo, host) {
-    const norm = (v) => String(v).toLowerCase().replace(/[^a-z0-9]/g, '');
     for (const e of this.remote.values()) {
-      if (norm(e.host) !== norm(host) || !['read', 'edit'].includes(e.theirAgents)) continue;
-      const r = e.repos.find((x) => norm(x) === norm(repo));
+      if (!same(e.host, host) || !['read', 'edit'].includes(e.theirAgents)) continue;
+      const r = e.repos.find((x) => same(x, repo));
       if (r) return { link: e.link, host: e.host, repo: r, access: e.theirAgents };
     }
     return null;
