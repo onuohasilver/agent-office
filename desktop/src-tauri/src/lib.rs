@@ -352,7 +352,10 @@ fn in_window(url: &Url, office: Option<&Url>) -> bool {
         "tauri" => url.host_str() == Some("localhost"),
         "about" => matches!(url.path(), "blank" | "srcdoc"),
         "blob" => Url::parse(url.path()).is_ok_and(|inner| same(&inner)),
-        "http" if url.host_str() == Some("tauri.localhost") => true,
+        // The bundled page's origin on Windows. Elsewhere it is just a host
+        // name some other local server could answer on, any port.
+        #[cfg(windows)]
+        "http" if url.host_str() == Some("tauri.localhost") && url.port().is_none() => true,
         _ => same(url),
     }
 }
@@ -404,9 +407,16 @@ pub fn run() {
                     open_office(app, true);
                 });
             }
+            // The link carries the key, and the office may have gone since it
+            // was proved, leaving its port to anyone: prove it again first.
             "open-browser" => {
-                if let Some(link) = app.state::<Office>().link.lock().unwrap().clone() {
-                    let _ = tauri_plugin_opener::open_url(link.as_str(), None::<&str>);
+                let port = app.state::<Office>().link.lock().unwrap().as_ref().and_then(|l| l.port());
+                if let Some(port) = port {
+                    thread::spawn(move || {
+                        if let Some(link) = office_link(port, &data_dir()) {
+                            let _ = tauri_plugin_opener::open_url(link.as_str(), None::<&str>);
+                        }
+                    });
                 }
             }
             "reload" => {
@@ -485,6 +495,8 @@ mod tests {
         assert!(!ok("blob:http://127.0.0.1:5173/0b6c"));
         assert!(!ok("data:text/html,hi"));
         assert!(!ok("file:///etc/passwd"));
+        assert!(!ok("http://tauri.localhost:8080/"));
+        assert_eq!(ok("http://tauri.localhost/"), cfg!(windows));
         assert!(!in_window(&Url::parse("http://127.0.0.1:4317/").unwrap(), None));
         assert!(openable(&Url::parse("https://example.com").unwrap()));
         assert!(openable(&Url::parse("mailto:a@b.c").unwrap()));
