@@ -8,6 +8,7 @@ import { initSettings, setSettings } from './settings.js';
 import { setLeaderboard, onWelcomed } from './leaderboard.js';
 import { meetTeam } from './meet.js';
 import './phone.js';
+import './viewer.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
@@ -26,6 +27,8 @@ import { Hud, api } from './hud.js';
 import { initShop, setEconomy, bumpPot } from './shop.js';
 import { decorateDesk, placeOfficeItems } from './decor.js';
 import { itemById } from '../../shared/shop.js';
+
+import { initJourneys, journeyJobs } from './journeys.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -286,6 +289,7 @@ const app = {
 };
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
+initJourneys(app);
 initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
 initShop(app, { toast: (m, k) => hud.toast(m, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
@@ -376,6 +380,7 @@ app.refreshLists = () => {
   hud.renderStats(jobs, app.chiefCost);
   drawBoard(office.board, jobs);
   hud.renderAttention();
+  journeyJobs(jobs);
 };
 
 app.openJob = (id) => {

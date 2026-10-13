@@ -49,6 +49,7 @@
     "prepack": "vite build"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^1.1.8",
     "qrcode-generator": "2.0.4",
     "ws": "8.22.0"
   },
