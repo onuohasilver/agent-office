@@ -110,8 +110,68 @@ await run('desktop', { OFFICE_DESKTOP: '1' }, async ({ port, key, get, log, port
     const r = await get('/', cookie);
     const csp = r.headers.get('content-security-policy') || '';
     assert(r.status === 200, `status ${r.status}`);
-    for (const d of ["script-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"]) assert(csp.includes(d), `missing ${d}: ${csp}`);
+    for (const d of ["script-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "form-action 'self'"]) assert(csp.includes(d), `missing ${d}: ${csp}`);
     assert(!/unsafe-inline|unsafe-eval/.test(csp.match(/script-src[^;]*/)?.[0] || ''), `script-src loosened: ${csp}`);
+    // Images carry nothing off-box: the page holds ?key= links (the phone panel).
+    const img = csp.match(/img-src([^;]*)/)?.[1]?.trim().split(/\s+/) || [];
+    assert(img.length && img.every((s) => ["'self'", 'data:', 'blob:'].includes(s)), `img-src lets other hosts in: ${csp}`);
+  });
+
+  // The cookie holds HMAC(key, "office-cookie:<port>"), never the key.
+  const mac = hmac(key, `office-cookie:${port}`);
+  const setCookieOf = (r) => r.headers.get('set-cookie') || '';
+  await check('logging in with ?key= sets the MAC cookie, and the key is nowhere in it', async () => {
+    const r = await get(`/?key=${key}`);
+    assert(r.status === 303, `status ${r.status}`);
+    const sc = setCookieOf(r);
+    assert(!sc.includes(key), 'raw key in set-cookie');
+    assert(sc.startsWith(`office_key_${port}=${mac};`), `unexpected cookie: ${sc}`);
+    for (const a of ['HttpOnly', 'SameSite=Strict', 'Path=/']) assert(sc.includes(a), `missing ${a}: ${sc}`);
+    assert(!(r.headers.get('location') || '').includes(key), 'key left in the redirect');
+  });
+  await check('a wrong ?key= sets no cookie', async () => {
+    const r = await get(`/?key=${'0'.repeat(64)}`);
+    assert(r.status === 401 && !setCookieOf(r), `status ${r.status}, cookie ${setCookieOf(r)}`);
+  });
+  await check('the MAC cookie opens the API', async () => {
+    const r = await get('/api/settings', { cookie: `office_key_${port}=${mac}` });
+    assert(r.status === 200, `status ${r.status}`);
+  });
+  await check('a MAC made for another port is refused', async () => {
+    const r = await get('/api/settings', { cookie: `office_key_${port}=${hmac(key, `office-cookie:${port + 1}`)}` });
+    assert(r.status === 401, `status ${r.status}`);
+  });
+  await check('the desktop proof is not a cookie', async () => {
+    const nonceLike = crypto.randomBytes(32).toString('hex');
+    const { proof } = await (await get(`/api/desktop/proof?nonce=${nonceLike}`)).json();
+    const r = await get('/api/settings', { cookie: `office_key_${port}=${proof}` });
+    assert(r.status === 401, `status ${r.status}`);
+  });
+  await check('a cookie of the right length but wrong value is refused, page and API', async () => {
+    const bad = { cookie: `office_key_${port}=${'f'.repeat(64)}` };
+    assert((await get('/api/settings', bad)).status === 401, 'API let it in');
+    assert((await get('/', bad)).status === 401, 'page let it in');
+  });
+  await check('an old raw-key cookie still opens the page and is swapped for the MAC', async () => {
+    const r = await get('/', cookie);
+    assert(r.status === 200, `status ${r.status}`);
+    const sc = setCookieOf(r);
+    assert(sc.startsWith(`office_key_${port}=${mac};`) && !sc.includes(key), `not swapped: ${sc}`);
+  });
+  await check('a MAC cookie is left alone on page loads', async () => {
+    const r = await get('/', { cookie: `office_key_${port}=${mac}` });
+    assert(r.status === 200 && !setCookieOf(r), `status ${r.status}, cookie ${setCookieOf(r)}`);
+  });
+  await check('the socket takes the MAC cookie and refuses a wrong one', async () => {
+    const upgrade = (c) => new Promise((resolve) => {
+      const q = http.request({ host: '127.0.0.1', port, path: '/ws', headers: { connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-version': '13', 'sec-websocket-key': crypto.randomBytes(16).toString('base64'), cookie: c } });
+      q.on('upgrade', (res, sock) => { sock.destroy(); resolve(101); });
+      q.on('response', (res) => { res.resume(); resolve(res.statusCode); });
+      q.on('error', () => resolve('error'));
+      q.end();
+    });
+    assert(await upgrade(`office_key_${port}=${mac}`) === 101, 'MAC cookie refused');
+    assert(await upgrade(`office_key_${port}=${'f'.repeat(64)}`) !== 101, 'wrong cookie upgraded');
   });
   await check('a deep link falls back to the page, CSP included', async () => {
     const r = await get('/some/deep/link', cookie);
