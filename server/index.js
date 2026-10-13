@@ -355,6 +355,8 @@ const links = new Links(DATA, {
   presence,
   onChange: () => {
     guests?.linksChanged();
+    // An unlinked guest's limits are gone with it, and so are its open jobs.
+    for (const id of new Set(state.jobs.filter((j) => j.guest && (j.status === 'queued' || j.status === 'working')).map((j) => j.guest.link))) guests?.policyChanged(id);
     visits?.linksChanged(new Set(links.links.map((l) => l.id)));
     send({ t: 'links', ...links.status() });
     send({ t: 'visitors', offices: links.visiting() });
