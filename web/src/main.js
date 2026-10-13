@@ -7,6 +7,7 @@ import { setAccess, setContextLimit } from './account.js';
 import { initSettings, setSettings } from './settings.js';
 import { setLeaderboard, onWelcomed } from './leaderboard.js';
 import { meetTeam } from './meet.js';
+import './phone.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';

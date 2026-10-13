@@ -8,10 +8,30 @@ for an office in its own window.
 The app shell is cached so it opens when the connection drops; live office
 state never is, because a stale office is worse than none.
 
-## Reaching your machine
+## Scan a QR code (same Wi-Fi)
 
-The server only listens on `127.0.0.1`, so a phone can't reach it directly.
-The supported way is [Tailscale](https://tailscale.com): put the office behind
+The quickest way, for a phone on the same Wi-Fi as this machine:
+
+```bash
+agentoffice --phone
+```
+
+That also listens on your local network, and prints a QR code in the terminal
+after the usual link. Scan it with the phone's camera and the office opens, key
+included. The same code is in the office itself, under the phone button at the
+top of the side panel. `OFFICE_LAN=1` does what `--phone` does.
+
+Only this machine's own private addresses (`192.168.x.x`, `10.x.x.x`,
+`172.16-31.x.x`) are accepted as the address, and the page still needs the key.
+But it is plain `http`, and the link carries the key, so anyone who can watch
+that network's traffic could copy it and run Claude in your projects. Use it at
+home, never on a café, hotel or office network; elsewhere use Tailscale below.
+With `OFFICE_ALLOWED_HOSTS` set, the QR points at that name instead.
+
+## Reaching your machine from anywhere
+
+By default the server only listens on `127.0.0.1`, so a phone can't reach it
+directly. Away from home, the supported way is [Tailscale](https://tailscale.com): put the office behind
 `tailscale serve` on this machine, then tell the office to accept that name.
 
 ```bash

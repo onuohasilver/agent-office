@@ -61,20 +61,25 @@ if (arg === '--link') {
 if (arg === '--help' || arg === '-h') {
   console.log(`agentoffice ${pkg.version}
 
-Usage: agentoffice [--port <n>]   (or agentstudio)
+Usage: agentoffice [--port <n>] [--phone]   (or agentstudio)
        agentoffice --link         print the running office's link, with its key
 
 Starts the office on a free port: ${DEFAULT_PORT} if it is open, otherwise any
 free one. Choose your own with --port or PORT; that one is used as given.
+--phone also listens on your local network and prints a QR code that opens the
+office on a phone on the same Wi-Fi (plain http: trusted networks only).
 Needs Claude Code (\`claude\`) installed and signed in.
 
   OFFICE_ROOT   folder whose subfolders are your projects (default: this folder)
   OFFICE_DATA   where the office keeps its state (default: ~/.agent-office)
   PORT          port to listen on (default: ${DEFAULT_PORT}, or any free port)
+  OFFICE_LAN    1 does what --phone does
 
 Docs: ${pkg.homepage}`);
   process.exit(0);
 }
+
+if (args.includes('--phone')) process.env.OFFICE_LAN = '1';
 
 const chosen = portFlag() ?? process.env.PORT;
 if (chosen !== undefined && chosen !== '') {

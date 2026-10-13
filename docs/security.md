@@ -5,7 +5,9 @@ hand out a shell. It is built to be used by one person, on their own machine.
 
 ## Who can reach it
 
-- The server listens on `127.0.0.1` only.
+- The server listens on `127.0.0.1` only, unless you start it with `--phone`
+  (`OFFICE_LAN=1`), which also listens on your local network for a phone to
+  scan. See [On your phone](phone.md).
 - Every request's `Host` and `Origin` must be local (or a name in
   `OFFICE_ALLOWED_HOSTS`), which keeps other websites and DNS-rebinding
   attacks out of it. A page on another localhost port counts as another

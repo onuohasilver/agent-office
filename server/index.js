@@ -21,6 +21,7 @@ import { Settings } from './settings.js';
 import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
+import { lanAddresses, phoneLinks, qrSvg, qrText } from './phone.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -2136,7 +2137,19 @@ function serveUpload(res, id, name) {
 // OFFICE_ALLOWED_HOSTS adds exact hostnames (comma-separated), e.g. this
 // machine's Tailscale name when `tailscale serve` fronts the office. Everything
 // else is still refused, which is what keeps rebinding sites out.
-const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]', ...String(process.env.OFFICE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean)]);
+const EXTRA_HOSTS = String(process.env.OFFICE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
+const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]', ...EXTRA_HOSTS]);
+// OFFICE_LAN=1 also listens on the local network, for a phone on the same
+// Wi-Fi. Only this machine's own private addresses are accepted as the Host
+// (looked up per request, since DHCP moves them), never a name, so a rebinding
+// site still can't get in. The page they open still needs the key.
+const LAN = /^(1|true|yes|on)$/i.test(process.env.OFFICE_LAN || '');
+let lanSeen = { at: 0, set: new Set() };
+const isLanHost = (host) => {
+  if (!LAN) return false;
+  if (Date.now() - lanSeen.at > 5000) lanSeen = { at: Date.now(), set: new Set(lanAddresses()) };
+  return lanSeen.set.has(host);
+};
 const DEV_PORT = '5317'; // vite.config.js
 
 // The office key. Host and Origin checks keep other websites out, but not
@@ -2183,7 +2196,8 @@ function trusted(req) {
   // Anything that can spawn claude with full permissions must refuse
   // requests from other websites and from rebinding hostnames.
   const host = String(req.headers.host || '').replace(/:\d+$/, '');
-  if (!LOCAL.has(host)) return false;
+  const lan = isLanHost(host);
+  if (!LOCAL.has(host) && !lan) return false;
   const origin = req.headers.origin;
   // No Origin is not proof of a local caller: another site's <img> or <link>
   // GET arrives without one. So every GET must stay read-only, with no side
@@ -2193,8 +2207,9 @@ function trusted(req) {
   // anything an agent started. Only the office itself and its vite dev page.
   try {
     const o = new URL(origin);
-    if (!LOCAL.has(o.hostname)) return false;
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(o.hostname)) return true;
+    if (!LOCAL.has(o.hostname) && !isLanHost(o.hostname)) return false;
+    // A named host fronts the office on its own port; the rest are other sites.
+    if (LOCAL.has(o.hostname) && !['localhost', '127.0.0.1', '[::1]'].includes(o.hostname)) return true;
     return [String(PORT), DEV_PORT].includes(o.port);
   } catch { return false; }
 }
@@ -2344,6 +2359,12 @@ const server = http.createServer(async (req, res) => {
     // sharing day counters. Leaving deletes the counters; the handle goes too
     // unless linked offices still need it.
     if (url.pathname === '/api/leaderboard' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
+    // How a phone reaches this office: the links it could scan, each with its
+    // QR. They carry the key, so only a browser that already has it sees them.
+    if (req.method === 'GET' && url.pathname === '/api/phone') {
+      const links = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS });
+      return json(res, 200, { lan: LAN, links: links.map((l) => ({ kind: l.kind, label: l.label, url: l.url, svg: qrSvg(l.url) })) });
+    }
       let status;
       try {
         if (req.method === 'GET') status = board.status();
@@ -2549,7 +2570,7 @@ server.on('error', (err) => {
   console.error(`Port ${PORT} is already in use. Start the office with another: agentstudio --port <n>, or PORT=<n>.`);
   process.exit(78);
 });
-server.listen(PORT, '127.0.0.1', () => {
+server.listen(PORT, LAN ? '0.0.0.0' : '127.0.0.1', () => {
   // The key is in this line on purpose: it's how the boss gets in. It only
   // goes to this terminal (or the supervisor's), never to a log file.
   console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
@@ -2576,3 +2597,11 @@ function shutdown(code = 0) {
 process.on('unhandledRejection', (err) => console.error('[office] unhandled', err));
 process.on('SIGINT', () => shutdown());
 process.on('SIGTERM', () => shutdown());
+  // The phone link, with a QR to scan. Same care: terminal only.
+  const phone = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS })[0];
+  if (phone) {
+    console.log(`\nOn your phone, scan this (${phone.label}):\n\n${qrText(phone.url)}\n\n${phone.url}`);
+    if (phone.kind === 'lan') console.log('Plain http on your local network: use it on a Wi-Fi you trust, and never on a shared or public one.\n');
+  } else if (LAN) {
+    console.log('OFFICE_LAN is on, but this machine has no private network address to give a phone.');
+  }

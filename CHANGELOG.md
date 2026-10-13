@@ -6,6 +6,9 @@ Notable changes to Agent Office. The format follows
 
 ## Unreleased
 
+### Added
+- Open the office on a phone by scanning a QR code. `agentoffice --phone` (or `OFFICE_LAN=1`) also listens on your local network, prints a QR code with the link at start, and shows the same code under the new phone button in the side panel. Off unless you ask: by default the office still listens on `127.0.0.1` only. It is plain `http` with the key in the link, so home Wi-Fi only; see [On your phone](docs/phone.md).
+
 ## 0.7.0 — 2026-10-12
 
 ### Added

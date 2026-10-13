@@ -59,7 +59,7 @@ folders next to this one (or, with `agentoffice`, in the folder you run it from)
   was doing.
 - **Talk to it.** Dictate with whisper.cpp and hear replies in a different
   voice per agent — all on this machine.
-- **Yours, on your machine.** It listens on localhost only. Use it on your
+- **Yours, on your machine.** It listens on localhost only (unless you start it with `--phone` to scan a QR code from your phone). Use it on your
   Claude plan or with an API key.
 
 ## Guides
