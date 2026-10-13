@@ -29,9 +29,14 @@ function render() {
     say(`Scan it with your phone’s camera. It opens ${link.label}.`);
     const copy = el('button', { type: 'button', className: 'acct-forget', textContent: copied ? 'Link copied' : 'Copy the link' });
     copy.addEventListener('click', () => {
-      navigator.clipboard?.writeText(link.url).then(() => { copied = true; render(); setTimeout(() => { copied = false; if (!pop.hidden) render(); }, 1800); }, () => {});
+      const done = () => { copied = true; note = ''; render(); setTimeout(() => { copied = false; if (!pop.hidden) render(); }, 1800); };
+      const failed = () => { note = 'Couldn’t copy it. Select the whole link below and copy it by hand; it ends with the key.'; render(); };
+      // No clipboard API over plain http (the local-network link), so fall back.
+      if (navigator.clipboard?.writeText) navigator.clipboard.writeText(link.url).then(done, () => (copyByHand(link.url) ? done() : failed()));
+      else if (copyByHand(link.url)) done(); else failed();
     });
     pop.append(copy);
+    if (note) pop.append(Object.assign(el('input', { readOnly: true, value: link.url, onfocus: (e) => e.target.select() }), { style: 'width:100%;font:12px ui-monospace,monospace;margin-top:6px' }));
     say(link.kind === 'lan'
       ? 'This is plain http on your local network, and the link carries the office key. Use it on a Wi-Fi you trust.'
       : 'The link carries the office key, so keep it to yourself.', 'acct-note acct-fine');
@@ -51,6 +56,17 @@ function render() {
   const sw = el('button', { type: 'button', className: t.state === 'on' ? 'acct-forget' : 'primary small', disabled: t.state === 'starting', textContent: t.state === 'on' ? 'Turn off the public address' : t.state === 'starting' ? 'Starting…' : 'Make a public address' });
   sw.addEventListener('click', () => toggle(t.state !== 'on'));
   pop.append(sw);
+}
+
+function copyByHand(text) {
+  const t = el('textarea', { value: text, readOnly: true });
+  t.style.cssText = 'position:fixed;opacity:0';
+  pop.append(t);
+  t.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  t.remove();
+  return ok;
 }
 
 // Cloudflare takes a few seconds to hand back a name.
