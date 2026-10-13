@@ -2444,6 +2444,7 @@ const agentApi = {
       prompt: `${brief}\n\n(Handed to you by ${myName}, who is working on "${me.title}" in ${me.repo}. Your final reply goes straight back to them, so make it the answer they need.)`,
     });
     job.requestedBy = me.id;
+    job.requestedByAgent = me.agentId;
     job.channel = me.channel;
     job.depth = (me.depth || 0) + 1;
     job.title = brief.split('\n')[0].slice(0, 90);

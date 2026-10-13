@@ -420,6 +420,8 @@ export class Economy {
     this.sweep();
     for (const bet of this.b.bets.filter((x) => this.boundTo(x, job))) {
       if (!(minutes > 0)) { this.close(bet, 'void', 'no working time was recorded'); continue; }
+      // A job one side of the bet handed over is one they could have sized to win.
+      if (job.requestedByAgent && (job.requestedByAgent === bet.by || job.requestedByAgent === bet.against)) { this.close(bet, 'void', 'the job came from someone in the bet'); continue; }
       const under = minutes < bet.minutes;
       this.close(bet, under ? 'won' : 'lost', `${Math.round(minutes * 10) / 10} min on "${job.title}"`, under ? bet.by : bet.against);
     }
