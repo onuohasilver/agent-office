@@ -47,10 +47,20 @@ const hmac = async (key, text) => {
   return hex(await crypto.subtle.sign('HMAC', k, new TextEncoder().encode(text)));
 };
 
+// An IPv6 caller usually holds a whole /64, so a limit per address is a
+// limit per /64. IPv4 (dotted, mapped or not) stays as it is.
+export function addressPrefix(ip) {
+  if (!ip.includes(':') || ip.includes('.')) return ip;
+  const [head, tail = ''] = ip.toLowerCase().split('%')[0].split('::');
+  const a = head ? head.split(':') : [], b = ip.includes('::') && tail ? tail.split(':') : [];
+  const groups = ip.includes('::') ? [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b] : a;
+  return groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':') + '::/64';
+}
+
 // The caller's address, keyed so a leaked table can't be walked back to it by
 // hashing every IPv4 address. Without IP_KEY (local dev) it is a plain hash.
 const addressOf = (request, env) => {
-  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  const ip = addressPrefix(request.headers.get('cf-connecting-ip') || 'unknown');
   return env.IP_KEY ? hmac(env.IP_KEY, ip) : sha256(`ip|${ip}`);
 };
 
