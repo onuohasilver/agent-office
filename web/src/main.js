@@ -23,6 +23,9 @@ import { PoolRoom } from './pool.js';
 import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
+import { initShop, setEconomy, bumpPot } from './shop.js';
+import { decorateDesk, placeOfficeItems } from './decor.js';
+import { itemById } from '../../shared/shop.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -284,12 +287,69 @@ const app = {
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
 initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
+initShop(app, { toast: (m, k) => hud.toast(m, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
 const poolRoom = new PoolRoom(scene, office);
 const visitors = new Visitors({ world, labels, camera, canvas: renderer.domElement });
 chief.want = 'desk';
 chief.teleport('desk');
+
+// ---------- the economy ----------
+
+// The books, from the hello, an economy event or the answer to a purchase.
+// Desks show what their agent owns, the room what the office does. Floor,
+// walls and layout are applyLook's.
+app.setEconomy = (econ) => {
+  if (!econ) return;
+  app.economy = econ;
+  setEconomy(econ);
+  dressRoom();
+  hud.renderTeam();
+  hud.renderKudos();
+};
+
+function dressRoom() {
+  const econ = app.economy;
+  if (!econ) return;
+  office.desks.forEach((desk, i) => {
+    const s = app.staff[i];
+    decorateDesk(desk, (s && econ.desks?.[s.id]) || [], { accent: s?.shirt });
+  });
+  placeOfficeItems(office, econ.office || [], scene);
+}
+
+// A short line floating up off an agent's name tag.
+function floatOver(agentId, text, cls = 'coinfloat') {
+  const a = app.agents.get(agentId);
+  if (!a?.label) return false;
+  const f = document.createElement('span');
+  f.className = `xpfloat ${cls}`;
+  f.textContent = text;
+  a.label.appendChild(f);
+  setTimeout(() => f.remove(), 2400);
+  return true;
+}
+
+// What just happened in the books, shown where it happened.
+function onLedger(e) {
+  if (!e) return;
+  const who = app.staffName(e.agentId);
+  if (e.kind === 'pay' || e.kind === 'kudos') {
+    floatOver(e.agentId, `+${e.agent} coins`);
+    bumpPot();
+    if (e.kind === 'kudos') hud.toast(`${who} got kudos: +${e.agent} for them, +${e.pot} to the pot`, 'good');
+  } else if (e.kind === 'achievement') {
+    floatOver(e.agentId, `★ ${e.title}`, 'coinfloat win');
+    bumpPot();
+    // After the "shipped" toast it usually lands with, not over it.
+    setTimeout(() => hud.toast(`★ ${who} unlocked ${e.title}: +${e.gross} coins`, 'good'), 3300);
+  } else if (e.kind === 'buy') {
+    const it = itemById(e.item);
+    if (e.agentId) floatOver(e.agentId, it?.icon || '🎁', 'coinfloat gift');
+    if (e.by !== 'boss') hud.toast(`${app.staffName(e.by)} bought ${it?.icon || ''} ${e.title} for their desk`, '');
+  }
+}
 
 app.mergeLog = (full) => {
   const job = app.jobs.get(full.id);
@@ -455,6 +515,7 @@ function handle(msg) {
     setContextLimit(msg.contextLimit);
     if (!msg.visiting) setSettings(msg);
     setLeaderboard(msg.leaderboard);
+    app.setEconomy(msg.economy);
     setLinks(msg.links);
     hud.renderProc(msg.procs, msg.machine);
     app.refreshLists();
@@ -548,6 +609,9 @@ function handle(msg) {
     setSettings(msg);
   } else if (msg.t === 'leaderboard') {
     setLeaderboard(msg.leaderboard);
+  } else if (msg.t === 'economy') {
+    app.setEconomy(msg.economy);
+    onLedger(msg.entry);
   } else if (msg.t === 'links') {
     setLinks(msg);
   } else if (msg.t === 'usage') {

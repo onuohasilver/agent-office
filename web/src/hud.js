@@ -5,6 +5,7 @@ import { Marked } from 'marked';
 import { recorder, voiceFile, speech } from './voice.js';
 import { LOOKS } from './figure.js';
 import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
+import { PAY, modelPay } from '../../shared/shop.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -80,7 +81,7 @@ document.addEventListener('error', (e) => {
 
 // Each person's face, drawn from the same skin, hair and shirt the office
 // figure wears, so the portrait is recognisably them.
-const portrait = (s) => {
+export const portrait = (s) => {
   const look = LOOKS[s.id] || {};
   const skin = hex(s.skin), hair = hex(s.hair), shirt = hex(s.shirt);
   const style = look.hair || 'short';
@@ -154,6 +155,8 @@ const resetsAt = (ts) => {
 // Memory reads in whatever unit keeps it to one or two digits.
 const bytes = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : `${Math.round(n / (1 << 20))} MB`);
 // Small shares still deserve a digit; "0%" reads as broken.
+// A coin amount, with the little gold coin the shop uses.
+const coinsOf = (v, cls = '') => `<span class="coins ${cls}"><i class="coin" aria-hidden="true"></i>${Math.round(num(v)).toLocaleString()}</span>`;
 const pct = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`;
 
 export async function api(path, body, method) {
@@ -600,6 +603,7 @@ export class Hud {
     };
     this.renderMeta(job);
     this.renderChanges(job);
+    this.renderKudos();
     const log = $('log');
     log.scrollTop = log.scrollHeight;
     this.bindFooter(job);
@@ -679,6 +683,7 @@ export class Hud {
       ['Time', job.startedAt ? duration(end - job.startedAt) : '—'],
       ['Cost', `$${(job.cost || 0).toFixed(3)}`],
       ['XP', job.xp ? `+${job.xp}` : '—'],
+      ...(job.earned ? [['Pay', `${job.earned} coins`]] : []),
     ];
     // Live machine cost, only while this job's process is actually up.
     const p = this.procs?.[job.id];
@@ -771,7 +776,7 @@ export class Hud {
     const plan = job.mode === 'plan' && job.status === 'done'
       ? `<div class="notice">That's the plan. <button class="primary small" data-act="approve">Approve and build it</button></div>`
       : '';
-    return `${blocked}${plan}
+    return `${blocked}${plan}<div id="kudosSlot"></div>
       <form class="reply" data-act="reply">
         <div class="tray" hidden></div>
         <textarea name="message" rows="2" placeholder="Follow up with ${esc(this.app.staffName(job.agentId) || 'them')}…"></textarea>
@@ -784,6 +789,36 @@ export class Hud {
           <button class="primary small" type="submit">Send</button>
         </div>
       </form>`;
+  }
+
+  // The boss's "great work" on a finished job: pays its finish bonus again,
+  // once. Redrawn on its own when the books change, so the reply box keeps
+  // whatever is being typed.
+  renderKudos() {
+    const slot = $('kudosSlot');
+    const job = this.openId && this.app.job(this.openId);
+    if (!slot || !job) return;
+    const econ = this.app.economy;
+    const ok = econ && job.status === 'done' && !job.awaitingBoss && !job.guest && !job.visitor && job.agentId && !visiting.on;
+    if (!ok) { slot.innerHTML = ''; return; }
+    const who = esc(this.app.staffName(job.agentId) || 'them');
+    const given = econ.kudos?.includes(job.id);
+    const bonus = Math.round(PAY.finishBonus * modelPay(job.model));
+    const paid = job.earned ? `${who} earned ${coinsOf(job.earned)} for this.` : '';
+    slot.className = `notice kudos${given ? ' given' : ''}`;
+    slot.innerHTML = given
+      ? `<span>${paid} You gave kudos. 👏</span>`
+      : `<span>${paid || `Happy with ${who}’s work?`}</span><button type="button" class="ghost small" data-act="kudos">👏 Kudos <span class="kudos-amt">+${bonus}</span></button>`;
+    const b = slot.querySelector('[data-act="kudos"]');
+    if (b) b.onclick = async () => {
+      b.disabled = true;
+      try {
+        this.app.setEconomy?.(await api('/api/economy/kudos', { jobId: job.id }));
+      } catch (err) {
+        this.toast(err.message, 'bad');
+        b.disabled = false;
+      }
+    };
   }
 
   bindFooter(job) {
@@ -1602,6 +1637,8 @@ export class Hud {
           <div class="row"><button type="button" class="ghost small" data-cancel>Cancel</button><button type="submit" class="primary small">Save</button></div>
         </form>`;
     const statusOf = (s, i) => (i >= cap ? 'Not hired yet' : dismissed.has(s.id) ? 'Gone home' : '');
+    const econ = this.app.economy;
+    const wallet = (s, i) => (econ && i < cap ? coinsOf(econ.wallets?.[s.id] || 0, 'tile-coins') : '');
     if (this.view === 'icons') {
       const openS = staff.find((s) => s.id === this.editing);
       $('team').innerHTML = `<div class="tiles">${staff.map((s, i) => {
@@ -1610,6 +1647,7 @@ export class Hud {
           <span class="art">${portrait(s)}</span>
           <span class="n">${esc(s.name)}</span>
           <span class="c">${status || esc(s.role || 'No role yet')}</span>
+          ${wallet(s, i)}
         </button>`;
       }).join('')}</div>${openS ? `<div class="member open">${form(openS)}</div>` : ''}`;
       return;
@@ -1619,7 +1657,7 @@ export class Hud {
       const open = this.editing === s.id;
       const head = `<button type="button" class="head" data-member="${esc(s.id)}" aria-expanded="${open}">
           <i style="background:${hex(s.shirt)}"></i>
-          <span class="n">${esc(s.name)}${status ? ` <em>${status}</em>` : ''}</span>
+          <span class="n">${esc(s.name)}${status ? ` <em>${status}</em>` : ''}${wallet(s, i)}</span>
           <span class="r">${esc(s.role || 'No role yet')}</span>
         </button>`;
       if (!open) return `<div class="member${i >= cap ? ' later' : ''}">${head}${s.personality ? `<p class="p">${esc(s.personality)}</p>` : ''}</div>`;
