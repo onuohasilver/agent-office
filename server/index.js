@@ -2682,7 +2682,11 @@ function serveStatic(req, res) {
   // The page names hashed assets, so it must be re-checked every load or a
   // phone keeps showing last week's build; the hashed files never change.
   const cache = file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache';
-  res.writeHead(200, { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': cache });
+  const head = { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': cache };
+  // Scripts only from the office itself, so injected markup can't run code
+  // (the desktop app gives this page IPC). Styles and connections stay open.
+  if (file.endsWith('.html')) head['content-security-policy'] = "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+  res.writeHead(200, head);
   fs.createReadStream(file).pipe(res);
 }
 
