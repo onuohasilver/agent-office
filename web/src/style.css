@@ -1081,3 +1081,192 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .meta-sum { display: none; font-weight: 400; }
 .meta-wrap.shut .meta-sum { display: inline; }
 @media (max-width: 700px) { .meta-fold { margin: 0 16px; } }
+
+/* ---------- user journeys: a flow canvas over the office view ---------- */
+
+.project .sub .map {
+  all: unset; cursor: pointer; display: flex; align-items: center; gap: 10px; margin: 0 4px 4px; padding: 10px 12px;
+  border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line); font-size: 13px; font-weight: 600;
+  transition: box-shadow 0.15s, transform 0.12s;
+}
+.project .sub .map:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent), 0 2px 10px -4px color-mix(in srgb, var(--accent) 40%, transparent); }
+.project .sub .map:active { transform: scale(0.985); }
+.project .sub .map:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.project .sub .map svg { width: 18px; height: 18px; fill: none; stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.project .sub .map span:first-of-type { flex: 1; }
+.project .sub .map .go { color: var(--ink-3); transition: transform 0.15s var(--ease); }
+.project .sub .map:hover .go { transform: translateX(2px); color: var(--accent); }
+
+.jmap {
+  position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column;
+  background: var(--paper); animation: jm-in 0.22s var(--ease);
+}
+@keyframes jm-in { from { opacity: 0; transform: scale(0.99); } }
+.jm-bar {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px; min-height: 58px;
+  border-bottom: 1px solid var(--line); background: var(--glass);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); position: relative; z-index: 2;
+}
+.jm-x {
+  all: unset; cursor: pointer; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--ink-2); flex: none;
+}
+.jm-x:hover { background: var(--t2); color: var(--ink); }
+.jm-x:focus-visible { outline: 2px solid var(--accent); }
+.jm-x svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.jm-title { display: flex; flex-direction: column; min-width: 0; flex: none; max-width: 30%; }
+.jm-title b { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jm-title span { font-size: 12px; color: var(--ink-3); white-space: nowrap; }
+.jm-fill { flex: 1; }
+.jm-picks {
+  flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; padding: 2px;
+  mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent);
+}
+.jm-picks::-webkit-scrollbar { display: none; }
+.jm-picks button {
+  all: unset; cursor: pointer; white-space: nowrap; padding: 6px 10px; border-radius: 8px; font-size: 13px; font-weight: 560; color: var(--ink-2);
+  display: inline-flex; align-items: center; gap: 6px; transition: background 0.15s, color 0.15s;
+}
+.jm-picks button:hover { background: var(--t1); color: var(--ink); }
+.jm-picks button[aria-selected="true"] { background: var(--ink); color: var(--paper); }
+.jm-picks button:focus-visible { outline: 2px solid var(--accent); }
+.jm-picks i { font-style: normal; font-size: 11px; font-variant-numeric: tabular-nums; opacity: 0.6; }
+
+.jm-body { position: relative; flex: 1; min-height: 0; }
+.jm-canvas {
+  position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; outline: none;
+  background-color: var(--paper-2);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink) 16%, transparent) 1px, transparent 1.2px);
+}
+.jm-canvas.grab { cursor: grabbing; }
+.jm-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; will-change: transform; }
+.jm-wires { position: absolute; overflow: visible; pointer-events: none; }
+.jm-wires path { fill: none; stroke: color-mix(in srgb, var(--ink) 32%, transparent); stroke-width: 1.6; transition: stroke 0.15s, opacity 0.15s; }
+.jm-wires marker path { fill: none; stroke: color-mix(in srgb, var(--ink) 45%, transparent); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.jm-wires path.lit { stroke: var(--accent); stroke-width: 2.2; }
+.jm-wires .dim { opacity: 0.25; }
+.jm-tag {
+  display: block; width: max-content; max-width: 120px; margin: 0 auto; padding: 2px 8px; border-radius: 99px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 11px/16px var(--sans); color: var(--ink-2); background: var(--surface); box-shadow: 0 0 0 1px var(--line);
+}
+
+.jm-step {
+  all: unset; box-sizing: border-box; position: absolute; width: 208px; height: 64px; cursor: pointer;
+  display: flex; align-items: center; gap: 11px; padding: 0 12px 0 10px;
+  background: var(--surface); border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--line), 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 14px -6px rgba(0, 0, 0, 0.12);
+  transition: box-shadow 0.15s, opacity 0.15s, transform 0.12s var(--ease);
+  --c: var(--work);
+}
+.jm-step.entry { --c: var(--good); }
+.jm-step.action { --c: oklch(60% 0.15 300); }
+.jm-step.decision { --c: var(--wait); }
+.jm-step.system { --c: var(--ink-3); }
+.jm-step.end { --c: var(--bad); }
+/* The ports, as on any node editor: where a wire comes in and goes out. */
+.jm-step::before, .jm-step::after {
+  content: ""; position: absolute; top: 50%; width: 8px; height: 8px; margin-top: -4px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.jm-step::before { left: -4px; }
+.jm-step::after { right: -4px; }
+.jm-step.entry::before, .jm-step.end::after { display: none; }
+.jm-step:hover { box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 55%, transparent), 0 6px 20px -8px color-mix(in srgb, var(--c) 50%, transparent); }
+.jm-step:active { transform: scale(0.98); }
+.jm-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.jm-step.on { box-shadow: 0 0 0 2px var(--c), 0 8px 24px -8px color-mix(in srgb, var(--c) 55%, transparent); }
+.jm-step.dim { opacity: 0.4; }
+.jm-step .k {
+  flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 9px;
+  background: color-mix(in srgb, var(--c) 14%, var(--surface)); color: var(--c);
+}
+.jm-step.decision .k { border-radius: 50%; }
+.jm-step .k svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.jm-step .t { display: flex; flex-direction: column; min-width: 0; }
+.jm-step b { font-size: 13px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.jm-step small { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-top: 2px; }
+
+.jm-sum {
+  position: absolute; left: 16px; bottom: 16px; max-width: min(420px, calc(100% - 180px)); margin: 0; padding: 8px 12px;
+  font-size: 12.5px; color: var(--ink-2); background: var(--glass); border-radius: 10px; box-shadow: 0 0 0 1px var(--line);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); text-wrap: pretty; pointer-events: none;
+}
+.jm-zoom { position: absolute; right: 16px; bottom: 16px; }
+
+.jm-card {
+  position: absolute; top: 14px; right: 14px; width: 300px; max-height: calc(100% - 90px); overflow-y: auto; padding: 14px 16px 16px;
+  background: var(--surface); border-radius: 14px; box-shadow: 0 0 0 1px var(--line), 0 12px 32px -12px rgba(0, 0, 0, 0.25);
+  animation: jm-card 0.18s var(--ease);
+}
+@keyframes jm-card { from { opacity: 0; transform: translateY(-4px); } }
+.jm-card header { display: flex; align-items: center; justify-content: space-between; }
+.jm-card .x { all: unset; cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 6px; border-radius: 6px; color: var(--ink-3); }
+.jm-card .x:hover { background: var(--t2); color: var(--ink); }
+.jm-kind { font-size: 10.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 8px; border-radius: 99px; background: var(--work-bg); color: var(--work-fg); }
+.jm-kind.entry { background: var(--good-bg); color: var(--good-fg); }
+.jm-kind.decision { background: var(--wait-bg); color: var(--wait-fg); }
+.jm-kind.end { background: var(--bad-bg); color: var(--bad-fg); }
+.jm-kind.system { background: var(--t2); color: var(--ink-2); }
+.jm-kind.action { background: color-mix(in srgb, oklch(60% 0.15 300) 16%, var(--surface)); color: oklch(52% 0.15 300); }
+.jm-card h4 { margin: 10px 0 6px; font-size: 16px; font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; }
+.jm-card p { margin: 0 0 10px; font-size: 13px; color: var(--ink-2); text-wrap: pretty; }
+.jm-card code { display: block; font: 12px/1.4 var(--mono); padding: 6px 8px; border-radius: 7px; background: var(--t1); color: var(--ink-2); overflow-wrap: anywhere; }
+.jm-card h5 { margin: 14px 0 4px; font-size: 11px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); }
+.jm-card ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+.jm-card li { font-size: 13px; }
+.jm-card li small { color: var(--ink-3); }
+
+.jm-empty, .jm-skel {
+  position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  padding: 24px; text-align: center; background-color: var(--paper-2);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--ink) 12%, transparent) 1px, transparent 1.2px); background-size: 22px 22px;
+}
+.jm-empty svg { width: 76px; height: 48px; margin-bottom: 10px; fill: var(--surface); stroke: var(--accent); stroke-width: 1.6; }
+.jm-empty svg path { fill: none; }
+.jm-empty h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; text-wrap: balance; }
+.jm-empty p { margin: 4px 0 14px; max-width: 400px; font-size: 13.5px; color: var(--ink-2); text-wrap: pretty; }
+.jm-empty .jm-err { color: var(--bad); margin-top: -6px; }
+.jm-skel p { margin: 18px 0 8px; font-size: 13.5px; color: var(--ink-2); max-width: 380px; text-wrap: pretty; }
+/* While the map is drawn: ghost cards wired in a row, lighting up in turn. */
+.jm-ghosts { display: flex; align-items: center; }
+.jm-ghosts i {
+  width: 92px; height: 44px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line);
+  animation: jm-ghost 1.6s var(--ease) infinite; animation-delay: calc(var(--i) * 0.2s);
+}
+.jm-ghosts b { width: 26px; height: 1.6px; background: color-mix(in srgb, var(--ink) 22%, transparent); }
+@keyframes jm-ghost {
+  0%, 100% { box-shadow: 0 0 0 1px var(--line); transform: none; }
+  30% { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 60%, transparent), 0 6px 16px -8px var(--accent); transform: translateY(-2px); }
+}
+
+@media (max-width: 860px) {
+  .jm-bar { flex-wrap: wrap; padding-top: calc(8px + env(safe-area-inset-top)); }
+  .jm-title { max-width: none; flex: 1; }
+  .jm-picks { order: 3; flex-basis: 100%; }
+  .jm-card { left: 10px; right: 10px; top: auto; bottom: 10px; width: auto; max-height: 55%; }
+  .jm-sum { display: none; }
+  .jm-ghosts i { width: 54px; }
+  .jm-ghosts b { width: 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .jmap, .jm-card, .jm-ghosts i { animation: none; } }
+/* The office goes quiet under the map: no name tags or controls poking through. */
+.view.jm-open :is(#labels, .hud, .hint, #stage) { visibility: hidden; }
+/* A wire back to an earlier step: dashed, so it reads as "go round again". */
+.jm-wires path.loop { stroke-dasharray: 5 4; }
+
+/* Image viewer */
+.viewer { position: fixed; inset: 0; z-index: 100; display: grid; grid-template-columns: auto 1fr auto; grid-template-rows: auto 1fr; background: rgb(14 13 11 / 0.88); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: #fff; }
+.viewer[hidden] { display: none; }
+.viewer-bar { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; padding: calc(10px + env(safe-area-inset-top)) 14px 10px; font-size: 13px; }
+.viewer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-count { opacity: 0.6; font-variant-numeric: tabular-nums; }
+.viewer-tab { color: inherit; opacity: 0.75; text-decoration: none; font-size: 12px; }
+.viewer-tab:hover { opacity: 1; text-decoration: underline; }
+.viewer button { appearance: none; border: 0; background: rgb(255 255 255 / 0.12); color: #fff; cursor: pointer; border-radius: 50%; width: 36px; height: 36px; font-size: 22px; line-height: 1; }
+.viewer button:hover { background: rgb(255 255 255 / 0.22); }
+.viewer-nav { align-self: center; margin: 0 12px; }
+.viewer.single .viewer-nav { visibility: hidden; }
+.viewer-stage { grid-column: 2; min-width: 0; min-height: 0; display: flex; overflow: auto; padding: 0 0 calc(14px + env(safe-area-inset-bottom)); }
+.viewer-stage img { margin: auto; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; cursor: zoom-in; }
+.viewer.actual .viewer-stage img { max-width: none; max-height: none; cursor: zoom-out; }
+body.viewing { overflow: hidden; }
+@media (max-width: 700px) { .viewer-nav { margin: 0 4px; width: 32px; height: 32px; } }

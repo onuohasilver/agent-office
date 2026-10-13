@@ -8,6 +8,7 @@ import { initSettings, setSettings } from './settings.js';
 import { setLeaderboard, onWelcomed } from './leaderboard.js';
 import { meetTeam } from './meet.js';
 import './phone.js';
+import './viewer.js';
 import { setLinks, setVisiting, capModes, visiting, visitClosed } from './links.js';
 import * as THREE from 'three';
 import { MapControls } from 'three/addons/controls/MapControls.js';
@@ -23,6 +24,7 @@ import { PoolRoom } from './pool.js';
 import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
+import { initJourneys, journeyJobs } from './journeys.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -279,6 +281,7 @@ const app = {
 };
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
+initJourneys(app);
 initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });
 const breakRoom = new BreakRoom();
@@ -312,6 +315,7 @@ app.refreshLists = () => {
   hud.renderStats(jobs, app.chiefCost);
   drawBoard(office.board, jobs);
   hud.renderAttention();
+  journeyJobs(jobs);
 };
 
 app.openJob = (id) => {

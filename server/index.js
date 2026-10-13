@@ -21,6 +21,7 @@ import { Settings } from './settings.js';
 import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
+import { Journeys } from './journeys.js';
 import { lanAddresses, phoneLinks, qrSvg, qrText } from './phone.js';
 import { Tunnel } from './tunnel.js';
 import { findCloudflared } from './cloudflared.js';
@@ -42,6 +43,7 @@ const UPLOADS = path.join(DATA, 'uploads');
 const MCP_DIR = path.join(DATA, 'mcp');
 fs.rmSync(MCP_DIR, { recursive: true, force: true });
 const auth = new Auth(DATA);
+const journeys = new Journeys(DATA);
 const board = new Leaderboard(DATA, { onChange: () => send({ t: 'leaderboard', leaderboard: board.status() }) });
 const MAX_UPLOAD = 25 * 1024 * 1024;
 const MAX_LOG = 600;
@@ -518,9 +520,45 @@ function react(id, emoji, who = 'you') {
   const r = (msg.reactions ||= {});
   const people = r[emoji] || [];
   r[emoji] = people.includes(who) ? people.filter((p) => p !== who) : [...people, who];
+  const added = r[emoji].includes(who);
   if (!r[emoji].length) delete r[emoji];
   if (!Object.keys(r).length) delete msg.reactions;
   send({ t: 'react', id, reactions: msg.reactions || {} });
+  save();
+  if (added && who === 'you') reactionFeedback(msg, emoji);
+}
+
+// What the boss means by an emoji, as a short signal for the agent. Anything
+// not listed still gets through, just without a reading.
+const REACTION_SIGNALS = {
+  '👍': 'approved. This is what they wanted.',
+  '🔥': 'great work. Do more like this.',
+  '❤️': 'loved it.',
+  '🎉': 'celebrating this one. Well done.',
+  '👏': 'applause for this.',
+  '💯': 'spot on.',
+  '🙏': 'thank you.',
+  '👀': 'they have seen it and are looking into it.',
+  '🤔': 'not convinced. Expect a question or a push back on this.',
+  '😕': 'this was unclear or off. Expect a correction.',
+  '👎': 'rejected. Not what they wanted; rethink the approach.',
+  '😂': 'amused by this.',
+};
+
+// A boss reaction on an agent's message is feedback on that job. It reaches a
+// running agent as a message; one that has finished isn't woken for an emoji,
+// so the signal rides along with the next thing the boss sends it.
+function reactionFeedback(msg, emoji) {
+  if (!STAFF.some((s) => s.id === msg.from)) return;
+  const job = (msg.jobId && state.jobs.find((j) => j.id === msg.jobId))
+    || (msg.thread && state.chat.find((m) => m.id === msg.thread) && threadJob(state.chat.find((m) => m.id === msg.thread)));
+  if (!job || job.guest || job.away || job.visitor || job.remote) return;
+  const reading = REACTION_SIGNALS[emoji.replace(/\uFE0F/g, '')] || REACTION_SIGNALS[emoji] || 'a reaction with no fixed meaning; take it as general feedback.';
+  const text = `[Boss reacted ${emoji} to your message "${clip(msg.text.replace(/\s+/g, ' '), 80)}": ${reading}] No reply needed.`;
+  if (job.status === 'working' || job.status === 'queued') return void deliver(job, text);
+  job.feedback = [...(job.feedback || []), text].slice(-5);
+  addLog(job, { kind: 'system', summary: `Boss reacted ${emoji}: ${reading}` });
+  pushJob(job);
   save();
 }
 
@@ -740,6 +778,8 @@ function start(job, agentId) {
   } else if (!job.guest) {
     fs.mkdirSync(UPLOADS, { recursive: true });
     args.push('--add-dir', UPLOADS);
+    // A mapping job writes its journey map in the office's data, not the project.
+    if (job.journeys) args.push('--add-dir', journeys.ensureDir());
   } else {
     // Nor the boss's connectors (mail, Slack, calendar), user settings and
     // hooks, or memory: at Full autonomy those would all be the guest's.
@@ -1177,6 +1217,7 @@ function replyJob(job, { message, mode, files }) {
   }
   message = String(message || '').trim();
   if (!message) throw new Error('Say something first.');
+  if (job.feedback?.length) { message = `${job.feedback.join('\n')}\n\n${message}`; job.feedback = null; }
   if (mode && !MODES[mode]) throw new Error('Unknown mode.');
   if (mode) job.mode = mode;
   // An idle session already nudged and still over the limit resumes fresh, not on its history.
@@ -2374,6 +2415,14 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(icon.file).pipe(res);
     }
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    // A project's user journey map, and the job drawing it if one is under way.
+    if (url.pathname === '/api/journeys' && ['GET', 'POST'].includes(req.method)) {
+      const name = req.method === 'GET' ? url.searchParams.get('name') : (await readBody(req)).name;
+      if (!repoPath(name)) return json(res, 404, { error: 'Unknown project folder.' });
+      let job = state.jobs.find((j) => j.journeys && j.repo === name && (j.status === 'working' || j.status === 'queued'));
+      if (req.method === 'POST' && !job) job = createJob({ repo: name, prompt: journeys.brief(name) }, { journeys: true });
+      return json(res, req.method === 'POST' ? 202 : 200, { map: journeys.read(name), job: job?.id || null });
+    }
     // An away job's file tools, passed to the host that has the project.
     if (req.method === 'POST' && parts[1] === 'agent' && /^files_[a-z]+$/.test(parts[2] || '')) {
       const me = caller(req);

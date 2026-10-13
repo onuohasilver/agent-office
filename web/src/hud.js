@@ -5,6 +5,7 @@ import { Marked } from 'marked';
 import { recorder, voiceFile, speech } from './voice.js';
 import { LOOKS } from './figure.js';
 import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
+import { openJourneys } from './journeys.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -299,6 +300,12 @@ export class Hud {
     $('projects').onclick = (e) => {
       const job = e.target.closest('.job[data-id]');
       if (job) return this.app.openJob(job.dataset.id);
+      const map = e.target.closest('[data-journeys]');
+      if (map) {
+        // On a phone the map takes the office's half; closing it comes back here.
+        this.mobile('office');
+        return openJourneys(map.dataset.journeys, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); });
+      }
       const add = e.target.closest('[data-new]');
       if (add) return this.focusInput(`#${add.dataset.new.replace(/\s+/g, '-')} `);
       const head = e.target.closest('[data-project]');
@@ -518,7 +525,7 @@ export class Hud {
       $('projects').innerHTML = `<p class="empty">No projects worked on yet. Ask for something in the chat.</p>`;
       return;
     }
-    const sub = (p) => `<div class="sub">${p.js.length ? p.js.slice(0, 8).map((j) => `
+    const sub = (p) => `<div class="sub">${visiting.on ? '' : `<button type="button" class="map" data-journeys="${esc(p.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.5"/><rect x="15" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 12c3 0 3-5 6-5M9 12c3 0 3 5 6 5"/></svg><span>User journeys</span><span class="go" aria-hidden="true">→</span></button>`}${p.js.length ? p.js.slice(0, 8).map((j) => `
           <button class="job" data-id="${esc(j.id)}"><span class="dot ${known(STATUS, j.status)}"></span><span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
             <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${statusText(j.status)}</span></button>`).join('')
       : `<p class="none">Nothing has run here yet.</p>`}
