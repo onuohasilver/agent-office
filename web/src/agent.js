@@ -42,7 +42,7 @@ export class Agent {
     this.name = staff.name;
     this.world = world;
     this.desk = opts.desk || world.desks[world.agentIndex(staff.id)];
-    this.deskFace = opts.face ?? Math.PI;
+    this.deskFace = opts.face ?? this.desk?.face ?? Math.PI;
 
     this.root = new THREE.Group();
     this.fig = new Figure(staff);

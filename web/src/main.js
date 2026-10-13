@@ -222,7 +222,11 @@ function resize() {
 new ResizeObserver(resize).observe(stage);
 resize();
 
-const office = buildOffice(scene);
+// The floor plan is built once, at load, so the layout in use is remembered
+// here and a change of layout reloads the page (see applyLook).
+const LAYOUT_KEY = 'office.layout';
+const storedLayout = (() => { try { return localStorage.getItem(LAYOUT_KEY) || ''; } catch { return ''; } })();
+const office = buildOffice(scene, storedLayout);
 const confetti = new Confetti(scene);
 
 // ---------- state ----------
@@ -410,8 +414,20 @@ function connect() {
   };
 }
 
+// The office's look, from the economy's books: paint and floor change in
+// place; a different layout needs the room rebuilt, so the page reloads.
+function applyLook(economy) {
+  const using = economy?.using;
+  if (!using) return;
+  office.setFinish(using);
+  if (using.layout === storedLayout || (!storedLayout && using.layout === 'layout-classic')) return;
+  try { localStorage.setItem(LAYOUT_KEY, using.layout); } catch { return; }
+  location.reload();
+}
+
 function handle(msg) {
   if (visitors.handle(msg)) return;
+  if (msg.economy) applyLook(msg.economy);
   if (msg.t === 'hello') {
     setVisiting(msg.visiting);
     app.staff = msg.staff;

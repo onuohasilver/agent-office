@@ -8,8 +8,54 @@ export const W = 52, D = 30;
 export const FLOOR = { x0: -20, x1: 32, z0: -D / 2, z1: D / 2, cx: 6 };
 const WING = 20.4; // the glass line between our floor and the guest wing
 const DOOR_X = 27;
-// Where the pool table stands, and how high its cloth is.
+// Where the pool table stands, and how high its cloth is. The layout moves
+// it, so buildOffice sets x and z before anything else reads them.
 export const POOL = { x: 7.6, z: 10.9, felt: 0.84 };
+
+// Floor plans, bought with the office pot (see shared/shop.js). The walls,
+// library, server room, lounge, reception and guest wing stay where they
+// are; a layout moves the desks, the communal table, the pool table and the
+// whiteboard huddle. A desk is [x, z, turned]: a turned desk faces south,
+// its chair on the north side. `slots` are open floor for office items.
+const ROWS = [[-9, -3], [-3, -3], [3, -3], [9, -3], [-9, 5], [-3, 5], [3, 5], [9, 5]];
+export const LAYOUTS = {
+  'layout-classic': {
+    desks: ROWS.map(([x, z]) => [x, z, false]),
+    table: [-1, 11.6], pool: [7.6, 10.9],
+    slots: [[14.5, 5.5], [-6, -11.2], [3, -11.2], [16.5, 10.5], [-7, 9], [13, 1.5]],
+  },
+  // Two clusters of four, back to back, with a rug for the lounge between.
+  'layout-pods': {
+    desks: [-1, 1].flatMap((side) => {
+      const cx = side * 6.5;
+      return [[cx - 1.3, -1.4, false], [cx + 1.3, -1.4, false], [cx - 1.3, -2.6, true], [cx + 1.3, -2.6, true]];
+    }),
+    table: [0, 5.5], pool: [7.6, 10.9],
+    slots: [[0, -2], [-6, -9.5], [6, -9.5], [14.5, 5.5], [16.5, 10.5], [-7, 9]],
+    rug: [0, 5.5, 8, 4.2, '#b9c7a5'],
+  },
+  // One long row of desks, the open floor given over to the lounge and games.
+  'layout-studio': {
+    desks: Array.from({ length: 8 }, (_, i) => [-9.1 + i * 2.6, -6.5, false]),
+    table: [-4, 3.5], pool: [4.5, 3.5],
+    slots: [[12, 3.5], [-12, 2.5], [14.5, 8], [0, 9], [5, 12.5], [16.5, 11.5]],
+    rug: [0, 3.5, 16, 5, '#d7b49e'],
+  },
+  // Desks round a courtyard, facing in, the pool table at its heart.
+  'layout-campus': {
+    desks: [[-6.6, -4, true], [-3.3, -4, true], [3.3, -4, true], [6.6, -4, true], [-6.6, 6, false], [-3.3, 6, false], [3.3, 6, false], [6.6, 6, false]],
+    table: [-1, 11.6], pool: [0, 1],
+    slots: [[-9.5, 1], [9.5, 1], [14.5, 5.5], [-6, -11.2], [3, -11.2], [16.5, 10.5]],
+    rug: [0, 1, 11, 5.6, '#c9b79c'],
+  },
+};
+export const layoutOf = (id) => LAYOUTS[id] || LAYOUTS['layout-classic'];
+
+// The paint and floor bought from the shop. The floor is a tint over the
+// planks, so oak is no tint at all.
+const FLOOR_TINT = { 'floor-oak': '#ffffff', 'floor-walnut': '#a77c55', 'floor-terrazzo': '#f2efea', 'floor-concrete': '#b8b9b6' };
+const WALL_PAINT = { 'wall-cream': '#f5f0e8', 'wall-sage': '#d6e2d0', 'wall-navy': '#4a5d80', 'wall-blush': '#f1d9d2' };
+const wallMat = new THREE.MeshStandardMaterial({ color: '#f5f0e8', roughness: 0.82 });
 
 const C = {
   floor: '#ece3d4', wall: '#f5f0e8', trim: '#d9cdbb', wood: '#c39a6b', woodDark: '#8c6440',
@@ -399,9 +445,10 @@ function notebook(parent, x, y, z) {
   pen.rotation.set(0, 0.5, Math.PI / 2);
 }
 
-function buildDesk(scene, grid, x, z, index) {
+function buildDesk(scene, grid, x, z, index, turned = false) {
   const g = new THREE.Group();
   g.position.set(x, 0, z);
+  if (turned) g.rotation.y = Math.PI;
 
   // top: 2.5 x 1.15, surface at 0.83, with a darker lip so the edge catches
   const top = box(g, 2.5, 0.1, 1.15, null, 0, 0.78, 0, deskTopMaterial());
@@ -506,8 +553,10 @@ function buildDesk(scene, grid, x, z, index) {
   g.add(chair);
 
   scene.add(g);
-  grid.block(x - 1.3, x + 1.3, z - 0.7, z + 0.5);
-  const desk = { index, x, z, seat: new THREE.Vector3(x, 0, z + 1.05), seatY: SEAT, screen: main.face, side: side.face, plate, led: ledMat, chair };
+  if (turned) grid.block(x - 1.3, x + 1.3, z - 0.5, z + 0.7);
+  else grid.block(x - 1.3, x + 1.3, z - 0.7, z + 0.5);
+  // `face` is which way someone sitting there looks: at the screen.
+  const desk = { index, x, z, group: g, face: turned ? 0 : Math.PI, seat: new THREE.Vector3(x, 0, z + (turned ? -1.05 : 1.05)), seatY: SEAT, screen: main.face, side: side.face, plate, led: ledMat, chair };
   dressDesk(desk, {});
   return desk;
 }
@@ -709,7 +758,11 @@ export function dressDesk(desk, { name = '', accent = '#7d8a9c', state = 'open' 
 
 // ---------- the room ----------
 
-export function buildOffice(scene) {
+export function buildOffice(scene, layoutId) {
+  const L = layoutOf(layoutId);
+  POOL.x = L.pool[0];
+  POOL.z = L.pool[1];
+  const [TX, TZ] = L.table;
   const grid = new Grid(W, D, FLOOR.x0, FLOOR.z0);
   const blinkers = [];
 
@@ -731,6 +784,7 @@ export function buildOffice(scene) {
   scene.add(shade);
   const carpet = box(scene, 24.5, 0.02, 12.6, null, 0, 0.011, 1.2, new THREE.MeshStandardMaterial({ map: carpetTexture(), roughness: 1 }));
   carpet.castShadow = false;
+  carpet.visible = !L.rug;
 
   // Four walls. The ones between the camera and the room drop to a stub so
   // you can always see in, whichever way you turn.
@@ -764,7 +818,11 @@ export function buildOffice(scene) {
 
   // desks
   const desks = [];
-  [[-9, -3], [-3, -3], [3, -3], [9, -3], [-9, 5], [-3, 5], [3, 5], [9, 5]].forEach(([x, z], i) => desks.push(buildDesk(scene, grid, x, z, i)));
+  L.desks.forEach(([x, z, turned], i) => desks.push(buildDesk(scene, grid, x, z, i, turned)));
+  if (L.rug) {
+    const [rx, rz, rw, rd, rc] = L.rug;
+    box(scene, rw, 0.02, rd, rc, rx, 0.012, rz, { roughness: 1 }).castShadow = false;
+  }
 
   // library — read, grep, glob
   const bookColors = ['#e07a5f', '#3d7ea6', '#f2cc8f', '#81b29a', '#9c6ade', '#e5989b', '#2a9d8f', '#577590'];
@@ -924,7 +982,7 @@ export function buildOffice(scene) {
 
   // communal table on the open floor by the front wall
   const table = new THREE.Group();
-  table.position.set(-1, 0, 11.6);
+  table.position.set(TX, 0, TZ);
   box(table, 5.2, 0.08, 1.4, C.wood, 0, 0.78, 0);
   for (const lx of [-2.3, 2.3]) {
     box(table, 0.08, 0.74, 1.1, C.metal, lx, 0.38, 0);
@@ -950,7 +1008,7 @@ export function buildOffice(scene) {
     table.add(glow);
   }
   scene.add(table);
-  grid.block(-3.8, 1.8, 10.3, 12.9);
+  grid.block(TX - 2.8, TX + 2.8, TZ - 1.3, TZ + 1.3);
 
   // pool table on the open floor beside the lobby. Table space is the sim's
   // (cloth middle at the origin, long side along x), so the balls can be
@@ -1000,7 +1058,16 @@ export function buildOffice(scene) {
   const wing = guestWing(scene, grid, north, east, nx);
 
   const plants = [[-19, -9.5, 1.1, 'tall'], [10, -14, 1, 'snake'], [-9.8, -14.2, 0.9, 'bush'], [19, -11, 1.2, 'tall'], [-10.3, 14, 1, 'bush'], [6.2, 13.8, 1.1, 'tall'], [19, 8.5, 1, 'snake'], [19.2, 0, 0.9, 'bush'], [-19.1, 14.2, 0.8, 'snake'], [11.6, 13.9, 1, 'bush']];
-  for (const [x, z, s, kind] of plants) plant(scene, grid, x, z, s, kind);
+  for (const [x, z, s, kind] of plants) if (!grid.blocked(...grid.cellOf(x, z))) plant(scene, grid, x, z, s, kind);
+
+  // Open floor for whatever the office buys, facing the middle of the room.
+  // Anything that ended up under furniture is dropped.
+  const decorSlots = L.slots.filter(([x, z]) => !grid.blocked(...grid.cellOf(x, z)))
+    .map(([x, z]) => ({ x, z, face: Math.atan2(0 - x, 1 - z) }));
+  const setFinish = ({ floor, wall } = {}) => {
+    top.color.set(FLOOR_TINT[floor] || '#ffffff');
+    wallMat.color.set(WALL_PAINT[wall] || C.wall);
+  };
 
   const face = { n: Math.PI, s: 0, w: -Math.PI / 2, e: Math.PI / 2 };
   // A spot is a place to be: where to stand, which way to look, what to do
@@ -1019,8 +1086,7 @@ export function buildOffice(scene) {
       spots: spots([
         [-16, 8.5, 's', 'couch', SEAT], [-14.5, 8.5, 's', 'couch', SEAT], [-13, 8.5, 's', 'couch', SEAT],
         [-17.2, 10.9, 'e', 'couch', SEAT], [-11.9, 10.9, 'w', 'couch', SEAT],
-        [-2.7, 10.55, 's', 'sit', SEAT], [-1, 10.55, 's', 'sit', SEAT], [0.7, 10.55, 's', 'sit', SEAT],
-        [-2.7, 12.65, 'n', 'sit', SEAT], [-1, 12.65, 'n', 'sit', SEAT], [0.7, 12.65, 'n', 'sit', SEAT],
+        ...[-1.7, 0, 1.7].flatMap((dx) => [[TX + dx, TZ - 1.05, 's', 'sit', SEAT], [TX + dx, TZ + 1.05, 'n', 'sit', SEAT]]),
         [-17.9, 11.4, 'w', 'mug'], [-17.9, 12.8, 'w', 'mug'],
         [-11.95, 12, 'e', 'mug'], [-10.05, 12, 'w', 'mug'],
       ]),
@@ -1048,11 +1114,11 @@ export function buildOffice(scene) {
   // or have a coffee at the guest bar. In a meeting they gather at the guest
   // table. See guestWing.
   const toward = (x, z, cx, cz, pose) => ({ pos: new THREE.Vector3(x, 0, z), face: Math.atan2(cx - x, cz - z), pose, taken: null });
-  stations.poolside = { label: 'Pool table', spots: [[4.9, 10.9], [10.3, 10.9], [9.6, 8.8], [5.6, 8.8]].map(([x, z]) => toward(x, z, POOL.x, POOL.z, 'mug')) };
+  stations.poolside = { label: 'Pool table', spots: [[-2.7, 0], [2.7, 0], [2, -2.1], [-2, -2.1]].map(([dx, dz]) => toward(POOL.x + dx, POOL.z + dz, POOL.x, POOL.z, 'mug')) };
   Object.assign(stations, wing.stations);
 
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
+  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, decorSlots, setFinish, layout: L, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
 }
 
 
@@ -1274,7 +1340,7 @@ function buildWall(scene, len, x, z, rotY, outward, segments = [[-len / 2, len /
   const cap = new THREE.Group();
   g.add(body, cap);
   for (const [a, b] of segments) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(b - a, WALL_H, 0.3), mat(C.wall));
+    const m = new THREE.Mesh(new THREE.BoxGeometry(b - a, WALL_H, 0.3), wallMat);
     m.position.set((a + b) / 2, WALL_H / 2, 0);
     m.castShadow = m.receiveShadow = true;
     body.add(m);

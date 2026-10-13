@@ -72,9 +72,9 @@ export const ITEMS = [
   { id: 'wall-blush', scope: 'wall', name: 'Blush walls', price: 350, color: '#f1d9d2', icon: '🧱' },
   // layouts
   { id: 'layout-classic', scope: 'layout', name: 'Classic', price: 0, icon: '🏢', blurb: 'Two rows of desks, the library and server room on the back wall.' },
-  { id: 'layout-pods', scope: 'layout', name: 'Pods', price: 1500, icon: '🧩', blurb: 'Desks in two facing clusters, the lounge in the middle of everything.' },
-  { id: 'layout-studio', scope: 'layout', name: 'Studio', price: 2500, icon: '🎨', blurb: 'One long workbench under the windows, the rest of the floor left open.' },
-  { id: 'layout-campus', scope: 'layout', name: 'Campus', price: 4000, icon: '🏛️', blurb: 'Desks round a central courtyard with the pool table at its heart.' },
+  { id: 'layout-pods', scope: 'layout', name: 'Pods', price: 1500, icon: '🧩', blurb: 'Desks in two back-to-back clusters of four, a table and rug between them.' },
+  { id: 'layout-studio', scope: 'layout', name: 'Studio', price: 2500, icon: '🎨', blurb: 'One long row of desks along the back, the floor left open for the table and the pool.' },
+  { id: 'layout-campus', scope: 'layout', name: 'Campus', price: 4000, icon: '🏛️', blurb: 'Desks facing in round a courtyard, with the pool table at its heart.' },
 ];
 
 export const itemById = (id) => ITEMS.find((i) => i.id === id);
