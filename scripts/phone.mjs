@@ -123,6 +123,7 @@ const stub = path.join(tmp, 'cloudflared');
 const pidFile = path.join(tmp, 'stub.pid');
 fs.writeFileSync(stub, `#!${process.execPath}
 require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+require('fs').writeFileSync(${JSON.stringify(pidFile)} + '.args', JSON.stringify(process.argv.slice(2)));
 console.error('INF Requesting new quick Tunnel on trycloudflare.com...');
 setTimeout(() => console.error('INF |  https://quiet-river-demo.trycloudflare.com  |'), 300);
 setTimeout(() => console.error('INF Registered tunnel connection connIndex=0'), 900);
@@ -152,6 +153,11 @@ await run('tunnel', { OFFICE_CLOUDFLARED: stub }, async ({ port, key }) => {
     for (let i = 0; i < 40; i++) { r = await status(); if (r.tunnel.state === 'on') break; await sleep(150); }
     assert(r.tunnel.state === 'on' && r.tunnel.url === `https://${HOST}`, JSON.stringify(r.tunnel));
     assert(r.links[0].url === `https://${HOST}/?key=${key()}` && r.links[0].svg.startsWith('<svg'), JSON.stringify(r.links[0]).slice(0, 160));
+  });
+  await check('cloudflared gets an empty config, not ~/.cloudflared/config.yml', async () => {
+    const args = JSON.parse(fs.readFileSync(pidFile + '.args', 'utf8'));
+    const cfg = args[args.indexOf('--config') + 1];
+    assert(args.includes('--config') && fs.existsSync(cfg) && fs.readFileSync(cfg, 'utf8') === '', JSON.stringify(args));
   });
   await check('the tunnel’s name is served, with the key, and not without it', async () => {
     assert((await raw(port, HOST, { cookie: cookie() })).statusCode === 200, 'refused with key');
