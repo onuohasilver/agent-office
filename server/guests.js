@@ -155,13 +155,13 @@ export class Guests {
     this.office = office;
     this.copies = visits;
     this.file = path.join(dataDir, 'guests.json');
-    this.used = {};
+    this.used = Object.create(null);
     // Where each of our jobs at a host was asked for (chat thread and
     // channel), and the project last used at each host.
     this.asked = { threads: {}, lastRepo: {} };
     try {
       const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      this.used = saved.used || {};
+      this.used = Object.assign(Object.create(null), saved.used);
       this.asked = { threads: saved.asked?.threads || {}, lastRepo: saved.asked?.lastRepo || {} };
     } catch {}
     this.remote = new Map(); // link id -> { link, host, staff, repos, clearance, jobs: Map(host job id -> job) }

@@ -26,6 +26,9 @@ const MAX_AGENTS = 16;
 const STATES = new Set(['working', 'idle', 'break', 'meeting', 'away']);
 const CODE_RE = /^[0-9A-HJKMNP-TV-Z]{8}$/;
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+// Ids key plain objects (saved guests, tokens used), so none may name their prototype.
+const NOT_IDS = new Set(['__proto__', 'constructor', 'prototype']);
+const isId = (v) => ID_RE.test(String(v ?? '')) && !NOT_IDS.has(String(v));
 const HEX_RE = /^#[0-9a-f]{6}$/i;
 const CLEARANCES = new Set(['plan', 'edit', 'auto']); // MODES in index.js: auto is Full autonomy
 
@@ -40,13 +43,13 @@ export function normaliseCode(code) {
 }
 
 function cleanLink(l) {
-  if (!l || !ID_RE.test(String(l.id))) return null;
+  if (!l || !isId(l.id)) return null;
   return {
     id: String(l.id),
     peer: text(l.peer, 20),
     kind: l.kind === 'guest' ? 'guest' : 'link',
     role: ['host', 'guest'].includes(l.role) ? l.role : 'peer',
-    invite: ID_RE.test(String(l.invite ?? '')) ? String(l.invite) : null,
+    invite: isId(l.invite) ? String(l.invite) : null,
     createdAt: Number.isFinite(l.createdAt) ? l.createdAt : null,
   };
 }
@@ -145,7 +148,7 @@ export class Links {
   // A guest link's limits, as the host set them. Null if this isn't one we host.
   guestPolicy(linkId) {
     const l = this.links.find((x) => x.id === linkId);
-    return l?.role === 'host' ? this.saved.guests[l.id] || null : null;
+    return l?.role === 'host' && Object.hasOwn(this.saved.guests, l.id) ? this.saved.guests[l.id] : null;
   }
 
   save() {
