@@ -44,8 +44,22 @@ const UPLOADS = path.join(DATA, 'uploads');
 // would be readable by every process on the machine (`ps`); here it is a 0600
 // file in a 0700 folder, gone when the job's session closes. Leftovers from a
 // crash hold tokens that died with that server, so they are cleared at start.
-const MCP_DIR = path.join(DATA, 'mcp');
+//
+// In a clone DATA sits inside ROOT, in the office's own project, where any job
+// there could read it. So the tokens go outside ROOT, in this account's temp
+// folder, and such a job's file tools are denied the rest (denyData).
+const within = (p, dir) => { const r = path.relative(dir, p); return !r || (!r.startsWith('..') && !path.isAbsolute(r)); };
+const DATA_IN_ROOT = within(DATA, ROOT);
+const MCP_DIR = DATA_IN_ROOT ? path.join(os.tmpdir(), `agent-office-mcp-${crypto.createHash('sha256').update(DATA).digest('hex').slice(0, 12)}`) : path.join(DATA, 'mcp');
 fs.rmSync(MCP_DIR, { recursive: true, force: true });
+fs.rmSync(path.join(DATA, 'mcp'), { recursive: true, force: true });
+// Made fresh, not reused: in a shared /tmp someone else could have made it first.
+fs.mkdirSync(MCP_DIR, { recursive: !DATA_IN_ROOT, mode: 0o700 });
+// Only this account reads the office's data: job logs, links, keys, uploads.
+fs.mkdirSync(DATA, { recursive: true, mode: 0o700 });
+fs.chmodSync(DATA, 0o700);
+try { fs.chmodSync(STATE_FILE, 0o600); } catch {}
+if (DATA_IN_ROOT) console.warn(`[office] The office's data (${DATA}) is inside the projects folder (${ROOT}). Job tokens are kept elsewhere and file tools are denied it, but a job there can still read it through the shell. Set OFFICE_DATA to a folder outside ${ROOT}.`);
 const auth = new Auth(DATA);
 const journeys = new Journeys(DATA);
 const board = new Leaderboard(DATA, { onChange: () => send({ t: 'leaderboard', leaderboard: board.status() }) });
@@ -307,7 +321,7 @@ function save() {
   saveTimer = setTimeout(() => {
     fs.mkdirSync(DATA, { recursive: true });
     const tmp = STATE_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state));
+    fs.writeFileSync(tmp, JSON.stringify(state), { mode: 0o600 });
     fs.renameSync(tmp, STATE_FILE);
   }, 400);
 }
@@ -864,6 +878,21 @@ function hold(job, why, { quiet = false } = {}) {
 // it works on is at the host, reached only through the files_* tools.
 const awayDir = (job) => path.join(DATA, 'away', job.id);
 
+// What a job working in the folder that holds DATA may not open with its file
+// tools: everything but the attachments and journey maps it is given anyway.
+// Merged into the job's --settings, if it has one.
+const DATA_OPEN = ['uploads', 'journeys'];
+function denyData(args) {
+  let names = [];
+  try { names = fs.readdirSync(DATA); } catch {}
+  names = [...new Set([...names, 'office-key', 'links.json', 'auth.json', 'state.json', 'mcp', 'visits', 'away'])].filter((n) => !DATA_OPEN.includes(n));
+  const deny = names.flatMap((n) => ['Read', 'Edit'].flatMap((t) => [`${t}(/${path.join(DATA, n)})`, `${t}(/${path.join(DATA, n)}/**)`]));
+  const i = args.indexOf('--settings');
+  const s = i < 0 ? {} : JSON.parse(args[i + 1]);
+  s.permissions = { ...s.permissions, deny: [...(s.permissions?.deny || []), ...deny] };
+  if (i < 0) args.push('--settings', JSON.stringify(s)); else args[i + 1] = JSON.stringify(s);
+}
+
 function start(job, agentId) {
   const cwd = job.away ? awayDir(job) : repoPath(job.repo);
   // An away job reads files it doesn't own, so nothing that runs code here:
@@ -882,7 +911,7 @@ function start(job, agentId) {
   if (job.away) {
     try { fs.mkdirSync(cwd, { recursive: true, mode: 0o700 }); } catch {}
   } else if (!job.guest) {
-    fs.mkdirSync(UPLOADS, { recursive: true });
+    fs.mkdirSync(UPLOADS, { recursive: true, mode: 0o700 });
     args.push('--add-dir', UPLOADS);
     // A mapping job writes its journey map in the office's data, not the project.
     if (job.journeys) args.push('--add-dir', journeys.ensureDir());
@@ -891,6 +920,7 @@ function start(job, agentId) {
     // hooks, or memory: at Full autonomy those would all be the guest's.
     args.push('--strict-mcp-config', '--setting-sources', 'project,local', '--settings', JSON.stringify({ autoMemoryEnabled: false }));
   }
+  if (cwd && !job.away && within(DATA, cwd)) denyData(args);
   // A guest's job can be away too: one of our agents, lent to the guest, in the guest's own project.
   const allowed = [...officeTools(job), ...(job.away ? awayTools(job) : [])];
   args.push('--mcp-config', mcpFile, '--allowedTools', allowed.join(','), '--append-system-prompt', (job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job)) + awayPrompt(job));
@@ -2426,10 +2456,10 @@ function upload(req) {
   if (size > MAX_UPLOAD) throw new Error('That file is over 25 MB.');
   const id = crypto.randomBytes(6).toString('hex');
   const dir = uploadDir(id);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, name);
   return new Promise((resolve, reject) => {
-    const out = fs.createWriteStream(file);
+    const out = fs.createWriteStream(file, { mode: 0o600 });
     let got = 0;
     const fail = (err) => { out.destroy(); fs.rmSync(dir, { recursive: true, force: true }); reject(err); };
     req.on('data', (c) => {
@@ -2516,7 +2546,7 @@ function voiceNote(msg) {
     const who = msg.from === 'chief' ? 'Chief' : nameOf(msg.from);
     const name = `${who}-${msg.id}.m4a`.replace(/[^\w.-]/g, '');
     try {
-      fs.mkdirSync(dir, { recursive: true });
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       if (!(await speak(live.text, msg.from, { dataDir: DATA, out: path.join(dir, name) }))) throw new Error('nothing worth saying');
       const [f] = attachments([id]);
       if (!f) throw new Error('the recording went missing');
