@@ -117,6 +117,74 @@ else await run('lan', { OFFICE_LAN: '1' }, async ({ port, log, key }) => {
   });
 });
 
+// The public address, against a stand-in cloudflared that prints a name the
+// way the real one does and then stays up.
+const stub = path.join(tmp, 'cloudflared');
+const pidFile = path.join(tmp, 'stub.pid');
+fs.writeFileSync(stub, `#!${process.execPath}
+require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+console.error('INF Requesting new quick Tunnel on trycloudflare.com...');
+setTimeout(() => console.error('INF |  https://quiet-river-demo.trycloudflare.com  |'), 300);
+setTimeout(() => console.error('INF Registered tunnel connection connIndex=0'), 900);
+setInterval(() => {}, 1000);
+`, { mode: 0o755 });
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const HOST = 'quiet-river-demo.trycloudflare.com';
+const raw = (port, host, headers = {}) => new Promise((resolve, reject) => {
+  import('node:http').then(({ default: http }) => http.get({ host: '127.0.0.1', port, path: '/api/repos', headers: { host, ...headers } }, (r) => { r.resume(); resolve(r); }).on('error', reject));
+});
+
+await run('tunnel', { OFFICE_CLOUDFLARED: stub }, async ({ port, key }) => {
+  const cookie = () => `office_key_${port}=${key()}`;
+  const base = `http://127.0.0.1:${port}`;
+  const status = async () => (await (await fetch(`${base}/api/phone`, { headers: { cookie: cookie() } })).json());
+  const toggle = (on) => fetch(`${base}/api/phone/tunnel`, { method: 'POST', headers: { cookie: cookie(), 'content-type': 'application/json' }, body: JSON.stringify({ on }) });
+  await check('the tunnel is off until asked', async () => {
+    const r = await status();
+    assert(r.tunnel.state === 'off' && r.links.length === 0 && !fs.existsSync(pidFile), JSON.stringify(r.tunnel));
+  });
+  await check('its name is refused before it exists', async () => assert((await raw(port, HOST, { cookie: cookie() })).statusCode === 403, 'accepted'));
+  await check('turning it on gives the public link and its QR, once connected', async () => {
+    await toggle(true);
+    await sleep(500); // the name is out, the connection isn't
+    assert((await status()).tunnel.state === 'starting', 'called it on before Cloudflare was connected');
+    let r;
+    for (let i = 0; i < 40; i++) { r = await status(); if (r.tunnel.state === 'on') break; await sleep(150); }
+    assert(r.tunnel.state === 'on' && r.tunnel.url === `https://${HOST}`, JSON.stringify(r.tunnel));
+    assert(r.links[0].url === `https://${HOST}/?key=${key()}` && r.links[0].svg.startsWith('<svg'), JSON.stringify(r.links[0]).slice(0, 160));
+  });
+  await check('the tunnel’s name is served, with the key, and not without it', async () => {
+    assert((await raw(port, HOST, { cookie: cookie() })).statusCode === 200, 'refused with key');
+    assert((await raw(port, HOST)).statusCode === 401, 'open without key');
+    assert((await raw(port, 'other.trycloudflare.com', { cookie: cookie() })).statusCode === 403, 'another tunnel name accepted');
+  });
+  await check('the key cookie is Secure when it arrives over https', async () => {
+    const res = await raw(port, HOST, { 'x-forwarded-proto': 'https' }).then(() => new Promise((resolve, reject) => import('node:http').then(({ default: http }) => http.get({ host: '127.0.0.1', port, path: `/?key=${key()}`, headers: { host: HOST, 'x-forwarded-proto': 'https' } }, (r) => { r.resume(); resolve(r); }).on('error', reject))));
+    assert(/;\s*Secure/.test(res.headers['set-cookie']?.[0] || ''), String(res.headers['set-cookie']));
+  });
+  await check('turning it off closes the tunnel and forgets the name', async () => {
+    const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+    await toggle(false);
+    await sleep(500);
+    assert(!alive(pid), 'cloudflared still running');
+    assert((await raw(port, HOST, { cookie: cookie() })).statusCode === 403, 'name still accepted');
+    assert((await status()).tunnel.state === 'off', 'not off');
+  });
+});
+await run('tunnel-missing', { OFFICE_CLOUDFLARED: path.join(tmp, 'nope') }, async ({ port, key }) => {
+  await check('without cloudflared it says so, and stays safe', async () => {
+    const h = { cookie: `office_key_${port}=${key()}`, 'content-type': 'application/json' };
+    await fetch(`http://127.0.0.1:${port}/api/phone/tunnel`, { method: 'POST', headers: h, body: '{"on":true}' });
+    await sleep(500);
+    const r = await (await fetch(`http://127.0.0.1:${port}/api/phone`, { headers: h })).json();
+    assert(r.tunnel.state === 'error' && /isn.t installed/.test(r.tunnel.error), JSON.stringify(r.tunnel));
+  });
+  await check('and another website cannot flip the switch', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/phone/tunnel`, { method: 'POST', headers: { cookie: `office_key_${port}=${key()}`, origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{"on":true}' });
+    assert(res.status === 403, `status ${res.status}`);
+  });
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 if (failed) { console.log(`\n${failed} failed`); process.exit(1); }
 console.log('\nAll phone checks passed.');

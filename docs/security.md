@@ -21,8 +21,11 @@ hand out a shell. It is built to be used by one person, on their own machine.
 - Agents call back into the office (the roster, messages, hand-offs) with a
   per-job token that dies with the job.
 
-Don't put it behind a public URL. If you reach it from your phone, do it over
-a private network that is only you — see [On your phone](phone.md).
+The office never opens itself to the internet. The public address on the phone
+button is yours to turn on and off; while it is on, the key in the link is the
+only thing between the internet and your projects, so keep it private and turn
+it off when you're done. Don't put the office behind any other public URL. See
+[On your phone](phone.md).
 
 ## What jobs may do
 

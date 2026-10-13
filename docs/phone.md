@@ -8,6 +8,22 @@ for an office in its own window.
 The app shell is cached so it opens when the connection drops; live office
 state never is, because a stale office is worse than none.
 
+## From anywhere: a public address
+
+Press the phone button at the top of the side panel, then **Make a public
+address**. The office starts a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+(it needs `cloudflared`: `brew install cloudflared`; no account), waits for it
+to connect, and shows a QR code for a random `https://….trycloudflare.com`
+address with the office key on the end. Scan it from any network, mobile data
+included. Nothing else on your machine is opened, and the tunnel goes out from
+your machine, so no router settings change.
+
+It is off until you press the button, closes when you press it again or the
+office stops, and the address is different every time. The key is what protects
+it: 64 random hex digits, over https. Treat the link like a password. Whoever
+has it can run Claude in your projects with the clearance you give it. To sign
+every browser out, delete `data/office-key` and restart.
+
 ## Scan a QR code (same Wi-Fi)
 
 The quickest way, for a phone on the same Wi-Fi as this machine:

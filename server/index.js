@@ -22,6 +22,7 @@ import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
 import { lanAddresses, phoneLinks, qrSvg, qrText } from './phone.js';
+import { Tunnel } from './tunnel.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -2208,6 +2209,15 @@ function trusted(req) {
   try {
     const o = new URL(origin);
     if (!LOCAL.has(o.hostname) && !isLanHost(o.hostname)) return false;
+// The tunnel's name is only accepted while it is up.
+const tunnel = new Tunnel({
+  port: PORT,
+  allow: (h) => LOCAL.add(h),
+  forget: (h) => LOCAL.delete(h),
+  onChange: (t) => { try { send({ t: 'tunnel', tunnel: t }); } catch {} },
+});
+// Named hosts a phone can use: the tunnel first, then any the boss configured.
+const tunnelHosts = () => [...(tunnel.state === 'on' ? [tunnel.host] : []), ...EXTRA_HOSTS];
     // A named host fronts the office on its own port; the rest are other sites.
     if (LOCAL.has(o.hostname) && !['localhost', '127.0.0.1', '[::1]'].includes(o.hostname)) return true;
     return [String(PORT), DEV_PORT].includes(o.port);
@@ -2271,7 +2281,7 @@ const server = http.createServer(async (req, res) => {
       if (!sameKey(url.searchParams.get('key'))) return locked(res);
       url.searchParams.delete('key');
       res.writeHead(303, {
-        'set-cookie': `${KEY_COOKIE}=${OFFICE_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`,
+        'set-cookie': `${KEY_COOKIE}=${OFFICE_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`,
         location: url.pathname + url.search, 'cache-control': 'no-store',
       });
       return res.end();
@@ -2390,6 +2400,18 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/links' || parts[1] === 'links') {
       const linkErr = (err) => json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message });
       try {
+    // How a phone reaches this office: the links it could scan, each with its
+    // QR. They carry the key, so only a browser that already has it sees them.
+    if (req.method === 'GET' && url.pathname === '/api/phone') {
+      const links = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: tunnelHosts() });
+      return json(res, 200, { lan: LAN, tunnel: tunnel.status(), links: links.map((l) => ({ kind: l.kind, label: l.label, url: l.url, svg: qrSvg(l.url) })) });
+    }
+    // The switch for the public address. POST, so another site's <img> can't flip it.
+    if (req.method === 'POST' && url.pathname === '/api/phone/tunnel') {
+      const { on } = await readBody(req);
+      if (on) tunnel.start(); else tunnel.stop();
+      return json(res, 200, tunnel.status());
+    }
         if (req.method === 'GET' && url.pathname === '/api/links') return json(res, 200, await links.refresh().catch(() => links.status()));
         if (req.method === 'POST' && url.pathname === '/api/links/invite') return json(res, 201, await links.invite(await readBody(req)));
         if (req.method === 'POST' && url.pathname === '/api/links/redeem') return json(res, 200, await links.redeem(await readBody(req)));
@@ -2605,3 +2627,4 @@ process.on('SIGTERM', () => shutdown());
   } else if (LAN) {
     console.log('OFFICE_LAN is on, but this machine has no private network address to give a phone.');
   }
+  tunnel.drop();
