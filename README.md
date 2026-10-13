@@ -23,6 +23,10 @@ npm install
 npm start            # builds, then serves on http://localhost:4317
 ```
 
+Prefer an app window to a browser tab? There's a [desktop app](docs/desktop.md)
+(Tauri, macOS): it starts the office for you on a free local port and opens it
+in its own window. Build it from source with `cd desktop && npm install && npm run build`.
+
 You need Node.js 20+, git, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 signed in on this machine (or an Anthropic API key). Your projects are the
 folders next to this one (or, with `agentoffice`, in the folder you run it from) — see [Getting started](docs/getting-started.md).
@@ -82,6 +86,7 @@ folders next to this one (or, with `agentoffice`, in the folder you run it from)
 | [Configuration](docs/configuration.md) | every setting |
 | [Talking out loud](docs/voice.md) | speech in and voices out |
 | [On your phone](docs/phone.md) | install it like an app |
+| [Desktop app](docs/desktop.md) | the Tauri shell: how it starts the office, building it |
 | [How the office works](docs/how-it-works.md) | jobs, office tools, where things are kept |
 | [Security](docs/security.md) | who can reach it and what jobs may do |
 | [Development](docs/development.md) | dev server, shipping, testing safely |
