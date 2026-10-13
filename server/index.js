@@ -2592,8 +2592,8 @@ const server = http.createServer(async (req, res) => {
       const job = state.jobs.find((j) => j.id === jobId);
       try {
         const { pay, achievements } = economy.kudos(job);
-        for (const a of achievements) announceAchievement(job.agentId, a);
         post('chief', `👏 Kudos from ${owner() || 'the boss'} to ${nameOf(job.agentId)} for "${clip(job.title, 80)}" (+${pay?.gross || 0} coins)`, { kind: 'kudos', channel: GENERAL, thread: null, jobId: job.id });
+        for (const a of achievements) announceAchievement(job.agentId, a);
         return json(res, 200, economy.status());
       } catch (err) { return json(res, 400, { error: err.message }); }
     }
