@@ -2203,7 +2203,7 @@ const agentApi = {
     if (!Array.isArray(paths) || !paths.length) throw new Error('Give the absolute paths of the files to attach.');
     const staged = (me.staged ||= []);
     if (staged.length + paths.length > MAX_ATTACH) throw new Error(`At most ${MAX_ATTACH} files go on one message.`);
-    for (const p of paths) staged.push(stageFile(p));
+    for (const p of paths) staged.push(stageFile(p, me));
     return `${staged.length} file${staged.length === 1 ? '' : 's'} will go with your next message to the boss (your final reply, a flag, or a channel post). Nothing is sent yet.`;
   },
 
@@ -2489,20 +2489,28 @@ function attachments(ids) {
 }
 
 // An agent's file, copied into the uploads so the chat can show it. Nothing
-// here is trusted beyond "a regular file the agent can already read".
+// here is trusted beyond "a regular file the agent can already read": below
+// Full autonomy that is its project's files, links resolved, never the office's
+// data, so attaching can't copy ~/.ssh/id_rsa where every agent can read it.
 const MAX_ATTACH = 6;
-function stageFile(file) {
-  const src = path.resolve(String(file || ''));
+function stageFile(file, job) {
   if (!path.isAbsolute(String(file || ''))) throw new Error(`${file}: use an absolute path.`);
+  let src;
+  try { src = fs.realpathSync(String(file)); } catch { throw new Error(`${file}: no such file.`); }
+  const cwd = repoPath(job.repo);
+  const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+  const open = job.mode === 'auto' || (cwd && within(src, real(cwd)) && !within(src, real(DATA)));
+  if (!open) throw new Error(`${file}: only files in this job's project can be attached.`);
   let st;
   try { st = fs.statSync(src); } catch { throw new Error(`${file}: no such file.`); }
   if (!st.isFile()) throw new Error(`${file}: not a file.`);
   if (st.size > MAX_UPLOAD) throw new Error(`${file}: over 25 MB.`);
   const id = crypto.randomBytes(6).toString('hex');
   const dir = uploadDir(id);
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const name = path.basename(src).replace(/[\x00-\x1f\/\\:*?"<>|]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file';
   fs.copyFileSync(src, path.join(dir, name));
+  fs.chmodSync(path.join(dir, name), 0o600);
   const { path: _, ...f } = attachments([id])[0];
   return f;
 }
