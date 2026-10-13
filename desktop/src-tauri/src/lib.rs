@@ -7,8 +7,9 @@
 // terminal, say), the window attaches to it instead: two servers on one data
 // folder fight over the same jobs.
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -16,6 +17,8 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use sha2::{Digest, Sha256};
+use tauri::ipc::CapabilityBuilder;
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
@@ -31,6 +34,8 @@ struct Office {
     loading: Mutex<Option<Url>>,
     // Where the office is, once it is up.
     link: Mutex<Option<Url>>,
+    // Ports whose office page has been given IPC.
+    granted: Mutex<HashSet<u16>>,
 }
 
 // The office code: the repo itself in a debug build, the bundled copy otherwise.
@@ -95,15 +100,95 @@ fn listening(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(300)).is_ok()
 }
 
+fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..32].copy_from_slice(&Sha256::digest(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let inner = Sha256::new().chain_update(k.map(|b| b ^ 0x36)).chain_update(msg).finalize();
+    Sha256::new().chain_update(k.map(|b| b ^ 0x5c)).chain_update(inner).finalize().into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+// Whether the server on `port` holds this office's key, asked without sending
+// it: the office answers HMAC(key, "agent-office-proof:<port>:<nonce>"). A
+// stale office-port can name a port some other program has since taken, and
+// that program must never see the key.
+fn proves_key(port: u16, key: &str) -> bool {
+    let mut nonce = [0u8; 32];
+    if getrandom::fill(&mut nonce).is_err() {
+        return false;
+    }
+    let nonce = hex(&nonce);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut conn) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else { return false };
+    let _ = conn.set_read_timeout(Some(Duration::from_secs(3)));
+    let _ = conn.set_write_timeout(Some(Duration::from_secs(3)));
+    let req = format!("GET /api/desktop/proof?nonce={nonce} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
+    if conn.write_all(req.as_bytes()).is_err() {
+        return false;
+    }
+    let mut res = Vec::new();
+    let _ = conn.take(64 * 1024).read_to_end(&mut res);
+    let res = String::from_utf8_lossy(&res);
+    if !(res.starts_with("HTTP/1.") && res.split(' ').nth(1) == Some("200")) {
+        return false;
+    }
+    let Some((_, body)) = res.split_once("\r\n\r\n") else { return false };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else { return false };
+    let Some(got) = v.get("proof").and_then(|p| p.as_str()) else { return false };
+    let want = hex(&hmac_sha256(key.as_bytes(), format!("agent-office-proof:{port}:{nonce}").as_bytes()));
+    got.len() == want.len() && got.bytes().zip(want.bytes()).fold(0u8, |d, (a, b)| d | (a ^ b)) == 0
+}
+
+// The link into the office on `port`, key included, once it has proved it is
+// the office for this data folder.
 fn office_link(port: u16, data: &Path) -> Option<Url> {
     let key = fs::read_to_string(data.join("office-key")).ok()?;
-    Url::parse(&format!("http://127.0.0.1:{port}/?key={}", key.trim())).ok()
+    let key = key.trim();
+    if !proves_key(port, key) {
+        return None;
+    }
+    Url::parse(&format!("http://127.0.0.1:{port}/?key={key}")).ok()
 }
 
 // An office already serving this data folder, if there is one.
 fn running_office(data: &Path) -> Option<Url> {
     let port: u16 = fs::read_to_string(data.join("office-port")).ok()?.trim().parse().ok()?;
     if listening(port) { office_link(port, data) } else { None }
+}
+
+// The office page gets the shell's IPC (the opener, mainly), but only from
+// its own origin: the static capability is local-only, so this is added once
+// the port is known and proved.
+fn grant_ipc(app: &AppHandle, port: u16) {
+    let state = app.state::<Office>();
+    if !state.granted.lock().unwrap().insert(port) {
+        return;
+    }
+    let cap = CapabilityBuilder::new(format!("office-{port}"))
+        .remote(format!("http://127.0.0.1:{port}/*"))
+        .window("main")
+        .permission("core:default")
+        .permission("opener:default");
+    if let Err(e) = app.add_capability(cap) {
+        eprintln!("[desktop] couldn't grant the office page IPC: {e}");
+        state.granted.lock().unwrap().remove(&port);
+    }
+}
+
+// Show the office in the window.
+fn attach(app: &AppHandle, win: &WebviewWindow, link: Url) {
+    if let Some(port) = link.port() {
+        grant_ipc(app, port);
+    }
+    *app.state::<Office>().link.lock().unwrap() = Some(link.clone());
+    let _ = win.navigate(link);
 }
 
 fn js_str(s: &str) -> String {
@@ -153,7 +238,19 @@ fn spawn_office(app: &AppHandle, root: &Path, port: u16, data: &Path, log: &Path
         format!("Node.js 20 or newer must be installed and on your shell's PATH.\n\nPATH was: {path}")
     })?;
     let script = app_dir(app).join("bin").join("agentoffice.js");
-    let out = OpenOptions::new().create(true).append(true).open(log).map_err(|e| e.to_string())?;
+    // Only this account may read the log: it's the server's whole output.
+    let mut opts = OpenOptions::new();
+    opts.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        opts.mode(0o600);
+        // mode() only applies to a new file; an older log may be 0644.
+        if log.exists() {
+            let _ = fs::set_permissions(log, fs::Permissions::from_mode(0o600));
+        }
+    }
+    let out = opts.open(log).map_err(|e| e.to_string())?;
     let err = out.try_clone().map_err(|e| e.to_string())?;
     Command::new(node)
         .arg(&script)
@@ -181,9 +278,7 @@ fn open_office(app: AppHandle, force_pick: bool) {
 
         if !force_pick {
             if let Some(link) = running_office(&data) {
-                *state.link.lock().unwrap() = Some(link.clone());
-                let _ = win.navigate(link);
-                return;
+                return attach(&app, &win, link);
             }
         }
 
@@ -205,10 +300,14 @@ fn open_office(app: AppHandle, force_pick: bool) {
             Err(e) => return fail(&win, "Couldn't start the office", &e),
         }
 
+        // Listening isn't enough: something else may have taken the port
+        // between free_port() and the server binding it.
         let started = Instant::now();
-        loop {
+        let link = loop {
             if listening(port) {
-                break;
+                if let Some(link) = office_link(port, &data) {
+                    break link;
+                }
             }
             let exited = state.child.lock().unwrap().as_mut().and_then(|c| c.try_wait().ok().flatten());
             if let Some(code) = exited {
@@ -219,15 +318,8 @@ fn open_office(app: AppHandle, force_pick: bool) {
                 return fail(&win, "The office is taking too long to start", &format!("{}\n\nFull log: {}", log_tail(&log, 30), log.display()));
             }
             thread::sleep(Duration::from_millis(250));
-        }
-
-        match office_link(port, &data) {
-            Some(link) => {
-                *state.link.lock().unwrap() = Some(link.clone());
-                let _ = win.navigate(link);
-            }
-            None => fail(&win, "No office key", &format!("The server started but {} is missing.", data.join("office-key").display())),
-        }
+        };
+        attach(&app, &win, link);
     });
 }
 
@@ -251,9 +343,24 @@ fn stop_office(app: &AppHandle) {
     let _ = child.wait();
 }
 
-fn is_local(url: &Url) -> bool {
-    matches!(url.scheme(), "tauri" | "about" | "data" | "blob")
-        || matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "tauri.localhost"))
+// What may load in the window: the loading page, blank frames, and the
+// office we attached to. Any other page on localhost is someone else's, and
+// must not get the window's IPC.
+fn in_window(url: &Url, office: Option<&Url>) -> bool {
+    let same = |u: &Url| office.is_some_and(|o| u.origin() == o.origin());
+    match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        "about" => matches!(url.path(), "blank" | "srcdoc"),
+        "blob" => Url::parse(url.path()).is_ok_and(|inner| same(&inner)),
+        "http" if url.host_str() == Some("tauri.localhost") => true,
+        _ => same(url),
+    }
+}
+
+// Only these go to the system's opener. The opener's scope doesn't apply to
+// calls from Rust, so file:, smb: and app schemes would otherwise reach the OS.
+fn openable(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
@@ -310,15 +417,20 @@ pub fn run() {
             _ => {}
         })
         .setup(|app| {
+            let handle = app.handle().clone();
             let win = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Agent Office")
                 .inner_size(1440.0, 900.0)
                 .min_inner_size(900.0, 600.0)
-                .on_navigation(|url| {
-                    if is_local(url) {
+                // Called for every frame, iframes included.
+                .on_navigation(move |url| {
+                    let office = handle.state::<Office>().link.lock().unwrap().clone();
+                    if in_window(url, office.as_ref()) {
                         return true;
                     }
-                    let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                    if openable(url) {
+                        let _ = tauri_plugin_opener::open_url(url.as_str(), None::<&str>);
+                    }
                     false
                 })
                 .build()?;
@@ -347,4 +459,69 @@ pub fn run() {
             stop_office(app);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // RFC 4231, test case 2.
+    #[test]
+    fn hmac_matches_rfc4231() {
+        let mac = hmac_sha256(b"Jefe", b"what do ya want for nothing?");
+        assert_eq!(hex(&mac), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843");
+    }
+
+    #[test]
+    fn window_keeps_only_the_office() {
+        let office = Url::parse("http://127.0.0.1:4317/?key=k").unwrap();
+        let ok = |s: &str| in_window(&Url::parse(s).unwrap(), Some(&office));
+        assert!(ok("http://127.0.0.1:4317/settings"));
+        assert!(ok("tauri://localhost/index.html"));
+        assert!(ok("about:blank"));
+        assert!(ok("blob:http://127.0.0.1:4317/0b6c"));
+        assert!(!ok("http://127.0.0.1:5173/"));
+        assert!(!ok("http://localhost:4317/"));
+        assert!(!ok("blob:http://127.0.0.1:5173/0b6c"));
+        assert!(!ok("data:text/html,hi"));
+        assert!(!ok("file:///etc/passwd"));
+        assert!(!in_window(&Url::parse("http://127.0.0.1:4317/").unwrap(), None));
+        assert!(openable(&Url::parse("https://example.com").unwrap()));
+        assert!(openable(&Url::parse("mailto:a@b.c").unwrap()));
+        for s in ["file:///Applications/Calculator.app", "smb://host/share", "vscode://x", "javascript:alert(1)"] {
+            assert!(!openable(&Url::parse(s).unwrap()), "{s}");
+        }
+    }
+
+    // A stand-in server that answers the proof route the way server/index.js
+    // does, for `port_in_mac`. Run with node on PATH.
+    fn fake_office(key: &str, port_in_mac: Option<u16>) -> (u16, std::process::Child) {
+        let port = free_port().unwrap();
+        let mac_port = port_in_mac.unwrap_or(port);
+        let js = format!(
+            "const c=require('crypto');require('http').createServer((q,s)=>{{const n=new URL(q.url,'http://x').searchParams.get('nonce');s.writeHead(200,{{'content-type':'application/json'}});s.end(JSON.stringify({{proof:c.createHmac('sha256','{key}').update(`agent-office-proof:{mac_port}:${{n}}`).digest('hex')}}))}}).listen({port},'127.0.0.1')"
+        );
+        let child = Command::new("node").args(["-e", &js]).spawn().expect("node");
+        let t = Instant::now();
+        while !listening(port) && t.elapsed() < Duration::from_secs(5) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        (port, child)
+    }
+
+    #[test]
+    #[ignore = "needs node"]
+    fn proof_handshake() {
+        let key = "ab".repeat(32);
+        let (port, mut good) = fake_office(&key, None);
+        assert!(proves_key(port, &key));
+        assert!(!proves_key(port, &"cd".repeat(32)));
+        // A relay: the real office signs its own port, not the stale one.
+        let (relay, mut bad) = fake_office(&key, Some(port));
+        assert!(!proves_key(relay, &key));
+        let _ = good.kill();
+        let _ = bad.kill();
+        // Nothing listening.
+        assert!(!proves_key(port, &key));
+    }
 }

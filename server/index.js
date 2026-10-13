@@ -2690,6 +2690,15 @@ const server = http.createServer(async (req, res) => {
   if (!trusted(req)) return json(res, 403, { error: 'Local only.' });
   const url = new URL(req.url, 'http://x');
   const parts = url.pathname.split('/').filter(Boolean);
+  // How the desktop app tells this office from whatever else is on a port
+  // before it sends the key: HMAC(key, port:nonce), for a nonce it chose.
+  // The port is in it so a stranger on a stale port can't relay the question
+  // to the real office and pass its answer off as its own.
+  if (req.method === 'GET' && url.pathname === '/api/desktop/proof') {
+    const nonce = url.searchParams.get('nonce') || '';
+    if (!/^[0-9a-f]{32,128}$/.test(nonce)) return json(res, 400, { error: 'Bad nonce.' });
+    return json(res, 200, { proof: crypto.createHmac('sha256', OFFICE_KEY).update(`agent-office-proof:${PORT}:${nonce}`).digest('hex') });
+  }
   if (parts[0] !== 'api') {
     if (url.searchParams.has('key')) {
       if (!sameKey(url.searchParams.get('key'))) return locked(res);
@@ -3059,14 +3068,18 @@ server.on('error', (err) => {
 });
 server.listen(PORT, LAN ? '0.0.0.0' : '127.0.0.1', () => {
   // The key is in this line on purpose: it's how the boss gets in. It only
-  // goes to this terminal (or the supervisor's), never to a log file.
-  console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
-  // The phone link, with a QR to scan. Same care: terminal only.
-  const phone = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS })[0];
+  // goes to this terminal (or the supervisor's), never to a log file. The
+  // desktop app sends our output to a log and reads the key itself, so there
+  // the line goes without it.
+  const desktop = process.env.OFFICE_DESKTOP === '1';
+  console.log(`Agent Office open on ${desktop ? `http://localhost:${PORT}/` : keyLink()}  (projects in ${ROOT})`);
+  // The phone link, with a QR to scan. Same care: terminal only, and the
+  // desktop app shows it in the office instead.
+  const phone = !desktop && phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS })[0];
   if (phone) {
     console.log(`\nOn your phone, scan this (${phone.label}):\n\n${qrText(phone.url)}\n\n${phone.url}`);
     if (phone.kind === 'lan') console.log('Plain http on your local network: use it on a Wi-Fi you trust, and never on a shared or public one.\n');
-  } else if (LAN) {
+  } else if (LAN && !desktop) {
     console.log('OFFICE_LAN is on, but this machine has no private network address to give a phone.');
   }
   // For `agentoffice --link`, which can't know which free port we got.
@@ -3086,6 +3099,9 @@ function shutdown(code = 0) {
   board.flush();
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));
+  // A stale port file points the desktop app and --link at whatever takes
+  // the port next. Only ours: another office may have written it since.
+  try { const f = path.join(DATA, 'office-port'); if (fs.readFileSync(f, 'utf8').trim() === String(PORT)) fs.unlinkSync(f); } catch {}
   process.exit(code);
 }
 // One bad request must not take the office down: a crash skips shutdown(),
