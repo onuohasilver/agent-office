@@ -735,6 +735,10 @@ const pushJob = (job) => { send({ t: 'job', job: publicJob(job, 0) }); save(); }
 
 const running = new Map();
 const graces = new Map();
+// A guest job's tokens counted so far this turn, by API call (message id).
+const guestTurn = new Map();
+// Everything a call was billed for. Cache reads and writes are most of it.
+const allTokens = (u) => (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
 const tokens = new Map();
 // Jobs paused until a colleague answers or finishes handed-off work:
 // jobId -> [{ kind: 'job', id } | { kind: 'reply', from, timer }]
@@ -1118,6 +1122,15 @@ function onLine(job, line) {
     if (au && !e.parent_tool_use_id) {
       job.context = (au.input_tokens || 0) + (au.cache_read_input_tokens || 0) + (au.cache_creation_input_tokens || 0);
     }
+    // A guest's tokens count call by call, so a turn over the day's allowance
+    // stops part way rather than at its end. One call's content can arrive
+    // over several events that repeat its usage: each counts once.
+    if (au && job.guest && e.message?.id) {
+      const seen = guestTurn.get(job.id) || { ids: new Map(), sum: 0 };
+      guestTurn.set(job.id, seen);
+      const n = allTokens(au), was = seen.ids.get(e.message.id) || 0;
+      if (n > was) { seen.ids.set(e.message.id, n); seen.sum += n - was; guests.addTokens(job, n - was); }
+    }
     for (const c of e.message?.content || []) {
       if (c.type === 'text' && c.text.trim()) {
         addLog(job, { kind: 'text', summary: c.text.trim().slice(0, 6000) });
@@ -1151,7 +1164,9 @@ function onLine(job, line) {
     // job.context is kept from the last assistant message instead (see above).
     const u = e.usage || {};
     board.addTokens((u.input_tokens || 0) + (u.output_tokens || 0));
-    guests.addTokens(job, (u.input_tokens || 0) + (u.output_tokens || 0));
+    // Whatever the calls above missed (final output counts), so the turn adds up.
+    guests.addTokens(job, Math.max(0, allTokens(u) - (guestTurn.get(job.id)?.sum || 0)));
+    guestTurn.delete(job.id);
     board.addTime(e.duration_ms);
     if (!job.guest) economy.accrue(job, e.duration_ms, job.model);
     nudgeUsage();
@@ -1260,6 +1275,7 @@ function finish(job, status, error) {
   releaseHeavy(job);
   clearWaits(job);
   tokens.delete(job.id);
+  guestTurn.delete(job.id);
   job.waiting = false;
   const before = progress();
   // An agent that ended its turn still needing the boss's input has not
