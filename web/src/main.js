@@ -25,6 +25,7 @@ import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
 import { AgentChat } from './talk.js';
 import { Hud, api } from './hud.js';
+import { showGoals } from './goals.js';
 import { initShop, setEconomy, bumpPot } from './shop.js';
 import { decorateDesk, placeOfficeItems } from './decor.js';
 import { itemById, setPay, naira } from '../../shared/shop.js';
@@ -310,6 +311,7 @@ app.setEconomy = (econ) => {
   app.economy = econ;
   setPay(econ.pay);
   setEconomy(econ);
+  showGoals(econ);
   dressRoom();
   showRich();
   hud.renderTeam();
@@ -639,6 +641,7 @@ function handle(msg) {
   } else if (msg.t === 'economy') {
     app.setEconomy(msg.economy);
     onLedger(msg.entry);
+    showGoals(msg.economy, msg.entry);
   } else if (msg.t === 'links') {
     setLinks(msg);
   } else if (msg.t === 'usage') {
