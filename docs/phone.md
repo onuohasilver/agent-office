@@ -12,11 +12,23 @@ state never is, because a stale office is worse than none.
 
 Press the phone button at the top of the side panel, then **Make a public
 address**. The office starts a [Cloudflare quick tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
-(it needs `cloudflared`: `brew install cloudflared`; no account), waits for it
-to connect, and shows a QR code for a random `https://….trycloudflare.com`
+(no account), and shows a QR code for a random `https://….trycloudflare.com`
 address with the office key on the end. Scan it from any network, mobile data
-included. Nothing else on your machine is opened, and the tunnel goes out from
-your machine, so no router settings change.
+included. Nothing on your machine starts listening, and the tunnel goes out
+from your machine, so no router settings change.
+
+There is nothing to install. The office uses `cloudflared` if it is on your
+PATH, and otherwise downloads a pinned release (about 20–55 MB, once) from
+Cloudflare's GitHub into the data folder, checked against its SHA-256 before it
+runs. macOS, Linux (x64, arm64, arm) and Windows (x64, x86). Any
+`~/.cloudflared/config.yml` you have for your own tunnels is left alone and
+ignored.
+
+The QR code only appears once the office has reached itself through the new
+address from the internet, which usually takes about a minute: a phone that
+looks up a brand-new name too early can remember it as missing for a while.
+If the address never works (a network that blocks Cloudflare's tunnel ports,
+for instance), the button says so instead of handing you a blank page.
 
 It is off until you press the button, closes when you press it again or the
 office stops, and the address is different every time. The key is what protects

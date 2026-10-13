@@ -47,6 +47,58 @@ await check('the terminal QR is drawn', () => {
   assert(t.split('\n').length > 15 && /[▀▄█]/.test(t), 'nothing drawn');
 });
 
+// Getting cloudflared for people who don't have it: a checked download.
+{
+  const { download } = await import(path.join(APP, 'server', 'cloudflared.js'));
+  const { createHash } = await import('node:crypto');
+  const { execFileSync } = await import('node:child_process');
+  const http = (await import('node:http')).default;
+  const sha = (b) => createHash('sha256').update(b).digest('hex');
+  const files = path.join(tmp, 'release');
+  fs.mkdirSync(path.join(files, 'pkg'), { recursive: true });
+  const binBody = Buffer.from('#!/bin/sh\necho fake cloudflared\n');
+  fs.writeFileSync(path.join(files, 'plain'), binBody);
+  fs.writeFileSync(path.join(files, 'pkg', 'cloudflared'), binBody);
+  execFileSync('tar', ['-czf', path.join(files, 'pack.tgz'), '-C', path.join(files, 'pkg'), 'cloudflared']);
+  const srv = http.createServer((req, res) => {
+    const f = path.join(files, path.basename(req.url));
+    if (!fs.existsSync(f)) { res.writeHead(404); return res.end(); }
+    res.writeHead(200); res.end(fs.readFileSync(f));
+  });
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+  const at = (n) => `http://127.0.0.1:${srv.address().port}/${n}`;
+  const dl = path.join(tmp, 'dl');
+  await check('a download with the right checksum is installed and runnable', async () => {
+    const dest = path.join(dl, 'a', 'cloudflared');
+    await download({ url: at('plain'), sha256: sha(binBody), dest });
+    assert(fs.readFileSync(dest).equals(binBody) && (fs.statSync(dest).mode & 0o111), 'not installed');
+  });
+  await check('a .tgz is unpacked and its binary checked too', async () => {
+    const dest = path.join(dl, 'b', 'cloudflared');
+    await download({ url: at('pack.tgz'), sha256: sha(fs.readFileSync(path.join(files, 'pack.tgz'))), inner: sha(binBody), dest, tgz: true });
+    assert(fs.readFileSync(dest).equals(binBody), 'wrong binary');
+  });
+  await check('a wrong checksum is refused and leaves nothing behind', async () => {
+    const dest = path.join(dl, 'c', 'cloudflared');
+    let err = null;
+    try { await download({ url: at('plain'), sha256: '0'.repeat(64), dest }); } catch (e) { err = e; }
+    assert(err && /checksum/.test(err.message) && !fs.existsSync(dest), 'accepted');
+    assert(!fs.existsSync(path.dirname(dest)) || fs.readdirSync(path.dirname(dest)).length === 0, 'left files');
+  });
+  await check('a .tgz whose binary is wrong is refused', async () => {
+    const dest = path.join(dl, 'd', 'cloudflared');
+    let err = null;
+    try { await download({ url: at('pack.tgz'), sha256: sha(fs.readFileSync(path.join(files, 'pack.tgz'))), inner: '0'.repeat(64), dest, tgz: true }); } catch (e) { err = e; }
+    assert(err && !fs.existsSync(dest), 'accepted');
+  });
+  await check('a failed download says so', async () => {
+    let err = null;
+    try { await download({ url: at('missing'), sha256: '0'.repeat(64), dest: path.join(dl, 'e', 'x') }); } catch (e) { err = e; }
+    assert(err && /404/.test(err.message), String(err));
+  });
+  srv.close();
+}
+
 async function run(name, extra, body) {
   const port = 4300 + Math.floor(Math.random() * 600);
   const data = path.join(tmp, `data-${name}`);
@@ -135,7 +187,7 @@ const raw = (port, host, headers = {}) => new Promise((resolve, reject) => {
   import('node:http').then(({ default: http }) => http.get({ host: '127.0.0.1', port, path: '/api/repos', headers: { host, ...headers } }, (r) => { r.resume(); resolve(r); }).on('error', reject));
 });
 
-await run('tunnel', { OFFICE_CLOUDFLARED: stub }, async ({ port, key }) => {
+await run('tunnel', { OFFICE_CLOUDFLARED: stub, OFFICE_TUNNEL_CHECK: 'off' }, async ({ port, key }) => {
   const cookie = () => `office_key_${port}=${key()}`;
   const base = `http://127.0.0.1:${port}`;
   const status = async () => (await (await fetch(`${base}/api/phone`, { headers: { cookie: cookie() } })).json());
@@ -177,13 +229,13 @@ await run('tunnel', { OFFICE_CLOUDFLARED: stub }, async ({ port, key }) => {
     assert((await status()).tunnel.state === 'off', 'not off');
   });
 });
-await run('tunnel-missing', { OFFICE_CLOUDFLARED: path.join(tmp, 'nope') }, async ({ port, key }) => {
+await run('tunnel-missing', { OFFICE_CLOUDFLARED: path.join(tmp, 'nope'), OFFICE_TUNNEL_CHECK: 'off' }, async ({ port, key }) => {
   await check('without cloudflared it says so, and stays safe', async () => {
     const h = { cookie: `office_key_${port}=${key()}`, 'content-type': 'application/json' };
     await fetch(`http://127.0.0.1:${port}/api/phone/tunnel`, { method: 'POST', headers: h, body: '{"on":true}' });
     await sleep(500);
     const r = await (await fetch(`http://127.0.0.1:${port}/api/phone`, { headers: h })).json();
-    assert(r.tunnel.state === 'error' && /isn.t installed/.test(r.tunnel.error), JSON.stringify(r.tunnel));
+    assert(r.tunnel.state === 'error' && /couldn.t be started/.test(r.tunnel.error), JSON.stringify(r.tunnel));
   });
   await check('and another website cannot flip the switch', async () => {
     const res = await fetch(`http://127.0.0.1:${port}/api/phone/tunnel`, { method: 'POST', headers: { cookie: `office_key_${port}=${key()}`, origin: 'https://evil.example', 'content-type': 'application/json' }, body: '{"on":true}' });

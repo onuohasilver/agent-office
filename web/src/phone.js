@@ -37,13 +37,16 @@ function render() {
       : 'The link carries the office key, so keep it to yourself.', 'acct-note acct-fine');
   }
 
-  if (t.state === 'starting') say('Opening a public address…');
+  if (t.state === 'starting') say({
+    download: 'Getting Cloudflare’s tunnel. This happens once, and takes a minute.',
+    check: 'Checking the address works from outside…',
+  }[t.step] || 'Connecting to Cloudflare…');
   if (t.error) say(t.error, 'acct-note acct-err');
   if (note) say(note, 'acct-note acct-err');
   if (t.state === 'on') {
     say('This office is reachable from the internet while this is on. It turns off when you press the button or the office restarts.', 'acct-note acct-fine');
   } else if (t.state !== 'starting') {
-    say('To open it from anywhere, not just this Wi-Fi, make a temporary public address. Anyone with the link can run Claude in your projects, so share it with no one.');
+    say('To open it from anywhere, not just this Wi-Fi, make a temporary public address through Cloudflare. Anyone with the link can run Claude in your projects, so share it with no one.');
   }
   const sw = el('button', { type: 'button', className: t.state === 'on' ? 'acct-forget' : 'primary small', disabled: t.state === 'starting', textContent: t.state === 'on' ? 'Turn off the public address' : t.state === 'starting' ? 'Starting…' : 'Make a public address' });
   sw.addEventListener('click', () => toggle(t.state !== 'on'));

@@ -23,6 +23,7 @@ import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
 import { lanAddresses, phoneLinks, qrSvg, qrText } from './phone.js';
 import { Tunnel } from './tunnel.js';
+import { findCloudflared } from './cloudflared.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
@@ -2140,6 +2141,18 @@ function serveUpload(res, id, name) {
 // else is still refused, which is what keeps rebinding sites out.
 const EXTRA_HOSTS = String(process.env.OFFICE_ALLOWED_HOSTS || '').split(',').map((h) => h.trim().toLowerCase()).filter(Boolean);
 const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]', ...EXTRA_HOSTS]);
+// The tunnel's name is only accepted while it is up.
+const tunnel = new Tunnel({
+  port: PORT,
+  allow: (h) => LOCAL.add(h),
+  forget: (h) => LOCAL.delete(h),
+  findBin: (onStep) => findCloudflared({ dataDir: DATA, onStep }),
+  // The tests' stand-in tunnel has no real address to check from outside.
+  ...(process.env.OFFICE_TUNNEL_CHECK === 'off' && { check: async () => true }),
+  onChange: (t) => { try { send({ t: 'tunnel', tunnel: t }); } catch {} },
+});
+// Named hosts a phone can use: the tunnel first, then any the boss configured.
+const tunnelHosts = () => [...(tunnel.state === 'on' ? [tunnel.host] : []), ...EXTRA_HOSTS];
 // OFFICE_LAN=1 also listens on the local network, for a phone on the same
 // Wi-Fi. Only this machine's own private addresses are accepted as the Host
 // (looked up per request, since DHCP moves them), never a name, so a rebinding
@@ -2209,15 +2222,6 @@ function trusted(req) {
   try {
     const o = new URL(origin);
     if (!LOCAL.has(o.hostname) && !isLanHost(o.hostname)) return false;
-// The tunnel's name is only accepted while it is up.
-const tunnel = new Tunnel({
-  port: PORT,
-  allow: (h) => LOCAL.add(h),
-  forget: (h) => LOCAL.delete(h),
-  onChange: (t) => { try { send({ t: 'tunnel', tunnel: t }); } catch {} },
-});
-// Named hosts a phone can use: the tunnel first, then any the boss configured.
-const tunnelHosts = () => [...(tunnel.state === 'on' ? [tunnel.host] : []), ...EXTRA_HOSTS];
     // A named host fronts the office on its own port; the rest are other sites.
     if (LOCAL.has(o.hostname) && !['localhost', '127.0.0.1', '[::1]'].includes(o.hostname)) return true;
     return [String(PORT), DEV_PORT].includes(o.port);
@@ -2335,6 +2339,18 @@ const server = http.createServer(async (req, res) => {
       const { path: _, ...f } = await upload(req);
       return json(res, 201, f);
     }
+    // How a phone reaches this office: the links it could scan, each with its
+    // QR. They carry the key, so only a browser that already has it sees them.
+    if (req.method === 'GET' && url.pathname === '/api/phone') {
+      const links = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: tunnelHosts() });
+      return json(res, 200, { lan: LAN, tunnel: tunnel.status(), links: links.map((l) => ({ kind: l.kind, label: l.label, url: l.url, svg: qrSvg(l.url) })) });
+    }
+    // The switch for the public address. POST, so another site's <img> can't flip it.
+    if (req.method === 'POST' && url.pathname === '/api/phone/tunnel') {
+      const { on } = await readBody(req);
+      if (on) tunnel.start(); else tunnel.stop();
+      return json(res, 200, tunnel.status());
+    }
     // Which way claude signs in. Only new processes pick it up; a job
     // already running finishes on whatever it started with.
     if (url.pathname === '/api/auth' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
@@ -2369,12 +2385,6 @@ const server = http.createServer(async (req, res) => {
     // sharing day counters. Leaving deletes the counters; the handle goes too
     // unless linked offices still need it.
     if (url.pathname === '/api/leaderboard' && ['GET', 'POST', 'DELETE'].includes(req.method)) {
-    // How a phone reaches this office: the links it could scan, each with its
-    // QR. They carry the key, so only a browser that already has it sees them.
-    if (req.method === 'GET' && url.pathname === '/api/phone') {
-      const links = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS });
-      return json(res, 200, { lan: LAN, links: links.map((l) => ({ kind: l.kind, label: l.label, url: l.url, svg: qrSvg(l.url) })) });
-    }
       let status;
       try {
         if (req.method === 'GET') status = board.status();
@@ -2400,18 +2410,6 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/api/links' || parts[1] === 'links') {
       const linkErr = (err) => json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message });
       try {
-    // How a phone reaches this office: the links it could scan, each with its
-    // QR. They carry the key, so only a browser that already has it sees them.
-    if (req.method === 'GET' && url.pathname === '/api/phone') {
-      const links = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: tunnelHosts() });
-      return json(res, 200, { lan: LAN, tunnel: tunnel.status(), links: links.map((l) => ({ kind: l.kind, label: l.label, url: l.url, svg: qrSvg(l.url) })) });
-    }
-    // The switch for the public address. POST, so another site's <img> can't flip it.
-    if (req.method === 'POST' && url.pathname === '/api/phone/tunnel') {
-      const { on } = await readBody(req);
-      if (on) tunnel.start(); else tunnel.stop();
-      return json(res, 200, tunnel.status());
-    }
         if (req.method === 'GET' && url.pathname === '/api/links') return json(res, 200, await links.refresh().catch(() => links.status()));
         if (req.method === 'POST' && url.pathname === '/api/links/invite') return json(res, 201, await links.invite(await readBody(req)));
         if (req.method === 'POST' && url.pathname === '/api/links/redeem') return json(res, 200, await links.redeem(await readBody(req)));
@@ -2596,6 +2594,14 @@ server.listen(PORT, LAN ? '0.0.0.0' : '127.0.0.1', () => {
   // The key is in this line on purpose: it's how the boss gets in. It only
   // goes to this terminal (or the supervisor's), never to a log file.
   console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
+  // The phone link, with a QR to scan. Same care: terminal only.
+  const phone = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS })[0];
+  if (phone) {
+    console.log(`\nOn your phone, scan this (${phone.label}):\n\n${qrText(phone.url)}\n\n${phone.url}`);
+    if (phone.kind === 'lan') console.log('Plain http on your local network: use it on a Wi-Fi you trust, and never on a shared or public one.\n');
+  } else if (LAN) {
+    console.log('OFFICE_LAN is on, but this machine has no private network address to give a phone.');
+  }
   // For `agentoffice --link`, which can't know which free port we got.
   try { fs.writeFileSync(path.join(DATA, 'office-port'), String(PORT)); } catch {}
   afterRestart();
@@ -2607,6 +2613,7 @@ server.listen(PORT, LAN ? '0.0.0.0' : '127.0.0.1', () => {
 });
 
 function shutdown(code = 0) {
+  tunnel.drop();
   for (const child of running.values()) child.kill('SIGTERM');
   clearTimeout(saveTimer);
   board.flush();
@@ -2619,12 +2626,3 @@ function shutdown(code = 0) {
 process.on('unhandledRejection', (err) => console.error('[office] unhandled', err));
 process.on('SIGINT', () => shutdown());
 process.on('SIGTERM', () => shutdown());
-  // The phone link, with a QR to scan. Same care: terminal only.
-  const phone = phoneLinks({ key: OFFICE_KEY, port: PORT, lan: LAN, hosts: EXTRA_HOSTS })[0];
-  if (phone) {
-    console.log(`\nOn your phone, scan this (${phone.label}):\n\n${qrText(phone.url)}\n\n${phone.url}`);
-    if (phone.kind === 'lan') console.log('Plain http on your local network: use it on a Wi-Fi you trust, and never on a shared or public one.\n');
-  } else if (LAN) {
-    console.log('OFFICE_LAN is on, but this machine has no private network address to give a phone.');
-  }
-  tunnel.drop();
