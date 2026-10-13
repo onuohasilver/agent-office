@@ -16,6 +16,9 @@ export const SETTINGS = [
   { key: 'compactPct', group: 'Agents', label: 'Compact at', kind: 'number', min: 10, max: 95, step: 5, unit: '%', hint: 'How full an agent’s context gets before Claude Code compacts it. Applies to jobs that start after you save.', fallback: () => Math.min(95, Math.max(10, parseInt(env('AGENT_COMPACT_PCT') ?? '60', 10) || 60)) },
   { key: 'chiefModel', group: 'Agents', label: 'Chief of staff model', kind: 'choice', options: ['haiku', 'sonnet', 'opus'], hint: 'Routes your messages and writes the standup.', fallback: () => env('CHIEF_MODEL') || 'sonnet' },
 
+  { key: 'payPerMinute', group: 'Pay', label: 'Pay per active minute', kind: 'number', min: 0, max: 1_000_000, step: 100, unit: 'naira', hint: 'What an agent earns for each minute the model was working, on Opus. Haiku pays 3×, Sonnet 1.75×. Applies to work paid from now on.', fallback: () => 1000 },
+  { key: 'payFinishBonus', group: 'Pay', label: 'Bonus for finishing a job', kind: 'number', min: 0, max: 1_000_000, step: 100, unit: 'naira', hint: 'Paid once when a job finishes, scaled by model like the minute rate. Kudos pays it again.', fallback: () => 2500 },
+
   { key: 'standupAt', group: 'Standup', label: 'Standup time', kind: 'time', hint: 'Local time, 24-hour. Blank turns the daily standup off.', fallback: () => (env('STANDUP_AT') ?? '09:30') === 'off' ? '' : (env('STANDUP_AT') ?? '09:30') },
   { key: 'standupWeekends', group: 'Standup', label: 'Hold standups on weekends', kind: 'bool', fallback: () => env('STANDUP_WEEKENDS') === '1' },
 

@@ -26,7 +26,7 @@ import { Confetti } from './fx.js';
 import { Hud, api } from './hud.js';
 import { initShop, setEconomy, bumpPot } from './shop.js';
 import { decorateDesk, placeOfficeItems } from './decor.js';
-import { itemById } from '../../shared/shop.js';
+import { itemById, setPay, naira } from '../../shared/shop.js';
 
 import { initJourneys, journeyJobs } from './journeys.js';
 import { sound } from './sound.js';
@@ -307,6 +307,7 @@ chief.teleport('desk');
 app.setEconomy = (econ) => {
   if (!econ) return;
   app.economy = econ;
+  setPay(econ.pay);
   setEconomy(econ);
   dressRoom();
   hud.renderTeam();
@@ -340,14 +341,14 @@ function onLedger(e) {
   if (!e) return;
   const who = app.staffName(e.agentId);
   if (e.kind === 'pay' || e.kind === 'kudos') {
-    floatOver(e.agentId, `+${e.agent} coins`);
+    floatOver(e.agentId, `+${naira(e.agent)}`);
     bumpPot();
-    if (e.kind === 'kudos') hud.toast(`${who} got kudos: +${e.agent} for them, +${e.pot} to the pot`, 'good');
+    if (e.kind === 'kudos') hud.toast(`${who} got kudos: +${naira(e.agent)} for them, +${naira(e.pot)} to the pot`, 'good');
   } else if (e.kind === 'achievement') {
     floatOver(e.agentId, `★ ${e.title}`, 'coinfloat win');
     bumpPot();
     // After the "shipped" toast it usually lands with, not over it.
-    setTimeout(() => hud.toast(`★ ${who} unlocked ${e.title}: +${e.gross} coins`, 'good'), 3300);
+    setTimeout(() => hud.toast(`★ ${who} unlocked ${e.title}: +${naira(e.gross)}`, 'good'), 3300);
   } else if (e.kind === 'buy') {
     const it = itemById(e.item);
     if (e.agentId) floatOver(e.agentId, it?.icon || '🎁', 'coinfloat gift');

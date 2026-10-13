@@ -1,7 +1,7 @@
 // The office economy: pay, the office pot, the shop and achievements.
 //
 // Agents are paid when a job finishes, by the active minute and scaled by the
-// model that did the work (see shared/shop.js). Of every coin earned, the
+// model that did the work (see shared/shop.js). Of every naira earned, the
 // pot takes its share for the boss to spend on the office; the agent keeps
 // the rest and can spend it on their own desk. The boss can also buy an
 // agent something, out of the pot.
@@ -10,7 +10,7 @@
 // the office, and every change to a balance goes through credit() or charge()
 // and leaves a line in the ledger, so the books always add up.
 
-import { PAY, ITEMS, ACHIEVEMENTS, DEFAULTS, SINGLE, itemById, modelPay, modelTier, split } from '../shared/shop.js';
+import { PAY, ITEMS, ACHIEVEMENTS, DEFAULTS, SINGLE, itemById, modelPay, modelTier, split, naira } from '../shared/shop.js';
 
 const LEDGER_MAX = 400;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -160,7 +160,7 @@ export class Economy {
     if (item.scope === 'desk' && !owner) throw new Error('Say whose desk it is for.');
     if (this.owns(item, owner)) throw new Error(owner ? `${item.name} is already on that desk.` : `The office already has ${item.name}.`);
     const balance = boss ? this.b.pot : this.wallet(by);
-    if (balance < item.price) throw new Error(`${item.name} costs ${item.price} coins and ${boss ? 'the pot has' : 'you have'} ${balance}.`);
+    if (balance < item.price) throw new Error(`${item.name} costs ${naira(item.price)} and ${boss ? 'the pot has' : 'you have'} ${naira(balance)}.`);
     if (boss) this.b.pot -= item.price;
     else this.b.wallets[by] = balance - item.price;
     this.b.totals.spent += item.price;
@@ -208,7 +208,7 @@ export class Economy {
   status() {
     const b = this.b;
     return {
-      rich: this.richList(),
+      rich: this.richList(), pay: { perMinute: PAY.perMinute, finishBonus: PAY.finishBonus },
       pot: b.pot, wallets: b.wallets, stats: b.stats, desks: b.desks, office: b.office, using: b.using,
       achievements: b.achievements, kudos: b.kudos.slice(-200), ledger: b.ledger.slice(-60),
     };

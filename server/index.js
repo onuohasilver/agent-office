@@ -17,7 +17,7 @@ import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
 import { Leaderboard } from './leaderboard.js';
 import { Economy, emptyBooks } from './economy.js';
-import { itemById, ITEMS, PAY } from '../shared/shop.js';
+import { itemById, ITEMS, PAY, setPay, naira } from '../shared/shop.js';
 import { Links } from './links.js';
 import { Settings } from './settings.js';
 import { Guests } from './guests.js';
@@ -193,7 +193,12 @@ try {
 if (!state.settings || typeof state.settings !== 'object') state.settings = {};
 if (Number.isInteger(state.clearTokens) && !('tokenLimit' in state.settings)) state.settings.tokenLimit = state.clearTokens;
 delete state.clearTokens;
-const settings = new Settings(state.settings, () => save());
+const settings = new Settings(state.settings, (keys) => {
+  save();
+  if (keys.some((k) => k.startsWith('pay'))) { applyPay(); send({ t: 'economy', economy: economy.status() }); }
+});
+const applyPay = () => setPay({ perMinute: settings.get('payPerMinute'), finishBonus: settings.get('payFinishBonus') });
+applyPay();
 // Pay, the office pot and the shop. state.economy is the books themselves,
 // changed in place, so saving the state saves them.
 if (!state.economy || typeof state.economy !== 'object') state.economy = emptyBooks();
@@ -1086,7 +1091,7 @@ function payday(job) {
   for (const a of achievements) announceAchievement(job.agentId, a);
 }
 function announceAchievement(agentId, a) {
-  post('chief', `🏅 ${nameOf(agentId)} unlocked **${a.name}**: ${a.blurb} (+${a.bonus} coins)`, { kind: 'achievement', channel: CHILL, thread: null });
+  post('chief', `🏅 ${nameOf(agentId)} unlocked **${a.name}**: ${a.blurb} (+${naira(a.bonus)})`, { kind: 'achievement', channel: CHILL, thread: null });
 }
 
 function finish(job, status, error) {
@@ -1863,7 +1868,7 @@ function officePrompt(agentId, job) {
 // an agent who can't afford anything yet.
 function payNote(agentId) {
   if (!economy.affordable(agentId).length) return '';
-  return ` You are paid for finished work, more for doing it on a lighter model, and have ${economy.wallet(agentId)} coins: office_shop and buy_item get you something for your desk, but only once the work is done.`;
+  return ` You are paid for finished work, more for doing it on a lighter model, and have ${naira(economy.wallet(agentId))}: office_shop and buy_item get you something for your desk, but only once the work is done.`;
 }
 
 // Survives a cleared context: what this agent was last working on, so
@@ -1991,10 +1996,10 @@ const agentApi = {
   office_shop(me) {
     const id = me.agentId;
     const mine = economy.books.desks[id] || [];
-    const lines = [`You have ${economy.wallet(id)} coins. The office pot has ${economy.books.pot}.`,
-      `Pay: ${PAY.perMinute} coins an active minute plus ${PAY.finishBonus} for finishing, times 3 on Haiku, 1.75 on Sonnet, 1 on Opus. ${Math.round(PAY.potShare * 100)}% goes to the office pot.`,
+    const lines = [`You have ${naira(economy.wallet(id))}. The office pot has ${naira(economy.books.pot)}.`,
+      `Pay: ${naira(PAY.perMinute)} an active minute plus ${naira(PAY.finishBonus)} for finishing, times 3 on Haiku, 1.75 on Sonnet, 1 on Opus. ${Math.round(PAY.potShare * 100)}% goes to the office pot.`,
       'For your desk (buy_item with the id):'];
-    for (const i of ITEMS.filter((x) => x.scope === 'desk')) lines.push(`- ${i.id}: ${i.name}, ${i.price} coins${mine.includes(i.id) ? ' (yours already)' : ''}`);
+    for (const i of ITEMS.filter((x) => x.scope === 'desk')) lines.push(`- ${i.id}: ${i.name}, ${naira(i.price)}${mine.includes(i.id) ? ' (yours already)' : ''}`);
     return lines.join('\n');
   },
 
@@ -2002,7 +2007,7 @@ const agentApi = {
     const { buy, achievements } = economy.buy(String(item || ''), { by: me.agentId });
     for (const a of achievements) announceAchievement(me.agentId, a);
     post(me.agentId, `Treated myself to a ${buy.title.toLowerCase()} for my desk. ${itemById(buy.item).icon || ''}`.trim(), { kind: 'purchase', channel: CHILL, thread: null });
-    return `Bought: ${buy.title}, on your desk now. ${economy.wallet(me.agentId)} coins left.`;
+    return `Bought: ${buy.title}, on your desk now. ${naira(economy.wallet(me.agentId))} left.`;
   },
 
   flag_for_boss(me, { kind, summary }) {
@@ -2641,7 +2646,7 @@ const server = http.createServer(async (req, res) => {
       const job = state.jobs.find((j) => j.id === jobId);
       try {
         const { pay, achievements } = economy.kudos(job);
-        post('chief', `👏 Kudos from ${owner() || 'the boss'} to ${nameOf(job.agentId)} for "${clip(job.title, 80)}" (+${pay?.gross || 0} coins)`, { kind: 'kudos', channel: GENERAL, thread: null, jobId: job.id });
+        post('chief', `👏 Kudos from ${owner() || 'the boss'} to ${nameOf(job.agentId)} for "${clip(job.title, 80)}" (+${naira(pay?.gross || 0)})`, { kind: 'kudos', channel: GENERAL, thread: null, jobId: job.id });
         for (const a of achievements) announceAchievement(job.agentId, a);
         return json(res, 200, economy.status());
       } catch (err) { return json(res, 400, { error: err.message }); }

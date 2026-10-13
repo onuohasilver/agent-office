@@ -5,7 +5,7 @@ import { Marked } from 'marked';
 import { recorder, voiceFile, speech } from './voice.js';
 import { LOOKS } from './figure.js';
 import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
-import { PAY, modelPay } from '../../shared/shop.js';
+import { PAY, modelPay, naira } from '../../shared/shop.js';
 
 import { openJourneys } from './journeys.js';
 
@@ -158,7 +158,7 @@ const resetsAt = (ts) => {
 const bytes = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB` : `${Math.round(n / (1 << 20))} MB`);
 // Small shares still deserve a digit; "0%" reads as broken.
 // A coin amount, with the little gold coin the shop uses.
-const coinsOf = (v, cls = '') => `<span class="coins ${cls}"><i class="coin" aria-hidden="true"></i>${Math.round(num(v)).toLocaleString()}</span>`;
+const coinsOf = (v, cls = '') => `<span class="coins ${cls}">${naira(num(v))}</span>`;
 const pct = (n) => `${n >= 10 ? Math.round(n) : Math.round(n * 10) / 10}%`;
 
 export async function api(path, body, method) {
@@ -691,7 +691,7 @@ export class Hud {
       ['Time', job.startedAt ? duration(end - job.startedAt) : '—'],
       ['Cost', `$${(job.cost || 0).toFixed(3)}`],
       ['XP', job.xp ? `+${job.xp}` : '—'],
-      ...(job.earned ? [['Pay', `${job.earned} coins`]] : []),
+      ...(job.earned ? [['Pay', naira(job.earned)]] : []),
     ];
     // Live machine cost, only while this job's process is actually up.
     const p = this.procs?.[job.id];
@@ -816,7 +816,7 @@ export class Hud {
     slot.className = `notice kudos${given ? ' given' : ''}`;
     slot.innerHTML = given
       ? `<span>${paid} You gave kudos. 👏</span>`
-      : `<span>${paid || `Happy with ${who}’s work?`}</span><button type="button" class="ghost small" data-act="kudos">👏 Kudos <span class="kudos-amt">+${bonus}</span></button>`;
+      : `<span>${paid || `Happy with ${who}’s work?`}</span><button type="button" class="ghost small" data-act="kudos">👏 Kudos <span class="kudos-amt">+${naira(bonus)}</span></button>`;
     const b = slot.querySelector('[data-act="kudos"]');
     if (b) b.onclick = async () => {
       b.disabled = true;

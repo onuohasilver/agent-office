@@ -5,7 +5,7 @@
 // asks it to buy or switch things. Prices, names and milestones all come from
 // shared/shop.js, the same list the server charges by.
 
-import { ITEMS, ACHIEVEMENTS, PAY, MODEL_PAY, itemById } from '../../shared/shop.js';
+import { ITEMS, ACHIEVEMENTS, PAY, MODEL_PAY, itemById, naira } from '../../shared/shop.js';
 import { api, portrait } from './hud.js';
 import { visiting } from './links.js';
 
@@ -14,7 +14,7 @@ const btn = document.getElementById('shopBtn');
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = (v) => Math.round(Number(v) || 0).toLocaleString();
-const coins = (v, cls = '') => `<span class="coins ${cls}"><i class="coin" aria-hidden="true"></i>${n(v)}</span>`;
+const coins = (v, cls = '') => `<span class="coins ${cls}">${naira(v)}</span>`;
 const ago = (t) => {
   const s = Math.max(0, (Date.now() - t) / 1000);
   if (s < 60) return 'just now';
@@ -62,7 +62,7 @@ function desksPane() {
     return `<li class="shop-person${open ? ' open' : ''}">
       <div class="sp-head">
         <span class="sp-face">${portrait(s)}</span>
-        <span class="sp-who"><b>${esc(s.name)}</b><small>${n(st.jobs || 0)} job${st.jobs === 1 ? '' : 's'} · ${n(st.earned || 0)} earned</small></span>
+        <span class="sp-who"><b>${esc(s.name)}</b><small>${n(st.jobs || 0)} job${st.jobs === 1 ? '' : 's'} · ${naira(st.earned || 0)} earned</small></span>
         ${coins(econ.wallets?.[s.id] || 0, 'sp-wallet')}
       </div>
       <div class="sp-items" aria-label="On ${esc(s.name)}’s desk">${mine.length
@@ -122,11 +122,11 @@ function richPane() {
   const rows = people.map((s) => ({ s, ...(by.get(s.id) || { worth: 0, wallet: 0, desk: 0, earned: 0, jobs: 0 }) }))
     .sort((a, b) => b.worth - a.worth || b.earned - a.earned);
   const total = rows.reduce((a, r) => a + r.worth, 0);
-  return `<p class="shop-lede">Net worth is coins in hand plus what’s on the desk, at shop price. The team holds ${coins(total)} between them.</p>
+  return `<p class="shop-lede">Net worth is cash in hand plus what’s on the desk, at shop price. The team holds ${coins(total)} between them.</p>
     <ol class="shop-rich">${rows.map((r, i) => `<li class="${i === 0 && r.worth > 0 ? 'top' : ''}">
       <span class="sr-rank" aria-label="Rank ${i + 1}">${i === 0 && r.worth > 0 ? '👑' : i + 1}</span>
       <span class="sp-face">${portrait(r.s)}</span>
-      <span class="sp-who"><b>${esc(r.s.name)}</b><small>${n(r.wallet)} in hand · ${n(r.desk)} on the desk · ${n(r.jobs)} job${r.jobs === 1 ? '' : 's'}</small></span>
+      <span class="sp-who"><b>${esc(r.s.name)}</b><small>${naira(r.wallet)} in hand · ${naira(r.desk)} on the desk · ${n(r.jobs)} job${r.jobs === 1 ? '' : 's'}</small></span>
       ${coins(r.worth, 'sr-worth')}
     </li>`).join('')}</ol>`;
 }
@@ -171,7 +171,7 @@ function line(e) {
 function ledgerPane() {
   const rows = [...(econ.ledger || [])].reverse();
   const rate = Object.entries(MODEL_PAY).map(([k, v]) => `${TIER[k]} ×${v}`).join(', ');
-  return `<p class="shop-lede">A finished job pays ${PAY.perMinute} a working minute plus ${PAY.finishBonus} for finishing, times the model: ${rate}. ${Math.round(PAY.potShare * 100)}% of it goes to the pot.</p>
+  return `<p class="shop-lede">A finished job pays ${naira(PAY.perMinute)} a working minute plus ${naira(PAY.finishBonus)} for finishing, times the model: ${rate}. ${Math.round(PAY.potShare * 100)}% of it goes to the pot.</p>
     ${rows.length ? `<ul class="shop-ledger">${rows.map((e) => {
     const l = line(e);
     return `<li><span class="sl-text">${l.text}${l.sub ? `<small>${l.sub} · ${ago(e.at)}</small>` : `<small>${ago(e.at)}</small>`}</span><span class="sl-amt ${l.cls}">${l.amt}</span></li>`;
@@ -196,8 +196,8 @@ function paintButton() {
   if (!btn) return;
   btn.hidden = !econ || visiting.on;
   const b = btn.querySelector('b');
-  if (b && econ) b.textContent = n(econ.pot);
-  btn.setAttribute('aria-label', econ ? `Shop. ${n(econ.pot)} coins in the office pot.` : 'Shop');
+  if (b && econ) b.textContent = naira(econ.pot);
+  btn.setAttribute('aria-label', econ ? `Shop. ${naira(econ.pot)} in the office pot.` : 'Shop');
 }
 
 // From the hello and every economy event.
@@ -236,7 +236,7 @@ function buy(id, forAgent) {
   if (!it) return;
   const key = `${id}|${forAgent || ''}`;
   // Two taps to spend: the first arms the button, the second buys. A stray
-  // tap on a phone shouldn't cost 4,000 coins.
+  // tap on a phone shouldn't cost ₦400,000.
   if (it.price && arming?.key !== key) {
     clearTimeout(arming?.timer);
     arming = { key, timer: setTimeout(() => { arming = null; render(); }, 3500) };

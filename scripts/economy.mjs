@@ -4,7 +4,7 @@
 
 import assert from 'node:assert/strict';
 import { Economy, emptyBooks } from '../server/economy.js';
-import { PAY, split } from '../shared/shop.js';
+import { PAY, split, setPay } from '../shared/shop.js';
 
 let now = Date.parse('2026-10-13T12:00:00Z');
 const make = () => new Economy(emptyBooks(), { now: () => now });
@@ -72,10 +72,10 @@ test('milestones pay once and a streak counts days', () => {
 
 test('agents buy for their own desk only, and not twice', () => {
   const e = make();
-  assert.throws(() => e.buy('duck', { by: 'mira' }), /costs 30/);
-  e.books.wallets.mira = 100;
+  assert.throws(() => e.buy('duck', { by: 'mira' }), /costs ₦3,000/);
+  e.books.wallets.mira = 10000;
   const r = e.buy('duck', { by: 'mira' });
-  assert.equal(e.wallet('mira'), 70 + split(15).agent); // the duck, then the shopper bonus
+  assert.equal(e.wallet('mira'), 7000 + split(1500).agent); // the duck, then the shopper bonus
   assert.deepEqual(e.books.desks.mira, ['duck']);
   assert.ok(r.achievements.some((a) => a.id === 'shopper'));
   assert.throws(() => e.buy('duck', { by: 'mira' }), /already/);
@@ -84,19 +84,19 @@ test('agents buy for their own desk only, and not twice', () => {
 
 test('the boss buys from the pot, for a desk or the office', () => {
   const e = make();
-  e.books.pot = 600;
+  e.books.pot = 60000;
   e.buy('cat', { by: 'boss', forAgent: 'amara' });
-  assert.equal(e.books.pot, 200);
+  assert.equal(e.books.pot, 20000);
   assert.deepEqual(e.books.desks.amara, ['cat']);
   assert.equal(e.wallet('amara'), 0);
-  assert.throws(() => e.buy('neon', { by: 'boss' }), /pot has 200/);
+  assert.throws(() => e.buy('neon', { by: 'boss' }), /pot has ₦20,000/);
   assert.throws(() => e.buy('lamp', { by: 'boss' }), /whose desk/);
 });
 
 test('a bought look goes into use, and only owned looks can be used', () => {
   const e = make();
   assert.throws(() => e.use('layout-pods'), /doesn't own/);
-  e.books.pot = 5000;
+  e.books.pot = 500000;
   e.buy('layout-pods', { by: 'boss' });
   assert.equal(e.books.using.layout, 'layout-pods');
   e.use('layout-classic');
@@ -169,7 +169,7 @@ test('the books still add up after the ledger is trimmed', () => {
     e.accrue(j, 60000, 'sonnet');
     e.pay(j);
     e.books.desks.mira = []; // so the mug can be bought again
-    if (e.wallet('mira') >= 20) e.buy('mug', { by: 'mira' });
+    if (e.wallet('mira') >= 2000) e.buy('mug', { by: 'mira' });
   }
   const t = e.books.totals;
   assert.ok(t, 'no running totals in the books (earned, spent) to check against');
@@ -200,8 +200,22 @@ test('the rich list ranks by wallet plus desk, ties by lifetime earnings', () =>
   e.buy('mug', { by: 'val' });
   const after = e.richList().find((r) => r.id === 'val');
   assert.ok(after.worth >= before[0].worth, 'buying for the desk should not lower net worth (a first purchase may pay a bonus)');
-  assert.equal(after.desk, 20);
+  assert.equal(after.desk, 2000);
   assert.deepEqual(e.status().rich.map((r) => r.id), e.richList().map((r) => r.id));
+});
+
+test('the pay rate set in Settings changes what the next job pays', () => {
+  const was = { ...PAY };
+  try {
+    const gross = () => { const e = make(); const j = job({ model: 'opus' }); e.accrue(j, 60000, 'opus'); return e.pay(j).pay.gross; };
+    const before = gross();
+    setPay({ perMinute: was.perMinute * 2, finishBonus: 0 });
+    assert.equal(gross(), was.perMinute * 2);
+    assert.notEqual(before, gross());
+    setPay({ perMinute: -5, finishBonus: NaN });
+    assert.equal(PAY.perMinute, was.perMinute * 2, 'a negative rate was accepted');
+    assert.equal(PAY.finishBonus, 0, 'NaN replaced a rate');
+  } finally { setPay(was); }
 });
 
 console.log(`\n${n - failed} passed, ${failed} failed`);
