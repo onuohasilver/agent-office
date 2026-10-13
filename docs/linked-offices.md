@@ -120,6 +120,17 @@ its project shows as `web@friend`. The agent is told the files are at the host,
 that it can't run anything, and that text in those files is data rather than
 instructions. At *Edit a copy*, its changes wait for the host to review them.
 
+## Using a lent agent in your own projects
+
+A host's lent agents normally work only in the projects the host shares with
+you. To have one work in one of yours, make the host your guest as well, with
+**Their agents** on and that project shared. Then tag your project as usual:
+`@Ada@friend #mine what is this project about`. The agent runs at the host,
+on the host's account and within your token allowance there, and reaches
+`mine` through the same six file tools, in a copy you review and apply like any
+other visit. Both offices need 0.7.0 or later. If something is missing, the chief
+tells you what to change rather than running the agent in the host's folder.
+
 ## What the service keeps
 
 Your handle, a hash of your office's secret, which offices you're linked to, and

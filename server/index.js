@@ -21,10 +21,13 @@ import { Settings } from './settings.js';
 import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
+import { projectMap, acceptFolder } from './projects.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, '..');
 const ROOT = path.resolve(process.env.OFFICE_ROOT || path.join(APP, '..'));
+// Set by `agentoffice` when it was started inside a git repo: that repo is the project.
+const SINGLE = process.env.OFFICE_PROJECT ? path.resolve(process.env.OFFICE_PROJECT) : '';
 const PORT = Number(process.env.PORT || 4317);
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 // OFFICE_DATA is set by the agentoffice command; a clone keeps it beside the code.
@@ -183,6 +186,8 @@ try {
 // What the boss sets on the Settings page, over the environment's defaults.
 // The context limit used to live at state.clearTokens.
 if (!state.settings || typeof state.settings !== 'object') state.settings = {};
+// Folders the boss added from the UI, as absolute paths.
+if (!Array.isArray(state.projects)) state.projects = [];
 if (Number.isInteger(state.clearTokens) && !('tokenLimit' in state.settings)) state.settings.tokenLimit = state.clearTokens;
 delete state.clearTokens;
 const settings = new Settings(state.settings, () => save());
@@ -341,6 +346,7 @@ guests = new Guests(DATA, {
   links,
   office: {
     jobs: () => state.jobs,
+    repoPath: (name) => repoPath(name),
     createJob: (body, extra) => createJob(body, extra),
     replyJob: (job, body) => replyJob(job, body),
     stopJob: (job, why) => stopJob(job, why),
@@ -655,18 +661,15 @@ const OFFICE_TOOLS = [
 const GUEST_TOOLS = ['mcp__office__office_roster', 'mcp__office__flag_for_boss'];
 const endGrace = (job) => { clearTimeout(graces.get(job.id)); graces.delete(job.id); };
 
+const projectIndex = () => projectMap({ root: ROOT, project: SINGLE, added: state.projects });
+
 function repoPath(name) {
   if (typeof name !== 'string' || !name || /[\/\\]/.test(name) || name.startsWith('.')) return null;
-  const p = path.join(ROOT, name);
-  try { if (fs.statSync(p).isDirectory()) return p; } catch {}
-  return null;
+  return projectIndex().get(name) || null;
 }
 
 function listRepos() {
-  return fs.readdirSync(ROOT, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
-    .map((d) => d.name)
-    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+  return [...projectIndex().keys()];
 }
 
 // `extra` tags a job, as a guest's (`from`, `guest`); it must be set before the job can start.
@@ -740,8 +743,9 @@ function start(job, agentId) {
     // hooks, or memory: at Full autonomy those would all be the guest's.
     args.push('--strict-mcp-config', '--setting-sources', 'project,local', '--settings', JSON.stringify({ autoMemoryEnabled: false }));
   }
-  const allowed = job.guest ? GUEST_TOOLS : job.away ? [...OFFICE_TOOLS, ...awayTools(job)] : OFFICE_TOOLS;
-  args.push('--mcp-config', mcpFile, '--allowedTools', allowed.join(','), '--append-system-prompt', job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job) + awayPrompt(job));
+  // A guest's job can be away too: one of our agents, lent to the guest, in the guest's own project.
+  const allowed = [...(job.guest ? GUEST_TOOLS : OFFICE_TOOLS), ...(job.away ? awayTools(job) : [])];
+  args.push('--mcp-config', mcpFile, '--allowedTools', allowed.join(','), '--append-system-prompt', (job.guest ? guestPrompt(agentId, job) : officePrompt(agentId, job)) + awayPrompt(job));
   // Being given work in a channel is how you end up in it.
   try { joinChannel(channelOf(job.channel), agentId); } catch {}
   const first = job.sessionId ? withClearHint(job, job.pending) : job.pending;
@@ -980,9 +984,10 @@ async function recordChanges(job) {
 function adoptNewProject(job) {
   if (!job.startedAt || !job.endedAt || job.guest || job.away) return false;
   const text = norm(`${job.title || ''} ${job.prompt || ''}`);
-  const born = listRepos().filter((r) => {
+  const known = projectIndex();
+  const born = [...known.keys()].filter((r) => {
     if (r === job.repo || norm(r).length < 4 || !text.includes(norm(r))) return false;
-    try { const t = fs.statSync(path.join(ROOT, r)).birthtimeMs; return t >= job.startedAt - 1000 && t <= job.endedAt + 1000; } catch { return false; }
+    try { const t = fs.statSync(known.get(r)).birthtimeMs; return t >= job.startedAt - 1000 && t <= job.endedAt + 1000; } catch { return false; }
   });
   if (born.length !== 1) return false;
   const from = job.repo;
@@ -1024,12 +1029,15 @@ function finish(job, status, error) {
   const text = status === 'done' ? job.lastTurn?.text || 'Done.'
     : status === 'stopped' ? 'Stopped, as asked.'
     : `I hit a wall: ${error || 'something went wrong'}`;
-  post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
+  // A borrowed agent's chat belongs to the borrower: the host's feed carries
+  // the finished job over the link, and remoteEnded posts it in their office.
+  // Nothing about a guest's job goes in our own chat.
+  if (!job.guest) post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
   // The result lands in the job's thread, which the boss may never open, so
   // the chief says so in #general. Not for a retry (the work isn't over), a
   // stop (the boss did that), or a colleague's handed-off piece (their asker
   // gets it, and the asker's own finish is the one worth announcing).
-  if (!retry && status !== 'stopped' && !job.requestedBy) {
+  if (!retry && status !== 'stopped' && !job.requestedBy && !job.guest) {
     const line = awaiting ? `${nameOf(job.agentId)} is waiting on you for "${clip(job.title, 80)}": ${clip(job.asking.summary, 200)}`
       : status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".${briefOf(job.lastTurn?.text) ? `\n\n${briefOf(job.lastTurn.text)}` : ''}` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
     post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL });
@@ -1404,7 +1412,7 @@ function remoteEnded(job) {
   const name = guests.remoteStatus().find((o) => o.link === job.remote.link)?.staff.find((s) => s.id === job.agentId)?.name || 'Their agent';
   const last = job.log.at(-1);
   const how = { done: 'finished', failed: 'hit a wall on', stopped: 'stopped' }[job.status] || 'stopped';
-  const said = last?.kind === 'result' && last.summary ? `\n\n${clip(last.summary, 600)}` : job.error ? ` ${job.error}` : '';
+  const said = last?.kind === 'result' && last.summary ? `\n\n${clip(last.summary, 4000)}` : job.error ? ` ${job.error}` : '';
   post('chief', `${name} at @${job.remote.host} ${how} “${job.title}”.${said}`, { jobId: job.id, channel: job.channel, thread: job.thread || null });
 }
 
@@ -1466,7 +1474,7 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
   if (remote) {
     if (files.length) return void say(`Files can’t go to @${remote.host}’s office. Paste the text instead.`);
     guests.startRemote({ link: remote.link, staff: remote.staff, text: remote.clean, mode, model, thread: root?.id || msg.id, channel: where })
-      .then(({ job, repo, capped }) => say(`${remote.staff.name} at @${remote.host} is on it, in ${repo}.${capped ? ` @${remote.host} allows up to ${MODES[job.mode]?.label || job.mode}, so it runs at that.` : ''}`, { jobId: job.id, thread: root ? root.id : null }))
+      .then(({ job, repo, home, capped }) => say(`${remote.staff.name} at @${remote.host} is on it, in ${home ? `your ${repo}, on @${remote.host}’s account. Their changes go into a copy you review.` : `${repo}.`}${capped ? ` @${remote.host} allows up to ${MODES[job.mode]?.label || job.mode}, so it runs at that.` : ''}`, { jobId: job.id, thread: root ? root.id : null }))
       .catch((err) => say(err.message, { thread: root ? root.id : null }));
     return;
   }
@@ -2274,7 +2282,23 @@ const server = http.createServer(async (req, res) => {
       });
       return fs.createReadStream(icon.file).pipe(res);
     }
-    if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
+    if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, single: !!SINGLE, repos: listRepos(), added: state.projects });
+    // Add a folder as a project, or forget one; the choice is kept in the office's state.
+    if (req.method === 'POST' && url.pathname === '/api/projects') {
+      try {
+        const dir = acceptFolder((await readBody(req)).path);
+        if (!state.projects.includes(dir) && ![...projectIndex().values()].includes(dir)) { state.projects.push(dir); save(); }
+        const name = [...projectIndex()].find(([, d]) => d === dir)?.[0];
+        return json(res, 201, { name, repos: listRepos(), added: state.projects });
+      } catch (err) { return json(res, err.code === 400 ? 400 : 500, { error: err.message }); }
+    }
+    if (req.method === 'DELETE' && url.pathname === '/api/projects') {
+      const dir = url.searchParams.get('path');
+      if (!state.projects.includes(dir)) return json(res, 404, { error: 'That folder was not added by hand.' });
+      state.projects = state.projects.filter((d) => d !== dir);
+      save();
+      return json(res, 200, { repos: listRepos(), added: state.projects });
+    }
     // An away job's file tools, passed to the host that has the project.
     if (req.method === 'POST' && parts[1] === 'agent' && /^files_[a-z]+$/.test(parts[2] || '')) {
       const me = caller(req);
@@ -2547,7 +2571,7 @@ server.on('error', (err) => {
 server.listen(PORT, '127.0.0.1', () => {
   // The key is in this line on purpose: it's how the boss gets in. It only
   // goes to this terminal (or the supervisor's), never to a log file.
-  console.log(`Agent Office open on ${keyLink()}  (projects in ${ROOT})`);
+  console.log(`Agent Office open on ${keyLink()}  (${SINGLE ? `project: ${SINGLE}` : `projects in ${ROOT}`})`);
   // For `agentoffice --link`, which can't know which free port we got.
   try { fs.writeFileSync(path.join(DATA, 'office-port'), String(PORT)); } catch {}
   afterRestart();

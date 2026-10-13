@@ -176,6 +176,11 @@
             <button type="button" data-view="icons" aria-pressed="false" aria-label="Icons" title="Icons"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.5"/><rect x="14" y="4" width="6" height="6" rx="1.5"/><rect x="4" y="14" width="6" height="6" rx="1.5"/><rect x="14" y="14" width="6" height="6" rx="1.5"/></svg></button>
           </div>
           <div class="projects" id="projects"></div>
+          <form class="add-folder" id="addFolder" autocomplete="off">
+            <label for="addFolderPath">Add a folder</label>
+            <div class="row"><input id="addFolderPath" type="text" placeholder="~/code/storefront" spellcheck="false"><button type="submit" class="ghost">Add</button></div>
+            <p class="note" role="status"></p>
+          </form>
         </section>
         <section class="pane" id="jobsPane" hidden>
           <div class="jobs" id="jobs"></div>

@@ -1,6 +1,6 @@
 {
   "name": "agent-office-studio",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "A 3D office where the staff are Claude Code agents.",
   "license": "MIT",
   "files": [
@@ -45,7 +45,7 @@
     "start": "vite build && node server/supervise.js",
     "voice:model": "mkdir -p data/whisper && curl -L --progress-bar -o data/whisper/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin",
     "voice:piper": "python3 -m venv data/piper/venv && data/piper/venv/bin/pip install -q piper-tts && data/piper/venv/bin/python -m piper.download_voices --data-dir data/piper/voices en_GB-cori-high en_US-amy-medium en_GB-alan-medium en_US-kristin-medium en_US-ryan-high en_GB-alba-medium en_GB-aru-medium en_US-john-medium en_US-hfc_female-medium",
-    "test": "node scripts/smoke.mjs && node scripts/guests.mjs && node scripts/remote.mjs && node scripts/visits.mjs",
+    "test": "node scripts/smoke.mjs && node scripts/guests.mjs && node scripts/remote.mjs && node scripts/lent-home.mjs && node scripts/visits.mjs && node scripts/first-run.mjs",
     "prepack": "vite build"
   },
   "dependencies": {
