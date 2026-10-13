@@ -78,7 +78,8 @@ export function overloaded() {
 // job (a cleared context or a model switch), so a dev server started before
 // the clear is still the job's.
 const started = new Map();
-// And the process groups they ran in: jobId -> Set(pgid). Each command an
+// And the process groups they ran in: jobId -> Map(pgid -> leader as seen, or
+// null if it wasn't). Each command an
 // agent runs gets a group of its own, and whatever it puts in the background
 // stays in that group after the shell exits, so the group finds those too.
 const groups = new Map();
@@ -87,13 +88,13 @@ export function remember(jobId, procs, root) {
   let mine = started.get(jobId);
   if (!mine) started.set(jobId, (mine = new Map()));
   let gs = groups.get(jobId);
-  if (!gs) groups.set(jobId, (gs = new Set()));
+  if (!gs) groups.set(jobId, (gs = new Map()));
   // The agent's own group is the office's, which is nobody's to clean up.
   const own = procs.find((p) => p.pid === root)?.pgid;
   for (const p of procs) {
     if (p.pid === root) continue;
-    if (!mine.has(p.pid)) mine.set(p.pid, { cmd: p.cmd, pgid: p.pgid });
-    if (p.pgid > 1 && p.pgid !== own) gs.add(p.pgid);
+    if (!mine.has(p.pid)) mine.set(p.pid, { cmd: p.cmd, pgid: p.pgid, start: p.start });
+    if (p.pgid > 1 && p.pgid !== own && !gs.get(p.pgid)) gs.set(p.pgid, p.pid === p.pgid ? { cmd: p.cmd, start: p.start } : null);
   }
 }
 
@@ -124,11 +125,12 @@ const SHARED = /GradleDaemon|KotlinCompileDaemon|GradleWrapperMain.*--daemon|\bw
 
 // Stop whatever the job started that is still running, except what the agent
 // asked to keep and anything inside `live` (another agent's process tree).
-// A pid only counts if its command is the one recorded, so a reused pid is
-// left alone. Returns the names of what was stopped.
+// A pid only counts if its command and start are the ones recorded, so a
+// reused pid is left alone. Returns the names of what was stopped.
+const same = (now, was) => !!now && !!was && now.cmd === was.cmd && (now.start == null || was.start == null || Math.abs(now.start - was.start) < 2000);
 export async function reap(jobId, { keep = [], live = [] } = {}) {
   const mine = started.get(jobId);
-  const gs = groups.get(jobId) || new Set();
+  const gs = groups.get(jobId) || new Map();
   forget(jobId);
   if (!mine?.size) return [];
   const snap = await ps();
@@ -138,8 +140,12 @@ export async function reap(jobId, { keep = [], live = [] } = {}) {
   for (let pid = process.pid; pid > 1 && !spare.has(pid); pid = snap.procs.get(pid)?.ppid) spare.add(pid);
   for (const root of [...live, ...keep]) for (const p of tree(snap, root)) spare.add(p.pid);
   const roots = [];
-  for (const [pid, was] of mine) if (snap.procs.get(pid)?.cmd === was.cmd) roots.push(pid);
-  for (const p of snap.procs.values()) if (gs.has(p.pgid) && p.pid !== p.pgid) roots.push(p.pid);
+  for (const [pid, was] of mine) if (same(snap.procs.get(pid), was)) roots.push(pid);
+  // A group's number can't be reused while anything is still in it, so one
+  // with no leader left is the job's. One with a leader is only if that
+  // leader is the one seen while the job worked, not a newcomer with its pid.
+  const ours = (g) => !snap.procs.has(g) || same(snap.procs.get(g), gs.get(g));
+  for (const p of snap.procs.values()) if (gs.has(p.pgid) && p.pid !== p.pgid && ours(p.pgid)) roots.push(p.pid);
   const doomed = new Map();
   for (const pid of roots) {
     if (spare.has(pid)) continue;
@@ -150,7 +156,7 @@ export async function reap(jobId, { keep = [], live = [] } = {}) {
   // Whatever ignores a polite stop gets a firm one, if it is still the same process.
   setTimeout(async () => {
     const later = await ps();
-    for (const [pid, p] of doomed) if (later?.procs.get(pid)?.cmd === p.cmd) try { process.kill(pid, 'SIGKILL'); } catch {}
+    for (const [pid, p] of doomed) if (same(later?.procs.get(pid), p)) try { process.kill(pid, 'SIGKILL'); } catch {}
   }, 5000).unref();
   return [...doomed.values()].map((p) => name(p.cmd));
 }

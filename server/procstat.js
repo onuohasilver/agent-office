@@ -16,19 +16,21 @@ function cpuSeconds(s) {
 
 export function ps() {
   return new Promise((resolve) => {
-    execFile(PS, ['-axo', 'pid=,ppid=,pgid=,rss=,cputime=,command='], { timeout: 4000, maxBuffer: 16 << 20 }, (err, out) => {
+    execFile(PS, ['-axo', 'pid=,ppid=,pgid=,rss=,cputime=,etime=,command='], { timeout: 4000, maxBuffer: 16 << 20 }, (err, out) => {
       if (err) return resolve(null);
+      const at = Date.now();
       const procs = new Map();
       const kids = new Map();
       for (const line of out.split('\n')) {
-        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
+        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)\s*(.*)$/);
         if (!m) continue;
         const pid = Number(m[1]), ppid = Number(m[2]);
-        procs.set(pid, { pid, ppid, pgid: Number(m[3]), rss: Number(m[4]) * 1024, cpu: cpuSeconds(m[5]), cmd: m[6] });
+        // start: when it began, to the second, so a reused pid can be told apart.
+        procs.set(pid, { pid, ppid, pgid: Number(m[3]), rss: Number(m[4]) * 1024, cpu: cpuSeconds(m[5]), start: at - cpuSeconds(m[6]) * 1000, cmd: m[7] });
         if (!kids.has(ppid)) kids.set(ppid, []);
         kids.get(ppid).push(pid);
       }
-      resolve({ procs, kids, at: Date.now() });
+      resolve({ procs, kids, at });
     });
   });
 }
