@@ -1195,6 +1195,16 @@ function finish(job, status, error) {
   if (asker?.status === 'working' && running.has(asker.id)) {
     settle(asker, (w) => w.kind === 'job' && w.id === job.id);
     deliver(asker, `${nameOf(job.agentId)} finished the work you handed off ("${job.title}"), status: ${status}.\n\n${text}`);
+  } else if (asker && !asker.guest && !asker.away && asker.status !== 'stopped' && asker.status !== 'working' && status !== 'stopped') {
+    // The asker has already closed their turn, so the result would have
+    // nowhere to land and sit unread. It becomes work for them instead: their
+    // job resumes (or, if it is queued, picks it up), and a review's findings
+    // get fixed rather than filed.
+    const reviewed = /review|adversarial|audit|qa\b|test/i.test(`${job.title} ${job.prompt}`);
+    asker.wantAgent = asker.agentId;
+    deliver(asker, `${nameOf(job.agentId)} finished the work you handed off ("${job.title}"), status: ${status}.\n\n${text}` +
+      (reviewed ? '\n\nThis is a review of your work. Go through each finding now: fix what is right, and say plainly what you decline and why.' : ''));
+    addLog(asker, { kind: 'system', summary: `${nameOf(job.agentId)}'s result came back after this job closed, so it was reopened.` });
   }
   // Anyone waiting on a reply from this agent stops waiting.
   for (const other of state.jobs) {
