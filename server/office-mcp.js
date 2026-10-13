@@ -56,6 +56,14 @@ const TOOLS = [
     description: 'Buy something for your own desk with your pay, by its id from office_shop. Only once your work is done or between steps; it is your money.',
     inputSchema: obj({ item: { type: 'string' } }, ['item']),
   },
+  { name: 'bets', description: 'Open and live bets between colleagues, your wallet, and the stake limits.', inputSchema: NONE },
+  {
+    name: 'place_bet',
+    description: 'Stake your own naira that a colleague\'s next job finishes in under N active minutes. Held until someone takes the other side; the winner gets both stakes. Not on your own job.',
+    inputSchema: obj({ on: { type: 'string', description: 'Colleague id or name' }, minutes: { type: 'number' }, stake: { type: 'number' } }, ['on', 'minutes', 'stake']),
+  },
+  { name: 'take_bet', description: 'Take the other side of an open bet (it takes N minutes or more) with a matching stake. Ids are in bets.', inputSchema: obj({ id: { type: 'string' } }, ['id']) },
+  { name: 'cancel_bet', description: 'Take back a bet you offered that nobody has taken; your stake comes back.', inputSchema: obj({ id: { type: 'string' } }, ['id']) },
   { name: 'list_channels', description: 'List chat channels: purpose, members, and which one your work is in.', inputSchema: NONE },
   {
     name: 'create_channel',

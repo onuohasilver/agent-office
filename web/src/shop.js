@@ -123,12 +123,27 @@ function richPane() {
   const by = new Map((econ.rich || []).map((r) => [r.id, r]));
   const rows = people.map((s) => ({ s, ...(by.get(s.id) || { worth: 0, wallet: 0, desk: 0, earned: 0, jobs: 0 }) }))
     .sort((a, b) => b.worth - a.worth || b.earned - a.earned);
+  const mover = (r) => {
+    if (r.moved == null) return '<span class="sr-move" title="No snapshot to compare with yet">–</span>';
+    if (!r.moved) return '<span class="sr-move" title="Same place as at the start of the week">=</span>';
+    const up = r.moved > 0, k = Math.abs(r.moved);
+    return `<span class="sr-move ${up ? 'up' : 'down'}" title="${up ? 'Up' : 'Down'} ${k} place${k === 1 ? '' : 's'} this week">${up ? '▲' : '▼'}${k}</span>`;
+  };
+  // The neighbour on the list as shown: who to catch, or for the leader, who is catching up.
+  const rival = (i) => {
+    const up = rows[i - 1], down = rows[i + 1];
+    if (up) return `Rival: ${esc(up.s.name)}, ${naira(up.worth - rows[i].worth)} ahead`;
+    if (down) return `Chased by ${esc(down.s.name)}, ${naira(rows[i].worth - down.worth)} behind`;
+    return '';
+  };
   const total = rows.reduce((a, r) => a + r.worth, 0);
-  return `<p class="shop-lede">Net worth is cash in hand plus what’s on the desk, at shop price. The team holds ${coins(total)} between them.</p>
+  const first = !!econ.week?.first || rows.every((r) => r.moved == null);
+  return `<p class="shop-lede">Net worth is cash in hand plus what’s on the desk, at shop price. The team holds ${coins(total)} between them.${first ? ' Arrows show up after the first full week.' : ' Arrows show places moved since Monday.'}</p>
     <ol class="shop-rich">${rows.map((r, i) => `<li class="${i === 0 && r.worth > 0 ? 'top' : ''}">
       <span class="sr-rank" aria-label="Rank ${i + 1}">${i === 0 && r.worth > 0 ? '👑' : i + 1}</span>
       <span class="sp-face">${portrait(r.s)}</span>
-      <span class="sp-who"><b>${esc(r.s.name)}</b><small>${naira(r.wallet)} in hand · ${naira(r.desk)} on the desk · ${n(r.jobs)} job${r.jobs === 1 ? '' : 's'}</small></span>
+      <span class="sp-who"><b>${esc(r.s.name)}</b><small>${naira(r.wallet)} in hand · ${naira(r.desk)} on the desk · ${n(r.jobs)} job${r.jobs === 1 ? '' : 's'}</small>${rival(i) ? `<small class="sr-rival">${rival(i)}</small>` : ''}</span>
+      ${mover(r)}${r.comeback ? '<span class="sr-comeback" title="Climbed the most places this week">Comeback</span>' : ''}
       ${coins(r.worth, 'sr-worth')}
     </li>`).join('')}</ol>`;
 }
@@ -152,7 +167,7 @@ function line(e) {
   switch (e.kind) {
     case 'pay': return {
       text: `<b>${esc(name(e.agentId))}</b> was paid for ${t}`,
-      sub: [e.minutes != null && `${e.minutes} active min`, e.tier && `${TIER[e.tier] || e.tier} ×${e.mult}`, `${n(e.agent)} kept, ${n(e.pot)} to the pot`].filter(Boolean).join(' · '),
+      sub: [e.minutes != null && `${e.minutes} active min`, e.tier && `${TIER[e.tier] || e.tier} ×${e.mult}`, e.boost && `🔥 ${e.streak}-day streak +${Math.round(e.boost * 100)}% wage`, `${n(e.agent)} kept, ${n(e.pot)} to the pot`].filter(Boolean).join(' · '),
       amt: `+${n(e.gross)}`, cls: 'in',
     };
     case 'achievement': return { text: `<b>${esc(name(e.agentId))}</b> unlocked ${esc(e.title)}`, sub: `${n(e.agent)} kept, ${n(e.pot)} to the pot`, amt: `+${n(e.gross)}`, cls: 'in' };
@@ -165,6 +180,7 @@ function line(e) {
         : `<b>${esc(name(e.by))}</b> bought ${what} for their desk`;
       return { text, sub: e.from === 'pot' ? 'From the pot' : 'From their wallet', amt: e.price ? `−${n(e.price)}` : '', cls: 'out' };
     }
+    case 'tip': return { text: `You tipped <b>${esc(name(e.agentId))}</b>`, sub: 'From the pot', amt: `−${n(e.amount)}`, cls: 'out' };
     case 'use': return { text: `Switched to ${esc(e.title)}`, sub: '', amt: '', cls: '' };
     default: return { text: esc(e.title || e.kind), sub: '', amt: '', cls: '' };
   }

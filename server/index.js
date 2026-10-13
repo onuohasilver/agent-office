@@ -11,12 +11,13 @@ import { canSee, route } from './chief.js';
 import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
 import { writeBanter } from './banter.js';
+import { writeReply } from './talk.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
 import { Leaderboard } from './leaderboard.js';
-import { Economy, emptyBooks } from './economy.js';
+import { Economy, emptyBooks, BET } from './economy.js';
 import { itemById, ITEMS, PAY, setPay, naira } from '../shared/shop.js';
 import { Links } from './links.js';
 import { Settings } from './settings.js';
@@ -202,7 +203,9 @@ applyPay();
 // Pay, the office pot and the shop. state.economy is the books themselves,
 // changed in place, so saving the state saves them.
 if (!state.economy || typeof state.economy !== 'object') state.economy = emptyBooks();
-const economy = new Economy(state.economy, { onChange: (entry) => { save(); send({ t: 'economy', entry, economy: economy.status() }); } });
+const economy = new Economy(state.economy, { onChange: (entry) => { save(); send({ t: 'economy', entry, economy: economy.status() }); announceWager(entry); } });
+// Stakes on a bet nobody took, or on a job that never finished, run out.
+setInterval(() => { try { economy.sweep(); } catch {} }, 600000).unref();
 if (!state.channels.some((c) => c.id === GENERAL)) state.channels.unshift({ id: GENERAL, name: GENERAL, createdAt: Date.now() });
 // Sat next to #general, and described even if someone had already opened a
 // channel by that name by hand. An explanation they wrote themselves stays.
@@ -658,6 +661,38 @@ async function claimBanter(pair, game = false) {
   }
 }
 
+// Click-an-agent chat: a quick in-character answer from one cheap call. The
+// browser keeps the last few turns and sends them back, so nothing is stored
+// here. One question at a time per agent, so a held-down Enter can't run up a bill.
+const talking = new Set();
+async function talkTo(agentId, text, history) {
+  const s = onFloor().find((x) => x.id === agentId);
+  if (!s) throw new Error('They are not on the floor right now.');
+  text = clip(text, 400);
+  if (!text) throw new Error('Say something first.');
+  if (talking.has(agentId)) throw new Error(`${s.name} is still answering.`);
+  talking.add(agentId);
+  try {
+    const job = state.jobs.find((j) => j.agentId === agentId && j.status === 'working');
+    const last = job && [...job.log].reverse().find((e) => e.kind === 'text' || e.kind === 'tool');
+    const now = job
+      ? `Right now: working on "${clip(job.title, 100)}" in ${job.repo}${job.waiting ? ' (waiting on the boss)' : ''}.${last ? ` Last thing you did: ${clip(last.summary || last.text, 140)}.` : ''}`
+      : 'Right now: between jobs, in the office.';
+    const said = (Array.isArray(history) ? history : []).slice(-6)
+      .map((h) => `${h.who === 'you' ? 'Boss' : s.name}: ${clip(h.text, 240)}`);
+    const { reply, cost } = await writeReply([
+      `You are ${s.name}. ${persona(agentId)}`, '', now, '',
+      said.length ? `This chat so far:\n${said.join('\n')}` : 'This chat has just started.', '',
+      `Boss: ${text}`,
+    ].join('\n'), { bin: CLAUDE, model: settings.get('banterModel'), env: auth.env() });
+    state.chiefCost += cost || 0;
+    send({ t: 'chief', busy: false, cost: state.chiefCost });
+    return reply;
+  } finally {
+    talking.delete(agentId);
+  }
+}
+
 function addLog(job, entry) {
   entry.ts = Date.now();
   const last = job.log[job.log.length - 1];
@@ -704,6 +739,7 @@ const OFFICE_TOOLS = [
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
   'mcp__office__restart_office', 'mcp__office__clear_context', 'mcp__office__attach_files',
   'mcp__office__office_shop', 'mcp__office__buy_item',
+  'mcp__office__bets', 'mcp__office__place_bet', 'mcp__office__take_bet', 'mcp__office__cancel_bet',
 ];
 // A guest's job can see who is in and ask the boss, nothing more: no
 // messaging colleagues, handing off or channels. Enforced again in agentApi,
@@ -1090,6 +1126,12 @@ function payday(job) {
   if (pay) pushJob(job);
   for (const a of achievements) announceAchievement(job.agentId, a);
 }
+// The goal being reached and bets settling are the office's news, so they go
+// to the chill room (the goal to #general too, since it is everyone's).
+function announceWager(e) {
+  if (e.kind === 'goal' && e.phase === 'reached') post('chief', `🎉 The office pot hit ${naira(e.target)}: **${e.title}** is on! Well done, everyone.`, { kind: 'goal', channel: GENERAL, thread: null });
+  else if (e.kind === 'bet' && (e.phase === 'won' || e.phase === 'lost')) post('chief', `🎲 ${nameOf(e.winner)} won ${naira(e.stake)} off ${nameOf(e.loser)}: ${nameOf(e.subject)}'s job took ${e.why} against a bet of under ${e.minutes} min.`, { kind: 'bet', channel: CHILL, thread: null });
+}
 function announceAchievement(agentId, a) {
   post('chief', `🏅 ${nameOf(agentId)} unlocked **${a.name}**: ${a.blurb} (+${naira(a.bonus)})`, { kind: 'achievement', channel: CHILL, thread: null });
 }
@@ -1113,6 +1155,8 @@ function finish(job, status, error) {
   const gained = status === 'done' && !awaiting ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
   // Work that failed or was stopped earns nothing; a retry is paid on its own.
   if (status !== 'done') Object.assign(job, { payMinutes: 0, payWeighted: 0 });
+  // A bet on a job that did not finish gives the stakes back.
+  if (status !== 'done' && !job.guest) try { economy.voidBets(job, `${nameOf(job.agentId)}'s job ${status === 'stopped' ? 'was stopped' : 'failed'}`); } catch {}
   if (status === 'done' && !awaiting) board.addJob();
   state.xp += gained;
   job.xp += gained;
@@ -2010,6 +2054,31 @@ const agentApi = {
     return `Bought: ${buy.title}, on your desk now. ${naira(economy.wallet(me.agentId))} left.`;
   },
 
+  bets(me) {
+    const mine = economy.books.bets.filter((x) => x.state === 'open' || x.state === 'live');
+    const line = (x) => `- ${x.id}: ${nameOf(x.by)} says ${nameOf(x.subject)}'s next job takes under ${x.minutes} min, ${naira(x.stake)} each (${x.state === 'open' ? 'open, needs a taker' : `taken by ${nameOf(x.against)}`})`;
+    return [`You have ${naira(economy.wallet(me.agentId))}. Stakes are ${naira(BET.minStake)} to ${naira(BET.maxStake)}, at most ${BET.maxOpen} bets at a time.`, ...(mine.length ? mine.map(line) : ['No open bets.'])].join('\n');
+  },
+
+  place_bet(me, { on, minutes, stake }) {
+    const subject = STAFF.find((x) => x.id === String(on || '').toLowerCase() || x.name.toLowerCase() === String(on || '').toLowerCase());
+    if (!subject) throw new Error('Name a colleague to bet on (office_roster lists them).');
+    const bet = economy.offerBet({ by: me.agentId, subject: subject.id, minutes, stake });
+    post(me.agentId, `🎲 I'll put ${naira(bet.stake)} on ${subject.name}'s next job taking under ${bet.minutes} min. Anyone who thinks it'll take longer: take_bet ${bet.id}.`, { kind: 'bet', channel: CHILL, thread: null });
+    return `Bet ${bet.id} is open with ${naira(bet.stake)} of yours held. It settles when ${subject.name}'s next job (started after someone takes it) finishes, and is refunded if nobody takes it in a few hours or the job does not finish.`;
+  },
+
+  take_bet(me, { id }) {
+    const bet = economy.takeBet(String(id || ''), { by: me.agentId });
+    post(me.agentId, `🎲 Taken: I say ${nameOf(bet.subject)}'s next job takes ${bet.minutes} min or more. ${naira(bet.stake)} each.`, { kind: 'bet', channel: CHILL, thread: null });
+    return `You took ${bet.id} against ${nameOf(bet.by)}, ${naira(bet.stake)} held from you. ${naira(economy.wallet(me.agentId))} left.`;
+  },
+
+  cancel_bet(me, { id }) {
+    economy.cancelBet(String(id || ''), { by: me.agentId });
+    return `Taken back; your stake is returned. ${naira(economy.wallet(me.agentId))}.`;
+  },
+
   flag_for_boss(me, { kind, summary }) {
     summary = String(summary || '').replace(/\s+/g, ' ').trim().slice(0, 600);
     if (!summary) throw new Error('Say what the boss needs to know.');
@@ -2622,6 +2691,10 @@ const server = http.createServer(async (req, res) => {
       if (parts[3] === 'dismiss' && !state.dismissed.includes(parts[2])) return json(res, 400, { error: text });
       return json(res, 200, { text });
     }
+    if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && parts[3] === 'talk' && !parts[4]) {
+      const { text, history } = await readBody(req);
+      try { return json(res, 200, { reply: await talkTo(parts[2], text, history) }); } catch (err) { return json(res, 400, { error: err.message }); }
+    }
     if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && parts[3] === 'profile' && !parts[4]) {
       let p;
       try { p = updateProfile(parts[2], await readBody(req)); } catch (err) { return json(res, 400, { error: err.message }); }
@@ -2638,8 +2711,27 @@ const server = http.createServer(async (req, res) => {
         return json(res, 201, economy.status());
       } catch (err) { return json(res, 400, { error: err.message }); }
     }
+    if (req.method === 'POST' && url.pathname === '/api/economy/goal') {
+      const body = await readBody(req);
+      try {
+        if (body.clear) economy.clearGoal(); else economy.setGoal({ name: body.name, target: body.target });
+        return json(res, 200, economy.status());
+      } catch (err) { return json(res, 400, { error: err.message }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/economy/bet/cancel') {
+      try { economy.cancelBet(String((await readBody(req)).id || ''), { by: 'boss' }); return json(res, 200, economy.status()); } catch (err) { return json(res, 400, { error: err.message }); }
+    }
     if (req.method === 'POST' && url.pathname === '/api/economy/use') {
       try { economy.use(String((await readBody(req)).item || '')); return json(res, 200, economy.status()); } catch (err) { return json(res, 400, { error: err.message }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/economy/tip') {
+      const { agentId, amount } = await readBody(req);
+      try {
+        if (!onFloor().some((x) => x.id === agentId)) throw new Error('They are not on the floor right now.');
+        const e = economy.tip(agentId, amount);
+        post('chief', `💸 ${owner() || 'The boss'} tipped ${nameOf(agentId)} ${naira(e.amount)} from the pot`, { kind: 'kudos', channel: GENERAL, thread: null });
+        return json(res, 200, economy.status());
+      } catch (err) { return json(res, 400, { error: err.message }); }
     }
     if (req.method === 'POST' && url.pathname === '/api/economy/kudos') {
       const { jobId } = await readBody(req);

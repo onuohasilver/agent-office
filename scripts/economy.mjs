@@ -8,7 +8,8 @@ import { PAY, split, setPay } from '../shared/shop.js';
 
 let now = Date.parse('2026-10-13T12:00:00Z');
 const make = () => new Economy(emptyBooks(), { now: () => now });
-const job = (over = {}) => ({ id: 'j' + Math.random().toString(36).slice(2, 7), agentId: 'mira', title: 'A job', model: 'sonnet', status: 'done', ...over });
+let jobSeq = 0;
+const job = (over = {}) => ({ id: 'j' + ++jobSeq, agentId: 'mira', title: 'A job', model: 'sonnet', status: 'done', ...over });
 let n = 0, failed = 0;
 const test = (name, fn) => {
   n++;
@@ -216,6 +217,109 @@ test('the pay rate set in Settings changes what the next job pays', () => {
     assert.equal(PAY.perMinute, was.perMinute * 2, 'a negative rate was accepted');
     assert.equal(PAY.finishBonus, 0, 'NaN replaced a rate');
   } finally { setPay(was); }
+});
+
+test('a tip moves money from the pot to the agent and the books still balance', () => {
+  const e = make();
+  const j = job(); e.accrue(j, 600000, 'opus'); e.pay(j);
+  const pot = e.books.pot, w = e.wallet('mira');
+  const rec = e.tip('mira', 1000);
+  assert.equal(e.books.pot, pot - 1000);
+  assert.equal(e.wallet('mira'), w + 1000);
+  assert.equal(rec.kind, 'tip');
+  balanced(e);
+  assert.throws(() => e.tip('mira', 10), /between/);
+  assert.throws(() => e.tip('mira', 10_000_000), /between/);
+  assert.throws(() => e.tip('mira', 50000), /pot has/);
+  assert.throws(() => e.tip('', 1000), /who/);
+  assert.equal(e.books.pot, pot - 1000, 'a refused tip moved money');
+});
+
+test('levels follow lifetime earnings', () => {
+  const e = make();
+  assert.equal(e.perks('mira').title, 'Intern');
+  e.statsOf('mira').earned = 120000;
+  assert.equal(e.perks('mira').title, 'Specialist');
+});
+
+test('a live streak lifts the wage, a lapsed one does not', () => {
+  const run = (days) => {
+    const e = make();
+    let gross;
+    for (const d of days) {
+      now = Date.parse('2026-10-13T12:00:00Z') + d * 86400000;
+      const j = job(); e.accrue(j, 600000, 'opus'); gross = e.pay(j).pay;
+    }
+    return { e, gross };
+  };
+  const base = run([0]).gross;
+  const three = run([0, 1, 2]);
+  assert.equal(three.gross.boost, 0.05);
+  assert.ok(three.gross.gross > base.gross);
+  assert.equal(three.e.perks('mira').streak, 3);
+  const gap = run([0, 1, 3]);
+  assert.equal(gap.gross.boost, undefined, 'a broken streak still boosted');
+  now = Date.parse('2026-10-13T12:00:00Z') + 9 * 86400000;
+  assert.equal(three.e.perks('mira').streak, 0, 'a lapsed streak is still shown');
+  now = Date.parse('2026-10-13T12:00:00Z');
+});
+
+// ---- weekly movers on the rich list ----
+const earn = (e, id, min) => { const j = { ...job(), agentId: id }; e.accrue(j, min * 60000, 'sonnet'); e.pay(j); };
+const row = (e, id) => e.status().rich.find((r) => r.id === id);
+
+test('movers: old books without weekly load, and the first week shows no movement', () => {
+  const old = emptyBooks(); delete old.weekly;
+  const e = new Economy(old, { now: () => now });
+  earn(e, 'mira', 10); earn(e, 'val', 5);
+  const s = e.status();
+  assert.equal(s.week.first, true);
+  assert.ok(s.rich.every((r) => r.moved === null && !r.comeback), 'first week should have no arrows or badge');
+  for (const bad of [null, 5, [], { start: 'x', ranks: 3 }]) {
+    const e2 = new Economy({ ...emptyBooks(), weekly: bad }, { now: () => now });
+    assert.doesNotThrow(() => e2.status());
+  }
+});
+
+test('movers: after a week, places moved, the Comeback badge and rivals', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20); earn(e, 'amara', 10); earn(e, 'kai', 5);
+  const order = () => e.status().rich.map((r) => r.id).join();
+  assert.equal(order(), 'mira,val,amara,kai');
+  now += 7 * 86400000; // next week: the snapshot rolls on the first look
+  assert.equal(e.status().week.first, false, 'the second snapshot is a real one');
+  assert.ok(e.status().rich.every((r) => r.moved === 0));
+  earn(e, 'kai', 90); // kai climbs from 4th to 1st
+  const s = e.status();
+  assert.equal(s.rich[0].id, 'kai');
+  assert.equal(row(e, 'kai').moved, 3);
+  assert.equal(row(e, 'mira').moved, -1);
+  assert.deepEqual(s.rich.filter((r) => r.comeback).map((r) => r.id), ['kai']);
+  assert.equal(row(e, 'kai').rival.above, null);
+  assert.equal(row(e, 'kai').rival.below.id, 'mira');
+  assert.equal(row(e, 'mira').rival.above.gap, row(e, 'kai').worth - row(e, 'mira').worth);
+  assert.equal(row(e, 'mira').rival.above.id, 'kai');
+});
+
+test('movers: nobody climbed means no badge; a new arrival has no arrow', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20);
+  e.status(); now += 7 * 86400000; e.status();
+  assert.ok(e.status().rich.every((r) => !r.comeback));
+  earn(e, 'zola', 1);
+  assert.equal(row(e, 'zola').moved, null);
+  assert.equal(row(e, 'zola').comeback, false);
+});
+
+test('movers: the snapshot survives a restart and stays put within the week', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20);
+  e.status(); now += 7 * 86400000; e.status();
+  const saved = JSON.parse(JSON.stringify(e.books));
+  const e2 = new Economy(saved, { now: () => now + 3600000 });
+  earn(e2, 'val', 100);
+  assert.equal(row(e2, 'val').moved, 1);
+  assert.equal(e2.books.weekly.start, saved.weekly.start, 'the snapshot was retaken mid-week');
 });
 
 console.log(`\n${n - failed} passed, ${failed} failed`);
