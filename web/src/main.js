@@ -2,6 +2,7 @@ import '@fontsource-variable/inter';
 import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
 import './pwa.js';
+import './desktop.js';
 import './theme.js';
 import { setAccess, setContextLimit } from './account.js';
 import { initSettings, setSettings } from './settings.js';
