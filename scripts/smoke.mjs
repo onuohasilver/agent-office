@@ -6,6 +6,7 @@
 // It runs from a copy of the app in a temp folder, with its own data, so it
 // can never pick up a live office's state and resume its jobs.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -145,7 +146,17 @@ try {
     const res = await fetch(link.replace(/localhost/, '127.0.0.1'), { redirect: 'manual' });
     const set = res.headers.get('set-cookie') || '';
     assert(res.status === 303 && res.headers.get('location') === '/', `status ${res.status}`);
-    assert(set.startsWith(cookie() + ';') && /HttpOnly/.test(set) && /SameSite=Strict/.test(set), set);
+    // A MAC of the key, never the key itself.
+    const key = fs.readFileSync(keyFile, 'utf8').trim();
+    const mac = `office_key_${PORT}=${crypto.createHmac('sha256', key).update(`office-cookie:${PORT}`).digest('hex')}`;
+    assert(set.startsWith(mac + ';') && !set.includes(key) && /HttpOnly/.test(set) && /SameSite=Strict/.test(set), set);
+    const page = await fetch(BASE + '/', { headers: { cookie: mac } });
+    assert(page.status === 200 && !page.headers.get('set-cookie'), `with the cookie: status ${page.status}`);
+  });
+  await check('swaps a cookie that holds the key for its MAC', async () => {
+    const res = await fetch(BASE + '/', { headers: { cookie: cookie() } });
+    const set = res.headers.get('set-cookie') || '';
+    assert(res.status === 200 && set.startsWith(`office_key_${PORT}=`) && !set.includes(fs.readFileSync(keyFile, 'utf8').trim()), `status ${res.status}, ${set}`);
   });
   await check('the socket needs the key too', async () => {
     const open = (headers) => new Promise((resolve) => {

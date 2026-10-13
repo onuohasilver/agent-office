@@ -2654,13 +2654,26 @@ const sameKey = (k) => {
   const a = Buffer.from(String(k || '')), b = Buffer.from(OFFICE_KEY);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 };
-function hasKey(req) {
+// The cookie holds a MAC of the key, not the key: a stolen cookie opens this
+// office on this port only and can't be turned back into a ?key= link.
+const COOKIE_VALUE = crypto.createHmac('sha256', OFFICE_KEY).update(`office-cookie:${PORT}`).digest('hex');
+const sameCookie = (v) => {
+  const a = Buffer.from(String(v || '')), b = Buffer.from(COOKIE_VALUE);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+const keyCookie = (req) => `${KEY_COOKIE}=${COOKIE_VALUE}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`;
+function cookieOf(req) {
   for (const c of String(req.headers.cookie || '').split(';')) {
     const i = c.indexOf('=');
-    if (i > 0 && c.slice(0, i).trim() === KEY_COOKIE) return sameKey(c.slice(i + 1).trim());
+    if (i > 0 && c.slice(0, i).trim() === KEY_COOKIE) return c.slice(i + 1).trim();
   }
-  return false;
+  return '';
 }
+// Cookies set before the MAC hold the key itself. They still work (whoever
+// has the key could log in with ?key= anyway) and are swapped on the next
+// page load, so no browser is signed out.
+const oldCookie = (req) => sameKey(cookieOf(req));
+const hasKey = (req) => sameCookie(cookieOf(req)) || oldCookie(req);
 const keyLink = (host = `localhost:${PORT}`) => `http://${host}/?key=${OFFICE_KEY}`;
 
 // What a browser without the key sees instead of the office.
@@ -2742,7 +2755,7 @@ function serveStatic(req, res) {
   const head = { 'content-type': TYPES[path.extname(file)] || 'application/octet-stream', 'cache-control': cache };
   // Scripts only from the office itself, so injected markup can't run code
   // (the desktop app gives this page IPC). Styles and connections stay open.
-  if (file.endsWith('.html')) head['content-security-policy'] = "script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'";
+  if (file.endsWith('.html')) head['content-security-policy'] = "script-src 'self'; img-src 'self' data: blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
   res.writeHead(200, head);
   fs.createReadStream(file).pipe(res);
 }
@@ -2765,12 +2778,13 @@ const server = http.createServer(async (req, res) => {
       if (!sameKey(url.searchParams.get('key'))) return locked(res);
       url.searchParams.delete('key');
       res.writeHead(303, {
-        'set-cookie': `${KEY_COOKIE}=${OFFICE_KEY}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000${req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''}`,
+        'set-cookie': keyCookie(req),
         location: url.pathname + url.search, 'cache-control': 'no-store',
       });
       return res.end();
     }
     if (!hasKey(req) && !isAsset(url.pathname)) return locked(res);
+    if (oldCookie(req)) res.setHeader('set-cookie', keyCookie(req));
     return serveStatic(req, res);
   }
   // Agents prove who they are with their job token (caller); everyone else
