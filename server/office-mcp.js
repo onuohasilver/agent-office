@@ -50,6 +50,12 @@ const TOOLS = [
     description: 'Drop this session\'s history to cut token use, at a natural break between steps. Give notes to yourself: what is done, what is left, what you learned (files, decisions, gotchas). End your turn right after; you resume fresh from the brief and your notes. Not for the end of a job.',
     inputSchema: obj({ notes: { type: 'string' } }, ['notes']),
   },
+  { name: 'office_shop', description: 'Your pay so far, how pay works, and what you can buy for your desk.', inputSchema: NONE },
+  {
+    name: 'buy_item',
+    description: 'Buy something for your own desk with your pay, by its id from office_shop. Only once your work is done or between steps; it is your money.',
+    inputSchema: obj({ item: { type: 'string' } }, ['item']),
+  },
   { name: 'list_channels', description: 'List chat channels: purpose, members, and which one your work is in.', inputSchema: NONE },
   {
     name: 'create_channel',

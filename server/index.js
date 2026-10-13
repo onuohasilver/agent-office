@@ -16,6 +16,8 @@ import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.j
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
 import { Leaderboard } from './leaderboard.js';
+import { Economy, emptyBooks } from './economy.js';
+import { itemById, ITEMS, PAY } from '../shared/shop.js';
 import { Links } from './links.js';
 import { Settings } from './settings.js';
 import { Guests } from './guests.js';
@@ -190,6 +192,10 @@ if (!state.settings || typeof state.settings !== 'object') state.settings = {};
 if (Number.isInteger(state.clearTokens) && !('tokenLimit' in state.settings)) state.settings.tokenLimit = state.clearTokens;
 delete state.clearTokens;
 const settings = new Settings(state.settings, () => save());
+// Pay, the office pot and the shop. state.economy is the books themselves,
+// changed in place, so saving the state saves them.
+if (!state.economy || typeof state.economy !== 'object') state.economy = emptyBooks();
+const economy = new Economy(state.economy, { onChange: (entry) => { save(); send({ t: 'economy', entry, economy: economy.status() }); } });
 if (!state.channels.some((c) => c.id === GENERAL)) state.channels.unshift({ id: GENERAL, name: GENERAL, createdAt: Date.now() });
 // Sat next to #general, and described even if someone had already opened a
 // channel by that name by hand. An explanation they wrote themselves stays.
@@ -365,7 +371,7 @@ guests = new Guests(DATA, {
   },
 });
 // Broadcasts that can't change what an agent is doing don't need presence checked.
-const NOT_PRESENCE = new Set(['links', 'visitors', 'remote', 'proc', 'leaderboard', 'auth', 'usage']);
+const NOT_PRESENCE = new Set(['links', 'visitors', 'remote', 'proc', 'leaderboard', 'auth', 'usage', 'economy']);
 
 function send(msg) {
   const data = JSON.stringify(msg);
@@ -405,6 +411,7 @@ const snapshot = () => ({
   usage,
   auth: auth.status(),
   leaderboard: board.status(),
+  economy: economy.status(),
   links: links.status(),
   visitors: links.visiting(),
   procs,
@@ -653,6 +660,7 @@ const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
   'mcp__office__restart_office', 'mcp__office__clear_context', 'mcp__office__attach_files',
+  'mcp__office__office_shop', 'mcp__office__buy_item',
 ];
 // A guest's job can see who is in and ask the boss, nothing more: no
 // messaging colleagues, handing off or channels. Enforced again in agentApi,
@@ -945,6 +953,7 @@ function onLine(job, line) {
     board.addTokens((u.input_tokens || 0) + (u.output_tokens || 0));
     guests.addTokens(job, (u.input_tokens || 0) + (u.output_tokens || 0));
     board.addTime(e.duration_ms);
+    if (!job.guest) economy.accrue(job, e.duration_ms, job.model);
     nudgeUsage();
     job.denials = [...new Set((e.permission_denials || []).map((d) => d.tool_name))];
     const ok = e.subtype === 'success' && !e.is_error;
@@ -1029,6 +1038,17 @@ function adoptNewProject(job) {
   return true;
 }
 
+// What a finished job earned, said where the office can see it. Milestones
+// go to the chill room, since they are the office's news, not the work's.
+function payday(job) {
+  const { pay, achievements } = economy.pay(job);
+  if (pay) pushJob(job);
+  for (const a of achievements) announceAchievement(job.agentId, a);
+}
+function announceAchievement(agentId, a) {
+  post('chief', `🏅 ${nameOf(agentId)} unlocked **${a.name}**: ${a.blurb} (+${a.bonus} coins)`, { kind: 'achievement', channel: CHILL, thread: null });
+}
+
 function finish(job, status, error) {
   if (job.status !== 'working') return;
   clearWaits(job);
@@ -1046,12 +1066,17 @@ function finish(job, status, error) {
   const was = TIER_LABEL[tierOf(job.model)] || job.model || 'the default model';
   const retry = status === 'failed' ? bump(job) : null;
   const gained = status === 'done' && !awaiting ? 40 + Math.min(80, (job.turnTools || 0) * 4) : 0;
+  // Work that failed or was stopped earns nothing; a retry is paid on its own.
+  if (status !== 'done') Object.assign(job, { payMinutes: 0, payWeighted: 0 });
   if (status === 'done' && !awaiting) board.addJob();
   state.xp += gained;
   job.xp += gained;
   pushJob(job);
   recordChanges(job).catch(() => {}).then(() => adoptNewProject(job));
   if (job.away) guests.awayClose(job, status, job.lastTurn?.text || error || '').catch((err) => addLog(job, { kind: 'error', summary: `Could not tell @${job.away.host} the work ended: ${err.message}` }));
+  // Pay for the work, now it's finished. Not for a borrowed agent's job: the
+  // office that borrowed them isn't ours to pay out of.
+  if (gained && !job.guest) payday(job);
   if (gained) {
     const after = progress();
     send({ t: 'xp', progress: after, gained, jobId: job.id, agentId: job.agentId, levelUp: after.level > before.level });
@@ -1790,7 +1815,14 @@ function officePrompt(agentId, job) {
     `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. To show the boss an image or file (a screenshot, say), attach_files with absolute paths, then say it in your reply: it goes on your next message to them. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
     `When your context has grown heavy and you are between steps, clear_context with notes to yourself lets you resume fresh and cheaper. ` +
     `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
-    `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId) + recentWork(agentId, job);
+    `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + payNote(agentId) + standupBrief(agentId) + recentWork(agentId, job);
+}
+
+// Only said when there is something to spend it on, so it costs nothing to
+// an agent who can't afford anything yet.
+function payNote(agentId) {
+  if (!economy.affordable(agentId).length) return '';
+  return ` You are paid for finished work, more for doing it on a lighter model, and have ${economy.wallet(agentId)} coins: office_shop and buy_item get you something for your desk, but only once the work is done.`;
 }
 
 // Survives a cleared context: what this agent was last working on, so
@@ -1913,6 +1945,23 @@ const agentApi = {
     if (staged.length + paths.length > MAX_ATTACH) throw new Error(`At most ${MAX_ATTACH} files go on one message.`);
     for (const p of paths) staged.push(stageFile(p));
     return `${staged.length} file${staged.length === 1 ? '' : 's'} will go with your next message to the boss (your final reply, a flag, or a channel post). Nothing is sent yet.`;
+  },
+
+  office_shop(me) {
+    const id = me.agentId;
+    const mine = economy.books.desks[id] || [];
+    const lines = [`You have ${economy.wallet(id)} coins. The office pot has ${economy.books.pot}.`,
+      `Pay: ${PAY.perMinute} coins an active minute plus ${PAY.finishBonus} for finishing, times 3 on Haiku, 1.75 on Sonnet, 1 on Opus. ${Math.round(PAY.potShare * 100)}% goes to the office pot.`,
+      'For your desk (buy_item with the id):'];
+    for (const i of ITEMS.filter((x) => x.scope === 'desk')) lines.push(`- ${i.id}: ${i.name}, ${i.price} coins${mine.includes(i.id) ? ' (yours already)' : ''}`);
+    return lines.join('\n');
+  },
+
+  buy_item(me, { item }) {
+    const { buy, achievements } = economy.buy(String(item || ''), { by: me.agentId });
+    for (const a of achievements) announceAchievement(me.agentId, a);
+    post(me.agentId, `Treated myself to a ${buy.title.toLowerCase()} for my desk. ${itemById(buy.item).icon || ''}`.trim(), { kind: 'purchase', channel: CHILL, thread: null });
+    return `Bought: ${buy.title}, on your desk now. ${economy.wallet(me.agentId)} coins left.`;
   },
 
   flag_for_boss(me, { kind, summary }) {
@@ -2523,6 +2572,30 @@ const server = http.createServer(async (req, res) => {
       let p;
       try { p = updateProfile(parts[2], await readBody(req)); } catch (err) { return json(res, 400, { error: err.message }); }
       return p ? json(res, 200, p) : json(res, 404, { error: 'No such agent.' });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/economy') return json(res, 200, economy.status());
+    if (req.method === 'POST' && url.pathname === '/api/economy/buy') {
+      const body = await readBody(req);
+      const forAgent = body.for ? STAFF.find((x) => x.id === body.for)?.id : undefined;
+      if (body.for && !forAgent) return json(res, 400, { error: 'No such colleague.' });
+      try {
+        const { buy } = economy.buy(String(body.item || ''), { by: 'boss', forAgent });
+        if (forAgent) post('chief', `🎁 ${owner() || 'The boss'} got ${nameOf(forAgent)} a ${buy.title.toLowerCase()} for their desk, out of the office pot.`, { kind: 'purchase', channel: CHILL, thread: null });
+        return json(res, 201, economy.status());
+      } catch (err) { return json(res, 400, { error: err.message }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/economy/use') {
+      try { economy.use(String((await readBody(req)).item || '')); return json(res, 200, economy.status()); } catch (err) { return json(res, 400, { error: err.message }); }
+    }
+    if (req.method === 'POST' && url.pathname === '/api/economy/kudos') {
+      const { jobId } = await readBody(req);
+      const job = state.jobs.find((j) => j.id === jobId);
+      try {
+        const { pay, achievements } = economy.kudos(job);
+        for (const a of achievements) announceAchievement(job.agentId, a);
+        post('chief', `👏 Kudos from ${owner() || 'the boss'} to ${nameOf(job.agentId)} for "${clip(job.title, 80)}" (+${pay?.gross || 0} coins)`, { kind: 'kudos', channel: GENERAL, thread: null, jobId: job.id });
+        return json(res, 200, economy.status());
+      } catch (err) { return json(res, 400, { error: err.message }); }
     }
     if (req.method === 'POST' && url.pathname === '/api/standup') { runStandup(true); return json(res, 202, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/restart') {
