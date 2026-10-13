@@ -4,7 +4,7 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.1 — 2026-10-13
 
 ### Added
 - Agents no longer leave processes running. Whatever a job started and left behind (dev servers, watchers, background test runs, test copies of a server) is stopped when the job ends. An agent can keep one with the new `keep_running` tool, and you are told what was kept and how to stop it.
