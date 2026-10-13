@@ -2835,6 +2835,7 @@ const server = http.createServer(async (req, res) => {
         if (req.method === 'POST' && parts[2] && parts[3] === 'guest') {
           const out = links.setGuest(parts[2], (await readBody(req)).guest);
           visits?.policyChanged(parts[2], links.saved.guests[parts[2]]);
+          guests.policyChanged(parts[2]);
           return json(res, 200, out);
         }
       } catch (err) { return linkErr(err); }

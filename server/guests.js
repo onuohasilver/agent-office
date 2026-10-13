@@ -210,6 +210,17 @@ export class Guests {
     return mode;
   }
 
+  // A job's mode, lowered to what the host allows now.
+  lowerMode(p, mode) {
+    return CLEARANCE.includes(mode) && CLEARANCE.indexOf(mode) <= CLEARANCE.indexOf(p.clearance) ? mode : p.clearance;
+  }
+
+  // Which of our agents may take the job: only those still lent to the guest.
+  lend(job, p) {
+    job.pool = p.agents || undefined;
+    if (p.agents && job.wantAgent && !p.agents.includes(job.wantAgent)) job.wantAgent = null;
+  }
+
   checkTokens(link, p) {
     if (this.tokensToday(link.id) >= p.tokensPerDay) throw fail(429, 'You have used today’s tokens for this office. They reset at midnight UTC.');
   }
@@ -270,8 +281,12 @@ export class Guests {
       case 'reply': {
         if (p.ourAgents === false) throw fail(403, 'This office doesn’t lend its agents any more.');
         const job = this.ownJob(link, args.job);
-        const mode = args.mode === undefined ? undefined : this.capMode(p, args.mode);
+        // Held to the host's limits as they are now: a job started at Full
+        // autonomy, in a project since unshared, doesn't carry on as it was.
+        const mode = args.mode === undefined ? this.lowerMode(p, job.mode) : this.capMode(p, args.mode);
+        if (!job.away && !p.repos.includes(job.repo)) throw fail(403, 'That project isn’t shared with you any more.');
         this.checkTokens(link, p);
+        this.lend(job, p);
         this.office.replyJob(job, { message: String(args.text ?? '').slice(0, MAX_PROMPT), mode });
         return { ok: true };
       }
@@ -299,6 +314,23 @@ export class Guests {
     const r = e.repos.find((x) => same(x, repo));
     if (!r) throw fail(403, `You haven’t shared ${repo} with @${this.links.status().handle || 'us'}. Add it where we’re your guest.`);
     return { link: e.link, host: e.host, repo: r, access: e.theirAgents };
+  }
+
+  // The host changed a guest's limits: open jobs the new ones rule out stop,
+  // and queued ones drop to the clearance and agents now allowed. A running
+  // session can't change its mode, so one above the new clearance stops too.
+  policyChanged(linkId) {
+    const p = this.links.guestPolicy(linkId);
+    for (const job of this.jobsOf(linkId, true)) {
+      const why = !p || p.ourAgents === false ? 'This office stopped lending its agents.'
+        : !job.away && !p.repos.includes(job.repo) ? 'That project isn’t shared with the guest any more.'
+        : job.status === 'working' && this.lowerMode(p, job.mode) !== job.mode ? 'The host lowered what this guest’s jobs may do.'
+        : job.status === 'working' && p.agents && !p.agents.includes(job.agentId) ? 'That agent isn’t lent to this guest any more.'
+        : null;
+      if (why) { this.office.stopJob(job, `Stopped: ${why}`); continue; }
+      job.mode = this.lowerMode(p, job.mode);
+      this.lend(job, p);
+    }
   }
 
   // Tokens a guest job used: counted against its guest, and a guest over its
