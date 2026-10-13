@@ -1211,6 +1211,11 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .sw-face + .sw-face { margin-left: -6px; }
 .sw-bonus { font-size: 12.5px; color: var(--ink-2); }
 
+.shop-rich { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.shop-rich li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
+.shop-rich li.top { border-color: #f2c14e; box-shadow: 0 0 0 1px #f2c14e33; }
+.sr-rank { flex: none; width: 24px; text-align: center; font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sr-worth { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
 .shop-ledger { list-style: none; margin: 0; padding: 0; }
 .shop-ledger li { display: flex; align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
 .sl-text { flex: 1; min-width: 0; font-size: 13px; color: var(--ink-2); line-height: 1.4; }

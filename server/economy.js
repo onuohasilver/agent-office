@@ -192,9 +192,23 @@ export class Economy {
     return ITEMS.filter((i) => i.scope === 'desk' && i.price <= this.wallet(agentId) && !this.owns(i, agentId));
   }
 
+  // Net worth is what an agent holds plus what they have bought for their
+  // desk, at shop price. Ties go to whoever has earned more over their time.
+  richList() {
+    const b = this.b;
+    const ids = new Set([...Object.keys(b.wallets), ...Object.keys(b.desks), ...Object.keys(b.stats)]);
+    return [...ids].map((id) => {
+      const wallet = this.wallet(id);
+      const desk = (b.desks[id] || []).reduce((a, x) => a + (itemById(x)?.price || 0), 0);
+      const st = b.stats[id] || {};
+      return { id, worth: wallet + desk, wallet, desk, earned: st.earned || 0, jobs: st.jobs || 0 };
+    }).sort((a, c) => c.worth - a.worth || c.earned - a.earned || a.id.localeCompare(c.id));
+  }
+
   status() {
     const b = this.b;
     return {
+      rich: this.richList(),
       pot: b.pot, wallets: b.wallets, stats: b.stats, desks: b.desks, office: b.office, using: b.using,
       achievements: b.achievements, kudos: b.kudos.slice(-200), ledger: b.ledger.slice(-60),
     };

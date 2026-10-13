@@ -191,5 +191,18 @@ test('damaged books from an old or hand-edited state.json load safely', () => {
   assert.ok(Number.isFinite(e.books.pot));
 });
 
+test('the rich list ranks by wallet plus desk, ties by lifetime earnings', () => {
+  const e = make();
+  for (const id of ['mira', 'val']) { const j = { ...job(), agentId: id }; e.accrue(j, 600000, 'sonnet'); e.pay(j); }
+  const j2 = { ...job(), agentId: 'val' }; e.accrue(j2, 600000, 'sonnet'); e.pay(j2);
+  const before = e.richList();
+  assert.equal(before[0].id, 'val');
+  e.buy('mug', { by: 'val' });
+  const after = e.richList().find((r) => r.id === 'val');
+  assert.ok(after.worth >= before[0].worth, 'buying for the desk should not lower net worth (a first purchase may pay a bonus)');
+  assert.equal(after.desk, 20);
+  assert.deepEqual(e.status().rich.map((r) => r.id), e.richList().map((r) => r.id));
+});
+
 console.log(`\n${n - failed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -26,6 +26,7 @@ const TIER = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 
 const TABS = [
   ['desks', 'Desks'],
+  ['rich', 'Rich list'],
   ['office', 'Office'],
   ['looks', 'Looks'],
   ['wins', 'Achievements'],
@@ -114,6 +115,22 @@ function looksPane() {
     + section('floor', 'Floor') + section('wall', 'Walls');
 }
 
+function richPane() {
+  const people = hired();
+  if (!people.length) return '<p class="shop-empty">Nobody’s hired yet.</p>';
+  const by = new Map((econ.rich || []).map((r) => [r.id, r]));
+  const rows = people.map((s) => ({ s, ...(by.get(s.id) || { worth: 0, wallet: 0, desk: 0, earned: 0, jobs: 0 }) }))
+    .sort((a, b) => b.worth - a.worth || b.earned - a.earned);
+  const total = rows.reduce((a, r) => a + r.worth, 0);
+  return `<p class="shop-lede">Net worth is coins in hand plus what’s on the desk, at shop price. The team holds ${coins(total)} between them.</p>
+    <ol class="shop-rich">${rows.map((r, i) => `<li class="${i === 0 && r.worth > 0 ? 'top' : ''}">
+      <span class="sr-rank" aria-label="Rank ${i + 1}">${i === 0 && r.worth > 0 ? '👑' : i + 1}</span>
+      <span class="sp-face">${portrait(r.s)}</span>
+      <span class="sp-who"><b>${esc(r.s.name)}</b><small>${n(r.wallet)} in hand · ${n(r.desk)} on the desk · ${n(r.jobs)} job${r.jobs === 1 ? '' : 's'}</small></span>
+      ${coins(r.worth, 'sr-worth')}
+    </li>`).join('')}</ol>`;
+}
+
 function winsPane() {
   const got = econ.achievements || {};
   return `<p class="shop-lede">Each pays a one-off bonus, split with the pot like any pay.</p>
@@ -161,7 +178,7 @@ function ledgerPane() {
   }).join('')}</ul>` : '<p class="shop-empty">Nothing yet. The first finished job starts the books.</p>'}`;
 }
 
-const PANES = { desks: desksPane, office: officePane, looks: looksPane, wins: winsPane, ledger: ledgerPane };
+const PANES = { desks: desksPane, rich: richPane, office: officePane, looks: looksPane, wins: winsPane, ledger: ledgerPane };
 
 // ---------- drawing ----------
 
