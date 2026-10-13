@@ -218,5 +218,63 @@ test('the pay rate set in Settings changes what the next job pays', () => {
   } finally { setPay(was); }
 });
 
+// ---- weekly movers on the rich list ----
+const earn = (e, id, min) => { const j = { ...job(), agentId: id }; e.accrue(j, min * 60000, 'sonnet'); e.pay(j); };
+const row = (e, id) => e.status().rich.find((r) => r.id === id);
+
+test('movers: old books without weekly load, and the first week shows no movement', () => {
+  const old = emptyBooks(); delete old.weekly;
+  const e = new Economy(old, { now: () => now });
+  earn(e, 'mira', 10); earn(e, 'val', 5);
+  const s = e.status();
+  assert.equal(s.week.first, true);
+  assert.ok(s.rich.every((r) => r.moved === null && !r.comeback), 'first week should have no arrows or badge');
+  for (const bad of [null, 5, [], { start: 'x', ranks: 3 }]) {
+    const e2 = new Economy({ ...emptyBooks(), weekly: bad }, { now: () => now });
+    assert.doesNotThrow(() => e2.status());
+  }
+});
+
+test('movers: after a week, places moved, the Comeback badge and rivals', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20); earn(e, 'amara', 10); earn(e, 'kai', 5);
+  const order = () => e.status().rich.map((r) => r.id).join();
+  assert.equal(order(), 'mira,val,amara,kai');
+  now += 7 * 86400000; // next week: the snapshot rolls on the first look
+  assert.equal(e.status().week.first, false, 'the second snapshot is a real one');
+  assert.ok(e.status().rich.every((r) => r.moved === 0));
+  earn(e, 'kai', 90); // kai climbs from 4th to 1st
+  const s = e.status();
+  assert.equal(s.rich[0].id, 'kai');
+  assert.equal(row(e, 'kai').moved, 3);
+  assert.equal(row(e, 'mira').moved, -1);
+  assert.deepEqual(s.rich.filter((r) => r.comeback).map((r) => r.id), ['kai']);
+  assert.equal(row(e, 'kai').rival.above, null);
+  assert.equal(row(e, 'kai').rival.below.id, 'mira');
+  assert.equal(row(e, 'mira').rival.above.gap, row(e, 'kai').worth - row(e, 'mira').worth);
+  assert.equal(row(e, 'mira').rival.above.id, 'kai');
+});
+
+test('movers: nobody climbed means no badge; a new arrival has no arrow', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20);
+  e.status(); now += 7 * 86400000; e.status();
+  assert.ok(e.status().rich.every((r) => !r.comeback));
+  earn(e, 'zola', 1);
+  assert.equal(row(e, 'zola').moved, null);
+  assert.equal(row(e, 'zola').comeback, false);
+});
+
+test('movers: the snapshot survives a restart and stays put within the week', () => {
+  const e = make();
+  earn(e, 'mira', 30); earn(e, 'val', 20);
+  e.status(); now += 7 * 86400000; e.status();
+  const saved = JSON.parse(JSON.stringify(e.books));
+  const e2 = new Economy(saved, { now: () => now + 3600000 });
+  earn(e2, 'val', 100);
+  assert.equal(row(e2, 'val').moved, 1);
+  assert.equal(e2.books.weekly.start, saved.weekly.start, 'the snapshot was retaken mid-week');
+});
+
 console.log(`\n${n - failed} passed, ${failed} failed`);
 if (failed) process.exit(1);

@@ -1245,6 +1245,11 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .shop-rich li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); }
 .shop-rich li.top { border-color: #f2c14e; box-shadow: 0 0 0 1px #f2c14e33; }
 .sr-rank { flex: none; width: 24px; text-align: center; font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sr-move { flex: none; min-width: 28px; text-align: center; font-size: 12px; font-weight: 700; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.sr-move.up { color: #2f9e5b; }
+.sr-move.down { color: #d6453d; }
+.sr-rival { display: block; font-style: italic; }
+.sr-comeback { flex: none; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; background: #f2c14e33; color: #8a6200; border: 1px solid #f2c14e; }
 .sr-worth { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums; }
 .shop-ledger { list-style: none; margin: 0; padding: 0; }
 .shop-ledger li { display: flex; align-items: baseline; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }

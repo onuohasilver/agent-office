@@ -13,10 +13,12 @@
 import { PAY, ITEMS, ACHIEVEMENTS, DEFAULTS, SINGLE, itemById, modelPay, modelTier, split, naira } from '../shared/shop.js';
 
 const LEDGER_MAX = 400;
+// Weeks start on Monday 00:00 UTC (1970-01-01 was a Thursday).
+const weekStart = (ms) => { const d = Math.floor(ms / 86400000); return (d - ((d + 3) % 7)) * 86400000; };
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 export function emptyBooks() {
-  return { wallets: {}, pot: 0, stats: {}, desks: {}, office: [], using: { ...DEFAULTS }, achievements: {}, kudos: [], ledger: [], totals: { earned: 0, spent: 0 } };
+  return { wallets: {}, pot: 0, stats: {}, desks: {}, office: [], using: { ...DEFAULTS }, achievements: {}, kudos: [], ledger: [], weekly: {}, totals: { earned: 0, spent: 0 } };
 }
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -192,6 +194,22 @@ export class Economy {
     return ITEMS.filter((i) => i.scope === 'desk' && i.price <= this.wallet(agentId) && !this.owns(i, agentId));
   }
 
+  // The rank each agent held when the week began, kept in the books so a
+  // restart doesn't lose it. Older state has none: the first look takes one,
+  // and from then on it rolls over every Monday.
+  rollWeek() {
+    const w = this.b.weekly;
+    const start = weekStart(this.now());
+    const ok = isNum(w.start) && isObj(w.ranks);
+    if (ok && w.start >= start) return w;
+    const ranks = {};
+    this.richList().forEach((r, i) => { ranks[r.id] = i + 1; });
+    // The very first snapshot has nothing to compare against, so it is
+    // marked `first` and shows no movement until a week has passed.
+    this.b.weekly = { start, ranks, first: !ok };
+    return this.b.weekly;
+  }
+
   // Net worth is what an agent holds plus what they have bought for their
   // desk, at shop price. Ties go to whoever has earned more over their time.
   richList() {
@@ -205,10 +223,34 @@ export class Economy {
     }).sort((a, c) => c.worth - a.worth || c.earned - a.earned || a.id.localeCompare(c.id));
   }
 
+  // The rich list with the week's movement: `moved` is places climbed since
+  // the week began (negative for places lost), `rival` the agents just above
+  // and below with the gap in naira, and `comeback` marks whoever climbed
+  // most (ties go to the higher rank; nobody if nobody climbed). Agents who
+  // joined the list this week, and the whole list in the first week, have
+  // `moved: null`.
+  weekly() {
+    const w = this.rollWeek();
+    const list = this.richList();
+    const rows = list.map((r, i) => {
+      const was = !w.first && isNum(w.ranks[r.id]) ? w.ranks[r.id] : null;
+      const above = list[i - 1], below = list[i + 1];
+      return {
+        ...r, rank: i + 1, was, moved: was === null ? null : was - (i + 1),
+        rival: { above: above ? { id: above.id, gap: above.worth - r.worth } : null, below: below ? { id: below.id, gap: r.worth - below.worth } : null },
+        comeback: false,
+      };
+    });
+    const best = rows.reduce((m, r) => (r.moved > (m?.moved || 0) ? r : m), null);
+    if (best) best.comeback = true;
+    return { since: w.start, first: !!w.first, rows };
+  }
+
   status() {
+    const wk = this.weekly();
     const b = this.b;
     return {
-      rich: this.richList(), pay: { perMinute: PAY.perMinute, finishBonus: PAY.finishBonus },
+      rich: wk.rows, week: { since: wk.since, first: wk.first }, pay: { perMinute: PAY.perMinute, finishBonus: PAY.finishBonus },
       pot: b.pot, wallets: b.wallets, stats: b.stats, desks: b.desks, office: b.office, using: b.using,
       achievements: b.achievements, kudos: b.kudos.slice(-200), ledger: b.ledger.slice(-60),
     };
