@@ -92,6 +92,10 @@ export class Agent {
     if (/^#[0-9a-f]{3,8}$/i.test(staff.shirt ?? '')) dot.style.background = staff.shirt;
     this.nameText = document.createTextNode(String(staff.name ?? ''));
     name.append(dot, this.nameText);
+    this.perkEl = document.createElement('span');
+    this.perkEl.className = 'perk';
+    this.perkEl.hidden = true;
+    name.append(this.perkEl);
     this.label.append(bubble, name);
     this.bubbleEl = this.label.querySelector('.bubble');
     labels.appendChild(this.label);
@@ -103,6 +107,16 @@ export class Agent {
   rename(name) {
     this.name = name;
     this.nameText.data = name;
+    this.labelDirty = true;
+  }
+
+  // Title and streak on the name tag, from the economy's books.
+  setPerks(p) {
+    const text = p ? `${p.title}${p.streak >= 2 ? ` 🔥${p.streak}` : ''}` : '';
+    if (this.perkEl.textContent === text) return;
+    this.perkEl.textContent = text;
+    this.perkEl.hidden = !text;
+    this.perkEl.title = p ? `Level ${p.n} ${p.title}${p.streak >= 2 ? `, ${p.streak}-day streak${p.boost ? ` (+${Math.round(p.boost * 100)}% wage)` : ''}` : ''}` : '';
     this.labelDirty = true;
   }
 

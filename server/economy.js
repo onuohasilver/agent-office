@@ -10,7 +10,7 @@
 // the office, and every change to a balance goes through credit() or charge()
 // and leaves a line in the ledger, so the books always add up.
 
-import { PAY, ITEMS, ACHIEVEMENTS, DEFAULTS, SINGLE, itemById, modelPay, modelTier, split, naira } from '../shared/shop.js';
+import { PAY, ITEMS, ACHIEVEMENTS, DEFAULTS, SINGLE, itemById, levelOf, streakBoost, TIP, modelPay, modelTier, split, naira } from '../shared/shop.js';
 
 const LEDGER_MAX = 400;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
@@ -97,18 +97,24 @@ export class Economy {
     // finish bonus, the job count and the milestones are for the first finish.
     const again = !!job.payCounted;
     job.payCounted = true;
-    const e = this.credit(job.agentId, q.wage + (again ? 0 : q.bonus), { kind: 'pay', jobId: job.id, title: job.title, minutes: Math.round(q.minutes * 10) / 10, tier: q.tier, mult: q.mult });
+    const s = this.statsOf(job.agentId);
+    let boost = 0;
+    if (!again) {
+      // The day's first finish keeps or restarts the streak, and the
+      // streak lifts this job's wage.
+      const today = day(this.now());
+      if (s.lastDay !== today) {
+        const yesterday = day(this.now() - 86400000);
+        s.streak = s.lastDay === yesterday ? s.streak + 1 : 1;
+        s.lastDay = today;
+      }
+      boost = streakBoost(s.streak);
+    }
+    const e = this.credit(job.agentId, q.wage * (1 + boost) + (again ? 0 : q.bonus), { kind: 'pay', jobId: job.id, title: job.title, minutes: Math.round(q.minutes * 10) / 10, tier: q.tier, mult: q.mult, ...(boost ? { streak: s.streak, boost } : {}) });
     if (e) job.earned = (job.earned || 0) + e.gross;
     if (again) return { pay: e, achievements: this.milestones(job.agentId) };
-    const s = this.statsOf(job.agentId);
     s.jobs++;
     if (q.tier) s.byTier[q.tier] = (s.byTier[q.tier] || 0) + 1;
-    const today = day(this.now());
-    if (s.lastDay !== today) {
-      const yesterday = day(this.now() - 86400000);
-      s.streak = s.lastDay === yesterday ? s.streak + 1 : 1;
-      s.lastDay = today;
-    }
     const won = this.milestones(job.agentId, q);
     return { pay: e, achievements: won };
   }
@@ -177,6 +183,27 @@ export class Economy {
     return { buy: e, achievements: won };
   }
 
+  // The boss tips an agent out of the pot. A plain transfer: it is not
+  // earned, so it neither splits nor counts toward totals.
+  tip(agentId, amount) {
+    const n = Math.floor(Number(amount));
+    if (!agentId) throw new Error('Say who the tip is for.');
+    if (!(n >= TIP.min && n <= TIP.max)) throw new Error(`A tip is between ${naira(TIP.min)} and ${naira(TIP.max)}.`);
+    if (this.b.pot < n) throw new Error(`The pot has ${naira(this.b.pot)}.`);
+    this.b.pot -= n;
+    this.b.wallets[agentId] = this.wallet(agentId) + n;
+    return this.record({ kind: 'tip', agentId, amount: n, by: 'boss', title: 'Tip from the boss' });
+  }
+
+  // Title and streak, per agent. A streak only counts while it is alive:
+  // finished a job today or yesterday.
+  perks(id) {
+    const st = this.b.stats[id] || {};
+    const live = st.lastDay === day(this.now()) || st.lastDay === day(this.now() - 86400000);
+    const streak = live ? st.streak || 0 : 0;
+    return { ...levelOf(st.earned || 0), streak, boost: streakBoost(streak) };
+  }
+
   // Switch to a floor, wall or layout the office owns.
   use(itemId) {
     const item = itemById(itemId);
@@ -208,7 +235,7 @@ export class Economy {
   status() {
     const b = this.b;
     return {
-      rich: this.richList(), pay: { perMinute: PAY.perMinute, finishBonus: PAY.finishBonus },
+      rich: this.richList().map((r) => ({ ...r, ...this.perks(r.id) })), pay: { perMinute: PAY.perMinute, finishBonus: PAY.finishBonus },
       pot: b.pot, wallets: b.wallets, stats: b.stats, desks: b.desks, office: b.office, using: b.using,
       achievements: b.achievements, kudos: b.kudos.slice(-200), ledger: b.ledger.slice(-60),
     };

@@ -2678,6 +2678,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/economy/use') {
       try { economy.use(String((await readBody(req)).item || '')); return json(res, 200, economy.status()); } catch (err) { return json(res, 400, { error: err.message }); }
     }
+    if (req.method === 'POST' && url.pathname === '/api/economy/tip') {
+      const { agentId, amount } = await readBody(req);
+      try {
+        if (!onFloor().some((x) => x.id === agentId)) throw new Error('They are not on the floor right now.');
+        const e = economy.tip(agentId, amount);
+        post('chief', `💸 ${owner() || 'The boss'} tipped ${nameOf(agentId)} ${naira(e.amount)} from the pot`, { kind: 'kudos', channel: GENERAL, thread: null });
+        return json(res, 200, economy.status());
+      } catch (err) { return json(res, 400, { error: err.message }); }
+    }
     if (req.method === 'POST' && url.pathname === '/api/economy/kudos') {
       const { jobId } = await readBody(req);
       const job = state.jobs.find((j) => j.id === jobId);

@@ -103,3 +103,25 @@ export const ACHIEVEMENTS = [
   { id: 'big-earner', name: 'Big earner', blurb: 'Earned ₦200,000 in all.', bonus: 20000, test: (s) => s.earned >= 200000 },
   { id: 'shopper', name: 'Treat yourself', blurb: 'Bought something for the desk.', bonus: 1500, test: (s) => s.bought >= 1 },
 ];
+
+// Titles, from lifetime earnings. Shown on the name tag and in the chat.
+export const LEVELS = [
+  { at: 0, title: 'Intern' },
+  { at: 25000, title: 'Associate' },
+  { at: 100000, title: 'Specialist' },
+  { at: 300000, title: 'Senior' },
+  { at: 800000, title: 'Principal' },
+  { at: 2000000, title: 'Distinguished' },
+];
+export function levelOf(earned) {
+  let n = 0;
+  LEVELS.forEach((l, i) => { if ((Number(earned) || 0) >= l.at) n = i; });
+  return { n: n + 1, title: LEVELS[n].title, next: LEVELS[n + 1]?.at ?? null };
+}
+
+// A streak of working days lifts the wage (not the finish bonus).
+export const STREAK_BOOST = [{ days: 14, boost: 0.2 }, { days: 7, boost: 0.1 }, { days: 3, boost: 0.05 }];
+export const streakBoost = (days) => STREAK_BOOST.find((b) => days >= b.days)?.boost || 0;
+
+// What a boss may tip from the pot in one go.
+export const TIP = { min: 500, max: 50000, presets: [1000, 5000, 20000] };

@@ -152,7 +152,7 @@ function line(e) {
   switch (e.kind) {
     case 'pay': return {
       text: `<b>${esc(name(e.agentId))}</b> was paid for ${t}`,
-      sub: [e.minutes != null && `${e.minutes} active min`, e.tier && `${TIER[e.tier] || e.tier} ×${e.mult}`, `${n(e.agent)} kept, ${n(e.pot)} to the pot`].filter(Boolean).join(' · '),
+      sub: [e.minutes != null && `${e.minutes} active min`, e.tier && `${TIER[e.tier] || e.tier} ×${e.mult}`, e.boost && `🔥 ${e.streak}-day streak +${Math.round(e.boost * 100)}% wage`, `${n(e.agent)} kept, ${n(e.pot)} to the pot`].filter(Boolean).join(' · '),
       amt: `+${n(e.gross)}`, cls: 'in',
     };
     case 'achievement': return { text: `<b>${esc(name(e.agentId))}</b> unlocked ${esc(e.title)}`, sub: `${n(e.agent)} kept, ${n(e.pot)} to the pot`, amt: `+${n(e.gross)}`, cls: 'in' };
@@ -165,6 +165,7 @@ function line(e) {
         : `<b>${esc(name(e.by))}</b> bought ${what} for their desk`;
       return { text, sub: e.from === 'pot' ? 'From the pot' : 'From their wallet', amt: e.price ? `−${n(e.price)}` : '', cls: 'out' };
     }
+    case 'tip': return { text: `You tipped <b>${esc(name(e.agentId))}</b>`, sub: 'From the pot', amt: `−${n(e.amount)}`, cls: 'out' };
     case 'use': return { text: `Switched to ${esc(e.title)}`, sub: '', amt: '', cls: '' };
     default: return { text: esc(e.title || e.kind), sub: '', amt: '', cls: '' };
   }

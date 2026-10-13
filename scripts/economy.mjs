@@ -218,5 +218,50 @@ test('the pay rate set in Settings changes what the next job pays', () => {
   } finally { setPay(was); }
 });
 
+test('a tip moves money from the pot to the agent and the books still balance', () => {
+  const e = make();
+  const j = job(); e.accrue(j, 600000, 'opus'); e.pay(j);
+  const pot = e.books.pot, w = e.wallet('mira');
+  const rec = e.tip('mira', 1000);
+  assert.equal(e.books.pot, pot - 1000);
+  assert.equal(e.wallet('mira'), w + 1000);
+  assert.equal(rec.kind, 'tip');
+  balanced(e);
+  assert.throws(() => e.tip('mira', 10), /between/);
+  assert.throws(() => e.tip('mira', 10_000_000), /between/);
+  assert.throws(() => e.tip('mira', 50000), /pot has/);
+  assert.throws(() => e.tip('', 1000), /who/);
+  assert.equal(e.books.pot, pot - 1000, 'a refused tip moved money');
+});
+
+test('levels follow lifetime earnings', () => {
+  const e = make();
+  assert.equal(e.perks('mira').title, 'Intern');
+  e.statsOf('mira').earned = 120000;
+  assert.equal(e.perks('mira').title, 'Specialist');
+});
+
+test('a live streak lifts the wage, a lapsed one does not', () => {
+  const run = (days) => {
+    const e = make();
+    let gross;
+    for (const d of days) {
+      now = Date.parse('2026-10-13T12:00:00Z') + d * 86400000;
+      const j = job(); e.accrue(j, 600000, 'opus'); gross = e.pay(j).pay;
+    }
+    return { e, gross };
+  };
+  const base = run([0]).gross;
+  const three = run([0, 1, 2]);
+  assert.equal(three.gross.boost, 0.05);
+  assert.ok(three.gross.gross > base.gross);
+  assert.equal(three.e.perks('mira').streak, 3);
+  const gap = run([0, 1, 3]);
+  assert.equal(gap.gross.boost, undefined, 'a broken streak still boosted');
+  now = Date.parse('2026-10-13T12:00:00Z') + 9 * 86400000;
+  assert.equal(three.e.perks('mira').streak, 0, 'a lapsed streak is still shown');
+  now = Date.parse('2026-10-13T12:00:00Z');
+});
+
 console.log(`\n${n - failed} passed, ${failed} failed`);
 if (failed) process.exit(1);

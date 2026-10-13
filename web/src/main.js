@@ -328,6 +328,7 @@ function showRich() {
   drawForbes(office.forbes, rows);
   const king = rows[0]?.worth > 0 ? rows[0].id : null;
   for (const [id, a] of app.agents) {
+    a.setPerks(by.get(id));
     if (!a.label || a.label.classList.contains('richest') === (id === king)) continue;
     a.label.classList.toggle('richest', id === king);
     a.labelDirty = true;

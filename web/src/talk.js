@@ -1,4 +1,5 @@
 import { api } from './hud.js';
+import { TIP, naira } from '../../shared/shop.js';
 
 // Click an agent and a small chat opens right above their head. It follows
 // them as they walk (and as the camera moves), answers in character through
@@ -44,7 +45,15 @@ export class AgentChat {
     send.setAttribute('aria-label', 'Send');
     form.append(this.input, send);
     this.tail = el('i', 'ac-tail');
-    this.root.append(head, this.log, form, this.tail);
+    const tips = el('div', 'ac-tips');
+    tips.append(el('span', '', 'Tip from the pot'));
+    for (const amount of TIP.presets) {
+      const b = el('button', 'ac-tip', naira(amount));
+      b.type = 'button';
+      b.onclick = () => this.tip(amount);
+      tips.append(b);
+    }
+    this.root.append(head, this.log, tips, form, this.tail);
     labels.appendChild(this.root);
 
     x.onclick = () => this.close();
@@ -97,6 +106,20 @@ export class AgentChat {
     while (this.log.children.length > 40) this.log.firstChild.remove();
     this.log.scrollTop = this.log.scrollHeight;
     return m;
+  }
+
+  async tip(amount) {
+    const agent = this.agent;
+    if (!agent || this.tipping) return;
+    this.tipping = true;
+    try {
+      await api('/api/economy/tip', { agentId: agent.id, amount });
+      if (this.agent === agent) this.add('them', `Thank you! ${naira(amount)}, that's kind.`, 'tipped');
+    } catch (err) {
+      if (this.agent === agent) this.add('them', err.message, 'bad');
+    } finally {
+      this.tipping = false;
+    }
   }
 
   async send() {
