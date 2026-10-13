@@ -16,16 +16,29 @@ const LEDGER_MAX = 400;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 export function emptyBooks() {
-  return { wallets: {}, pot: 0, stats: {}, desks: {}, office: [], using: { ...DEFAULTS }, achievements: {}, kudos: [], ledger: [] };
+  return { wallets: {}, pot: 0, stats: {}, desks: {}, office: [], using: { ...DEFAULTS }, achievements: {}, kudos: [], ledger: [], totals: { earned: 0, spent: 0 } };
 }
+
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
 
 export class Economy {
   // `books` is the stored object, filled in where older state lacks a part.
   // `onChange` gets each ledger entry as it happens, to save and broadcast.
   constructor(books, { now = () => Date.now(), onChange = () => {} } = {}) {
-    const b = books && typeof books === 'object' ? books : {};
+    const b = isObj(books) ? books : {};
     const fresh = emptyBooks();
-    for (const k of Object.keys(fresh)) if (b[k] === undefined || typeof b[k] !== typeof fresh[k]) b[k] = fresh[k];
+    // typeof says 'object' for null and arrays and 'number' for NaN, so check
+    // the real shape of each part, and start that part over if it is damaged.
+    for (const k of Object.keys(fresh)) {
+      const ok = Array.isArray(fresh[k]) ? Array.isArray(b[k]) : isObj(fresh[k]) ? isObj(b[k]) : isNum(b[k]);
+      if (!ok) b[k] = fresh[k];
+    }
+    for (const id of Object.keys(b.wallets)) if (!isNum(b.wallets[id])) b.wallets[id] = 0;
+    // Books from before the running totals: what is held now counts as earned.
+    if (!isNum(b.totals.earned) || !isNum(b.totals.spent)) {
+      b.totals = { earned: b.pot + Object.values(b.wallets).reduce((a, x) => a + x, 0), spent: 0 };
+    }
     b.using = { ...DEFAULTS, ...b.using };
     this.b = b;
     this.now = now;
@@ -52,6 +65,7 @@ export class Economy {
     if (!s.gross) return null;
     this.b.wallets[agentId] = this.wallet(agentId) + s.agent;
     this.b.pot += s.pot;
+    this.b.totals.earned += s.gross;
     this.statsOf(agentId).earned += s.gross;
     return this.record({ ...entry, agentId, gross: s.gross, agent: s.agent, pot: s.pot });
   }
@@ -79,8 +93,13 @@ export class Economy {
     const q = this.quote(job);
     job.payMinutes = 0;
     job.payWeighted = 0;
-    const e = this.credit(job.agentId, q.wage + q.bonus, { kind: 'pay', jobId: job.id, title: job.title, minutes: Math.round(q.minutes * 10) / 10, tier: q.tier, mult: q.mult });
+    // A reply can reopen a finished job. The new minutes are paid, but the
+    // finish bonus, the job count and the milestones are for the first finish.
+    const again = !!job.payCounted;
+    job.payCounted = true;
+    const e = this.credit(job.agentId, q.wage + (again ? 0 : q.bonus), { kind: 'pay', jobId: job.id, title: job.title, minutes: Math.round(q.minutes * 10) / 10, tier: q.tier, mult: q.mult });
     if (e) job.earned = (job.earned || 0) + e.gross;
+    if (again) return { pay: e, achievements: this.milestones(job.agentId) };
     const s = this.statsOf(job.agentId);
     s.jobs++;
     if (q.tier) s.byTier[q.tier] = (s.byTier[q.tier] || 0) + 1;
@@ -114,7 +133,8 @@ export class Economy {
   kudos(job) {
     if (!job || job.status !== 'done' || job.awaitingBoss) throw new Error('Only a finished job can get kudos.');
     if (job.guest) throw new Error('That job belongs to another office.');
-    if (this.b.kudos.includes(job.id)) throw new Error('That job already got kudos.');
+    if (job.kudosPaid || this.b.kudos.includes(job.id)) throw new Error('That job already got kudos.');
+    job.kudosPaid = true;
     this.b.kudos.push(job.id);
     if (this.b.kudos.length > 2000) this.b.kudos.splice(0, 1000);
     this.statsOf(job.agentId).kudos++;
@@ -143,6 +163,7 @@ export class Economy {
     if (balance < item.price) throw new Error(`${item.name} costs ${item.price} coins and ${boss ? 'the pot has' : 'you have'} ${balance}.`);
     if (boss) this.b.pot -= item.price;
     else this.b.wallets[by] = balance - item.price;
+    this.b.totals.spent += item.price;
     if (owner) (this.b.desks[owner] ||= []).push(item.id);
     else this.b.office.push(item.id);
     // Buying a new look puts it straight into use.
