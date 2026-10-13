@@ -19,7 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
-import { snapshotTree, summarize, fileDiff } from './changes.js';
+import { snapshotTree, summarize, fileDiff, noFilters } from './changes.js';
 
 export const ACCESS = ['off', 'read', 'edit'];
 const MAX_OPEN = 3; // working visits per guest link
@@ -128,7 +128,7 @@ export class Visits {
     const idx = tmpIndex();
     try {
       await git(src, ['read-tree', base], { GIT_INDEX_FILE: idx });
-      await git(src, [`--work-tree=${dir}`, 'checkout-index', '-a', '-f'], { GIT_INDEX_FILE: idx });
+      await git(src, [...await noFilters(src), `--work-tree=${dir}`, 'checkout-index', '-a', '-f'], { GIT_INDEX_FILE: idx });
     } catch (err) {
       fs.rmSync(dir, { recursive: true, force: true });
       throw fail(500, `Could not copy ${repo}: ${String(err.stderr || err.message).slice(0, 200)}`);
@@ -378,8 +378,9 @@ export class Visits {
     const idx = tmpIndex();
     try {
       await git(src, ['read-tree', v.base], { GIT_INDEX_FILE: idx });
-      await git(src, [`--work-tree=${v.dir}`, 'add', '-A'], { GIT_INDEX_FILE: idx });
-      return (await git(src, ['write-tree'], { GIT_INDEX_FILE: idx })).trim();
+      const nf = await noFilters(src);
+      await git(src, [...nf, `--work-tree=${v.dir}`, 'add', '-A'], { GIT_INDEX_FILE: idx });
+      return (await git(src, [...nf, `--work-tree=${v.dir}`, 'write-tree'], { GIT_INDEX_FILE: idx })).trim();
     } finally {
       fs.rmSync(idx, { force: true });
     }

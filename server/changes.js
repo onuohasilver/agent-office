@@ -18,6 +18,16 @@ const git = (cwd, args, env = {}) => new Promise((resolve, reject) => {
   });
 });
 
+// Clean and smudge filters are commands a project's config names, and
+// `add -A`, `write-tree` or a checkout would run them. These blank every one
+// configured, for one call: git then passes the content through as it is.
+export async function noFilters(cwd) {
+  let out = '';
+  try { out = await git(cwd, ['config', '--name-only', '--get-regexp', '^filter\\.']); } catch { return []; }
+  const names = new Set(out.split('\n').map((k) => k.match(/^filter\.(.+)\.[^.]+$/)?.[1]).filter(Boolean));
+  return [...names].flatMap((n) => [...['clean', 'smudge', 'process'].map((k) => `filter.${n}.${k}=`), `filter.${n}.required=false`].flatMap((c) => ['-c', c]));
+}
+
 // A tree sha for the working tree as it is right now, or null outside a repo.
 export async function snapshotTree(cwd) {
   const tmp = path.join(os.tmpdir(), `office-index-${process.pid}-${Math.random().toString(36).slice(2)}`);
@@ -26,8 +36,9 @@ export async function snapshotTree(cwd) {
     // Seeding from the real index keeps `add -A` quick on a big tree.
     try { fs.copyFileSync(real, tmp); } catch {}
     const env = { GIT_INDEX_FILE: tmp };
-    await git(cwd, ['add', '-A'], env);
-    return (await git(cwd, ['write-tree'], env)).trim();
+    const nf = await noFilters(cwd);
+    await git(cwd, [...nf, 'add', '-A'], env);
+    return (await git(cwd, [...nf, 'write-tree'], env)).trim();
   } catch {
     return null;
   } finally {
