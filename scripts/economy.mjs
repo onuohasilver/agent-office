@@ -9,8 +9,12 @@ import { PAY, split } from '../shared/shop.js';
 let now = Date.parse('2026-10-13T12:00:00Z');
 const make = () => new Economy(emptyBooks(), { now: () => now });
 const job = (over = {}) => ({ id: 'j' + Math.random().toString(36).slice(2, 7), agentId: 'mira', title: 'A job', model: 'sonnet', status: 'done', ...over });
-let n = 0;
-const test = (name, fn) => { fn(); n++; console.log(`ok ${n} ${name}`); };
+let n = 0, failed = 0;
+const test = (name, fn) => {
+  n++;
+  try { fn(); console.log(`ok ${n} ${name}`); }
+  catch (err) { failed++; console.log(`not ok ${n} ${name}\n  ${String(err.message).split('\n').join('\n  ')}`); }
+};
 
 // Every coin is accounted for: what's in the wallets and the pot is what was
 // earned, less what was spent.
@@ -119,4 +123,73 @@ test('old state without books is filled in', () => {
   assert.ok(Array.isArray(books.ledger));
 });
 
-console.log(`\n${n} passed`);
+// Adversarial pass (Tolu). Each of these is a way to make coins appear,
+// count twice, or stop the books being checkable.
+
+test('a job reopened by a reply pays its new minutes, not a second finish bonus', () => {
+  // finish() calls payday() each time the job ends done, and a boss reply or
+  // a colleague's message_colleague reopens a recently finished job. A
+  // one-word "thanks!" on a Haiku job paid 76 coins again in a live office.
+  const e = make();
+  const j = job({ model: 'haiku' });
+  e.accrue(j, 3 * 60000, 'haiku');
+  e.pay(j);
+  e.accrue(j, 1000, 'haiku'); // the reopened turn: one second
+  const again = e.pay(j);
+  const wage = Math.round((1000 / 60000) * 3 * PAY.perMinute);
+  assert.equal(again.pay?.gross || 0, wage, 'the finish bonus was paid a second time');
+  assert.equal(e.statsOf('mira').jobs, 1, 'one job counted as two');
+  balanced(e);
+});
+
+test('reopening a job cannot farm job-count milestones', () => {
+  const e = make();
+  const j = job({ model: 'haiku' });
+  for (let i = 0; i < 10; i++) { e.accrue(j, 1000, 'haiku'); e.pay(j); }
+  const have = e.books.achievements.mira || [];
+  assert.ok(!have.includes('ten-jobs'), 'Regular unlocked by one job and nine replies');
+  assert.ok(!have.includes('haiku-hero'), 'Haiku hero unlocked by one job and four replies');
+});
+
+test('kudos stays once per job after the kudos list is trimmed', () => {
+  const e = make();
+  const first = job();
+  e.kudos(first);
+  for (let i = 0; i < 2000; i++) e.kudos(job());
+  assert.throws(() => e.kudos(first), /already/, 'kudos paid twice for one job once 2000 more were given');
+});
+
+test('the books still add up after the ledger is trimmed', () => {
+  // wallets + pot must equal everything earned less everything spent. The
+  // ledger keeps the last 400 lines and nothing else keeps a running total of
+  // what was spent, so after that the books can no longer be checked.
+  const e = make();
+  for (let i = 0; i < 300; i++) {
+    const j = job();
+    e.accrue(j, 60000, 'sonnet');
+    e.pay(j);
+    e.books.desks.mira = []; // so the mug can be bought again
+    if (e.wallet('mira') >= 20) e.buy('mug', { by: 'mira' });
+  }
+  const t = e.books.totals;
+  assert.ok(t, 'no running totals in the books (earned, spent) to check against');
+  const held = e.books.pot + Object.values(e.books.wallets).reduce((a, x) => a + x, 0);
+  assert.equal(held, t.earned - t.spent);
+});
+
+test('damaged books from an old or hand-edited state.json load safely', () => {
+  // typeof null and typeof [] are both 'object', and NaN is a number, so the
+  // shape check in the constructor lets these through.
+  const e = new Economy({ wallets: null, stats: null, desks: [], ledger: {}, pot: NaN, kudos: {} });
+  assert.equal(e.wallet('mira'), 0);
+  assert.ok(Number.isFinite(e.books.pot), `pot is ${e.books.pot}`);
+  const j = job();
+  e.accrue(j, 60000, 'opus');
+  e.pay(j);
+  e.kudos(job());
+  assert.ok(Array.isArray(e.books.ledger));
+  assert.ok(Number.isFinite(e.books.pot));
+});
+
+console.log(`\n${n - failed} passed, ${failed} failed`);
+if (failed) process.exit(1);
