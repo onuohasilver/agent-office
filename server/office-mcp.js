@@ -50,6 +50,16 @@ const TOOLS = [
     description: 'Drop this session\'s history to cut token use, at a natural break between steps. Give notes to yourself: what is done, what is left, what you learned (files, decisions, gotchas). End your turn right after; you resume fresh from the brief and your notes. Not for the end of a job.',
     inputSchema: obj({ notes: { type: 'string' } }, ['notes']),
   },
+  {
+    name: 'heavy_work',
+    description: 'One heavy build or test run at a time on this shared laptop (Gradle, Xcode, emulator, jest or vitest across a whole app, docker build). start before it: you either get the slot or are told to end your turn and are messaged when it is yours. done straight after it ends, even if it failed.',
+    inputSchema: obj({ action: { type: 'string', enum: ['start', 'done'] }, what: { type: 'string', description: 'What you are running, like "the Android Gradle build"' } }, ['action']),
+  },
+  {
+    name: 'keep_running',
+    description: 'Keep a process you started (a dev server the boss needs to look at, say) running after this job ends; everything else you leave running is stopped then. The boss is told what was kept.',
+    inputSchema: obj({ pid: { type: 'number' }, why: { type: 'string' } }, ['pid', 'why']),
+  },
   { name: 'office_shop', description: 'Your pay so far, how pay works, and what you can buy for your desk.', inputSchema: NONE },
   {
     name: 'buy_item',

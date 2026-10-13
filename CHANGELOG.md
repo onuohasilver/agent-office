@@ -4,6 +4,16 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+- Agents no longer leave processes running. Whatever a job started and left behind (dev servers, watchers, background test runs, test copies of a server) is stopped when the job ends. An agent can keep one with the new `keep_running` tool, and you are told what was kept and how to stop it.
+- Heavy builds and full test suites take turns. Agents call the new `heavy_work` tool before a Gradle, Xcode or emulator run, a whole-app jest or vitest run, or a docker build. While one is running, the next waits for its turn and you get a **Delayed** notice in #general.
+- New jobs wait while the machine is struggling: when the number of working agents reaches **Agents working at once** in Settings (default 4, `OFFICE_MAX_AGENTS`), or, once 3 or more agents are working, when the machine is swapping memory hard or the processor is badly overloaded. Up to 3 agents always start, whatever else the laptop is doing. You get an **On hold** notice in #general and a desktop notification saying why, and the job starts by itself when that changes.
+
+### Changed
+- Agents are told to run jest with `--maxWorkers=2`.
+
 ## 0.8.0 — 2026-10-13
 
 ### Added

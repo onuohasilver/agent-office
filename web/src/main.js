@@ -598,6 +598,7 @@ function handle(msg) {
     if (from && to) { from.visit(to, msg.msg.text); sound.knock(); }
     sayAloud(msg.msg);
     if (msg.msg.kind === 'flag') { sound.knock(); notify('The boss is needed', msg.msg.text.replace(/\*\*/g, '')); }
+    if (msg.msg.kind === 'machine') notify('Work is waiting', msg.msg.text.replace(/\*\*/g, ''));
     if (msg.msg.kind === 'standup') {
       const text = msg.msg.say || msg.msg.text;
       (msg.msg.from === 'chief' ? chief : from)?.speak(text.length > 90 ? text.slice(0, 89) + '…' : text);

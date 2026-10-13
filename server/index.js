@@ -12,7 +12,8 @@ import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
 import { writeBanter } from './banter.js';
 import { writeReply } from './talk.js';
-import { sampleProcs, resetProcs, machine } from './procstat.js';
+import { sampleProcs, resetProcs, lastTree, ps, tree, machine } from './procstat.js';
+import { samplePressure, resetPressure, overloaded, remember, reap, startedByJob, procName } from './machine.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
 import { Auth } from './auth.js';
@@ -197,6 +198,7 @@ delete state.clearTokens;
 const settings = new Settings(state.settings, (keys) => {
   save();
   if (keys.some((k) => k.startsWith('pay'))) { applyPay(); send({ t: 'economy', economy: economy.status() }); }
+  if (keys.includes('maxAgents')) setImmediate(pump);
 });
 const applyPay = () => setPay({ perMinute: settings.get('payPerMinute'), finishBonus: settings.get('payFinishBonus') });
 applyPay();
@@ -446,19 +448,30 @@ async function pollProcs() {
     const roots = new Map();
     for (const [id, child] of running) if (child.pid) roots.set(id, child.pid);
     if (!roots.size) return stopProcs();
-    const next = await sampleProcs(roots);
+    const [next] = await Promise.all([sampleProcs(roots), samplePressure()]);
+    // What each agent has running, so whatever it leaves behind can be cleaned up.
+    for (const [id, pid] of roots) remember(id, lastTree(pid), pid);
     // Nothing measurable (ps unavailable) is the same as nothing to show.
     procs = next && Object.keys(next).length ? next : null;
     send({ t: 'proc', procs, machine });
+    // Work held back for the machine's sake starts as soon as it can.
+    if (state.jobs.some((j) => j.status === 'queued' && j.held)) pump();
   } finally {
     procBusy = false;
   }
+}
+
+let soon = null;
+function sampleSoon() {
+  if (!procTimer || soon) return;
+  soon = setTimeout(() => { soon = null; pollProcs(); }, 400);
 }
 
 // Only sampled while someone is working; an idle office polls nothing.
 function startProcs() {
   if (procTimer) return;
   resetProcs();
+  resetPressure();
   procTimer = setInterval(pollProcs, PROC_EVERY);
   pollProcs();
 }
@@ -738,6 +751,7 @@ const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
   'mcp__office__restart_office', 'mcp__office__clear_context', 'mcp__office__attach_files',
+  'mcp__office__heavy_work', 'mcp__office__keep_running',
   'mcp__office__office_shop', 'mcp__office__buy_item',
   'mcp__office__bets', 'mcp__office__place_bet', 'mcp__office__take_bet', 'mcp__office__cancel_bet',
 ];
@@ -796,11 +810,50 @@ function pump() {
   for (const job of queued) {
     const busy = new Set(state.jobs.filter((j) => j.status === 'working').map((j) => j.agentId));
     const free = roster.filter((s) => !busy.has(s.id) && (!job.wantAgent || s.id === job.wantAgent));
-    if (!free.length) continue;
+    // Waiting on a busy colleague is ordinary, so it goes in the job's log only.
+    if (!free.length) { hold(job, job.wantAgent ? `${nameOf(job.wantAgent)} is busy on another job` : 'everyone in is busy', { quiet: true }); continue; }
+    const why = machineSays(job);
+    if (why) { hold(job, why); continue; }
     // Follow-ups go back to whoever did the first round, if they're free.
     const agent = free.find((s) => s.id === job.agentId) || free[Math.floor(Math.random() * free.length)];
+    if (job.held) {
+      addLog(job, { kind: 'system', summary: `Starting now, after waiting ${minutesSince(job.held.since)}` });
+      job.held = null;
+    }
+    job.carryOn = false;
     start(job, agent.id);
   }
+}
+
+const minutesSince = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'under a minute' : `${m} min`; };
+
+// Whether this machine can take another agent right now. A job already under
+// way (a cleared context, a model switch) carries on, and an away job runs no
+// tools here. Up to FREE_AGENTS start whatever else the machine is doing: a
+// laptop swaps for its own reasons (a browser, a build), and holding the
+// whole office for that leaves one agent doing everything.
+const FREE_AGENTS = 3;
+function machineSays(job) {
+  if (job.carryOn || job.away) return null;
+  const cap = settings.get('maxAgents');
+  if (cap && running.size >= cap) return `${running.size} agents are already working, the limit set in Settings`;
+  return running.size >= FREE_AGENTS ? overloaded() : null;
+}
+
+// A job that can't start yet. The boss hears it once in #general, so a job
+// never sits in the queue without them knowing why; the job's log follows
+// the reason as it changes. Readings move every few seconds, so the numbers
+// in a reason don't make it a new one. A quiet hold only logs, and a later
+// loud one is still announced.
+function hold(job, why, { quiet = false } = {}) {
+  const key = why.replace(/[\d.]+/g, '#');
+  if (job.held?.key === key) return;
+  const told = !!job.held?.told;
+  job.held = { why, key, since: job.held?.since || Date.now(), told: told || !quiet };
+  addLog(job, { kind: 'system', summary: `Not starting yet: ${why}` });
+  if (job.guest || told || quiet) return;
+  post('chief', `**On hold** · "${clip(job.title, 80)}" hasn't started: ${why}. It starts by itself when that changes.`,
+    { kind: 'machine', jobId: job.id, thread: null, channel: GENERAL });
 }
 
 // Where an away job's session runs: an empty folder of its own. The project
@@ -884,11 +937,7 @@ function start(job, agentId) {
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (d) => { errTail = (errTail + d).slice(-2000); });
 
-  const ended = (why) => {
-    running.delete(job.id);
-    fs.rm(mcpFile, { force: true }, () => {});
-    if (procs) { delete procs[job.id]; }
-    endGrace(job);
+  const close = (why) => {
     if (job.status !== 'working') return;
     if (job.clearing && !job.stopRequested) return recycle(job);
     if (job.switching && !job.stopRequested) return resume(job);
@@ -896,8 +945,41 @@ function start(job, agentId) {
     else if (job.lastTurn) finish(job, job.lastTurn.ok ? 'done' : 'failed', job.lastTurn.ok ? null : job.lastTurn.error);
     else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
   };
+  const ended = (why) => {
+    running.delete(job.id);
+    fs.rm(mcpFile, { force: true }, () => {});
+    if (procs) { delete procs[job.id]; }
+    endGrace(job);
+    close(why);
+    // Still going (a fresh session, a retry, a message that just landed):
+    // what it started may be needed yet. Otherwise it is done with them.
+    if (job.status !== 'working' && job.status !== 'queued') cleanUpAfter(job);
+  };
   child.on('error', (err) => ended(`Could not start claude: ${err.message}`));
   child.on('close', (code) => ended(`claude exited with code ${code}`));
+}
+
+// Whatever the agent started and left running (a dev server, a watcher, a
+// test run in the background) goes when the job does, unless it asked to
+// keep it with keep_running. Leftovers from finished jobs piling up for days
+// are what used to sink this machine.
+function cleanUpAfter(job) {
+  const kept = (job.keep || []).map((k) => k.pid);
+  const live = [...running.values()].map((c) => c.pid).filter(Boolean);
+  reap(job.id, { keep: kept, live }).then((gone) => {
+    if (gone.length) {
+      const counts = {};
+      for (const n of gone) counts[n] = (counts[n] || 0) + 1;
+      const list = Object.entries(counts).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(', ');
+      addLog(job, { kind: 'system', summary: `Stopped ${gone.length} process${gone.length === 1 ? '' : 'es'} left running by this job: ${list}` });
+    }
+    if (job.keep?.length && !job.keepTold && !job.guest) {
+      job.keepTold = true;
+      const list = job.keep.map((k) => `${k.name} (pid ${k.pid})${k.why ? `: ${k.why}` : ''}`).join('; ');
+      post('chief', `**Left running** · ${nameOf(job.agentId)} kept ${list}, from "${clip(job.title, 80)}". Stop it with \`kill ${job.keep.map((k) => k.pid).join(' ')}\` when you're done with it.`,
+        { kind: 'kept', jobId: job.id, thread: null, channel: GENERAL });
+    }
+  }).catch(() => {});
 }
 
 // Start a job over in a fresh session: the history is what costs tokens on
@@ -914,7 +996,7 @@ function recycle(job) {
     job.pending,
   ].filter(Boolean).join('\n\n');
   Object.assign(job, { sessionId: null, clearNote: null, clearedBy: null, clearing: false, hinted: false, context: null, lastTurn: null, pending: wake,
-    status: 'queued', queuedAt: Date.now(), waiting: false });
+    status: 'queued', queuedAt: Date.now(), waiting: false, carryOn: true });
   job.clears = (job.clears || 0) + 1;
   job.lastClear = { note, by: job.clearedBy || 'self', at: Date.now() };
   tokens.delete(job.id);
@@ -930,7 +1012,7 @@ function recycle(job) {
 function resume(job) {
   const note = job.pending;
   Object.assign(job, { switching: false, lastTurn: null, pending: [note, `The boss moved this job to ${modelName(job.model)}. Carry on from where you were.`].filter(Boolean).join('\n\n'),
-    status: 'queued', queuedAt: Date.now(), waiting: false });
+    status: 'queued', queuedAt: Date.now(), waiting: false, carryOn: true });
   tokens.delete(job.id);
   pushJob(job);
   save();
@@ -1008,6 +1090,9 @@ function onLine(job, line) {
       } else if (c.type === 'thinking') {
         addLog(job, { kind: 'thinking', summary: 'Thinking…' });
       } else if (c.type === 'tool_use') {
+        // A command can put something in the background and be gone within
+        // seconds; look while its shell is still there.
+        if (c.name === 'Bash') sampleSoon();
         job.tools++;
         job.turnTools++;
         const entry = { kind: 'tool', tool: c.name, summary: summarizeTool(c.name, c.input), station: stationFor(c.name) };
@@ -1138,6 +1223,7 @@ function announceAchievement(agentId, a) {
 
 function finish(job, status, error) {
   if (job.status !== 'working') return;
+  releaseHeavy(job);
   clearWaits(job);
   tokens.delete(job.id);
   job.waiting = false;
@@ -1250,6 +1336,44 @@ function finish(job, status, error) {
   }
   save();
   setImmediate(pump);
+}
+
+// ---------- heavy work, one at a time ----------
+
+// Builds and full test suites (Gradle, Xcode, jest across a whole app) each
+// want every core and gigabytes of memory; two at once on a laptop is what
+// grinds it to a halt. One job holds the slot, the rest queue for it, and the
+// boss is told when work is waiting.
+const HEAVY_MAX_MS = 45 * 60 * 1000;
+let heavy = null; // { jobId, agentId, what, since, timer }
+const heavyLine = []; // [{ jobId, what, since }]
+
+function takeHeavy(job, what) {
+  const timer = setTimeout(() => {
+    if (heavy?.jobId !== job.id) return;
+    addLog(job, { kind: 'system', summary: `Held the heavy-work slot for ${HEAVY_MAX_MS / 60000} min; passing it on` });
+    releaseHeavy(job);
+  }, HEAVY_MAX_MS);
+  timer.unref?.();
+  heavy = { jobId: job.id, agentId: job.agentId, what, since: Date.now(), timer };
+}
+
+function releaseHeavy(job) {
+  const i = heavyLine.findIndex((q) => q.jobId === job.id);
+  if (i >= 0) heavyLine.splice(i, 1);
+  if (heavy?.jobId !== job.id) return;
+  clearTimeout(heavy.timer);
+  heavy = null;
+  while (heavyLine.length) {
+    const next = heavyLine.shift();
+    const j = state.jobs.find((x) => x.id === next.jobId);
+    if (!j || j.status !== 'working' || !running.has(j.id)) continue;
+    takeHeavy(j, next.what);
+    settle(j, (w) => w.kind === 'heavy');
+    addLog(j, { kind: 'system', summary: `Heavy-work slot is free after ${minutesSince(next.since)}` });
+    deliver(j, `Your turn: the heavy-work slot is yours for ${next.what}. Run it now, then call heavy_work with action "done".`);
+    return;
+  }
 }
 
 function clearWaits(job) {
@@ -1914,6 +2038,7 @@ function officePrompt(agentId, job) {
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
     `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. To show the boss an image or file (a screenshot, say), attach_files with absolute paths, then say it in your reply: it goes on your next message to them. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
     `When your context has grown heavy and you are between steps, clear_context with notes to yourself lets you resume fresh and cheaper. ` +
+    `Everyone shares one laptop. Before a heavy build or full test suite (Gradle, Xcode, an emulator, jest or vitest across a whole app, a docker build), call heavy_work start and wait your turn if told to; call heavy_work done the moment it ends. Run jest with --maxWorkers=2. Anything you leave running (dev servers, watchers, test copies of a server) is stopped when your job ends; if the boss needs one to stay up, keep_running it with its pid and say so in your reply. ` +
     `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
     `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + payNote(agentId) + standupBrief(agentId) + recentWork(agentId, job);
 }
@@ -2106,6 +2231,47 @@ const agentApi = {
     post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
       { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL, ...takeStaged(me) });
     return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
+  },
+
+  heavy_work(me, { action, what }) {
+    if (action === 'done') {
+      if (heavy?.jobId !== me.id) { releaseHeavy(me); return 'You were not holding the heavy-work slot, so there was nothing to release.'; }
+      releaseHeavy(me);
+      return 'Released. Whoever was waiting goes next.';
+    }
+    if (action !== 'start') throw new Error('action is "start" (before a heavy build or test run) or "done" (after it).');
+    what = String(what || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!what) throw new Error('Say what you are about to run, like "the Android Gradle build".');
+    if (!heavy || heavy.jobId === me.id) {
+      if (heavy) heavy.what = what; else takeHeavy(me, what);
+      return 'The heavy-work slot is yours. Run it now, then call heavy_work with action "done" straight after, even if it failed.';
+    }
+    const holder = `${nameOf(heavy.agentId)}'s ${heavy.what}`;
+    if (!heavyLine.some((q) => q.jobId === me.id)) {
+      heavyLine.push({ jobId: me.id, what, since: Date.now() });
+      addWait(me, { kind: 'heavy', from: heavy.agentId });
+      addLog(me, { kind: 'system', summary: `Waiting to run ${what}: ${holder} is running` });
+      const ahead = heavyLine.length - 1;
+      post('chief', `**Delayed** · ${nameOf(me.agentId)}'s ${what} ("${clip(me.title, 80)}") is waiting for ${holder} to finish${ahead ? `, with ${ahead} more ahead of it` : ''}. It runs by itself when its turn comes.`,
+        { kind: 'machine', jobId: me.id, thread: null, channel: GENERAL });
+    }
+    return `${holder} is running (for ${minutesSince(heavy.since)}), and only one heavy run goes at a time. Do not start yours. Finish any light work, then end your turn: you will get a message when it is your turn.`;
+  },
+
+  async keep_running(me, { pid, why }) {
+    pid = Number(pid);
+    if (!Number.isInteger(pid) || pid < 2) throw new Error('Give the pid of the process to keep.');
+    const child = running.get(me.id);
+    const snap = await ps();
+    const p = snap?.procs.get(pid);
+    const mine = p && ((child && tree(snap, child.pid).some((x) => x.pid === pid)) || startedByJob(me.id, p));
+    if (!mine) throw new Error(`Process ${pid} isn't one this job started. Only what you started yourself can be kept.`);
+    const keep = (me.keep ||= []);
+    if (!keep.some((k) => k.pid === pid)) {
+      if (keep.length >= 5) throw new Error('This job is already keeping 5 processes running. Stop one first.');
+      keep.push({ pid, name: procName(p.cmd), why: String(why || '').replace(/\s+/g, ' ').trim().slice(0, 200) });
+    }
+    return `${procName(p.cmd)} (pid ${pid}) will be left running when this job ends, and the boss will be told. Say in your reply what it is for and how to stop it.`;
   },
 
   clear_context(me, { notes }) {
@@ -2580,7 +2746,7 @@ const server = http.createServer(async (req, res) => {
       if (!me) return json(res, 403, { error: 'Not on the clock.' });
       if (me.guest && !GUEST_TOOLS.includes(`mcp__office__${parts[2]}`)) return json(res, 403, { error: 'Not on a guest’s job.' });
       if (me.guest && parts[2] === 'office_roster') return json(res, 200, { text: guestRoster(me) });
-      return json(res, 200, { text: agentApi[parts[2]](me, await readBody(req)) });
+      return json(res, 200, { text: await agentApi[parts[2]](me, await readBody(req)) });
     }
     if (req.method === 'POST' && url.pathname === '/api/uploads') {
       const { path: _, ...f } = await upload(req);

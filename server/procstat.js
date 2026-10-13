@@ -14,17 +14,17 @@ function cpuSeconds(s) {
   return Number(days) * 86400 + rest.split(':').reduce((a, p) => a * 60 + parseFloat(p), 0);
 }
 
-function ps() {
+export function ps() {
   return new Promise((resolve) => {
-    execFile(PS, ['-axo', 'pid=,ppid=,rss=,cputime='], { timeout: 4000, maxBuffer: 8 << 20 }, (err, out) => {
+    execFile(PS, ['-axo', 'pid=,ppid=,pgid=,rss=,cputime=,command='], { timeout: 4000, maxBuffer: 16 << 20 }, (err, out) => {
       if (err) return resolve(null);
       const procs = new Map();
       const kids = new Map();
       for (const line of out.split('\n')) {
-        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)$/);
+        const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/);
         if (!m) continue;
         const pid = Number(m[1]), ppid = Number(m[2]);
-        procs.set(pid, { pid, ppid, rss: Number(m[3]) * 1024, cpu: cpuSeconds(m[4]) });
+        procs.set(pid, { pid, ppid, pgid: Number(m[3]), rss: Number(m[4]) * 1024, cpu: cpuSeconds(m[5]), cmd: m[6] });
         if (!kids.has(ppid)) kids.set(ppid, []);
         kids.get(ppid).push(pid);
       }
@@ -33,7 +33,7 @@ function ps() {
   });
 }
 
-function tree(snap, root) {
+export function tree(snap, root) {
   const out = [];
   const queue = [root];
   const seen = new Set();
@@ -77,6 +77,10 @@ export async function sampleProcs(roots) {
   prev = snap;
   return by;
 }
+
+// Every process under `root` as of the last sample, for remembering what an
+// agent started so it can be cleaned up once the agent is gone.
+export const lastTree = (root) => (prev ? tree(prev, root) : []);
 
 // Starting fresh after a quiet spell: the next sample has nothing to diff
 // against, so don't report a percentage for it.
