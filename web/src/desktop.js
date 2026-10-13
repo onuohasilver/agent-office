@@ -11,11 +11,6 @@ const external = (href) => {
   } catch { return null; }
 };
 
-// Files the office serves itself (screenshots, attachments) open in the system viewer too.
-const sameOriginFile = (a) => {
-  try { return new URL(a.href, location.href).origin === location.origin && a.target === '_blank'; } catch { return false; }
-};
-
 const open = (url) => opener()?.openUrl(url).catch((e) => console.warn('openUrl failed', e));
 
 if (isDesktop()) {
@@ -24,7 +19,7 @@ if (isDesktop()) {
     if (e.defaultPrevented || e.button !== 0) return;
     const a = e.target.closest?.('a[href]');
     if (!a) return;
-    const url = external(a.href) || (sameOriginFile(a) ? a.href : null);
+    const url = external(a.href);
     if (!url) return;
     e.preventDefault();
     open(url);
@@ -32,7 +27,7 @@ if (isDesktop()) {
   const native = window.open.bind(window);
   window.open = (url, ...rest) => {
     let target = null;
-    try { target = url ? external(String(url)) || new URL(String(url), location.href).href : null; } catch {}
+    try { target = url ? external(String(url)) : null; } catch {}
     if (!target) return native(url, ...rest);
     open(target);
     return null;
