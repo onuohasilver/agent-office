@@ -11,6 +11,8 @@ import { visiting } from './links.js';
 
 const dlg = document.getElementById('shop');
 const btn = document.getElementById('shopBtn');
+// Labelled ways in to the shop's Forbes list and its office looks.
+const doors = [...document.querySelectorAll('[data-shop-tab]')];
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const n = (v) => Math.round(Number(v) || 0).toLocaleString();
@@ -26,9 +28,9 @@ const TIER = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 
 const TABS = [
   ['desks', 'Desks'],
-  ['rich', 'Rich list'],
-  ['office', 'Office'],
-  ['looks', 'Looks'],
+  ['rich', 'Forbes list'],
+  ['looks', 'Layout & paint'],
+  ['office', 'Furniture'],
   ['wins', 'Achievements'],
   ['ledger', 'Ledger'],
 ];
@@ -83,7 +85,7 @@ function card(it, { for: who = '', short = false, owned = false, using = false, 
     : using ? '<span class="sc-state on">In use</span>'
     : owned ? (swatch || it.scope === 'layout' ? `<button type="button" class="sc-btn" data-use="${esc(it.id)}">Use</button>` : '<span class="sc-state">Owned</span>')
     : short ? `<span class="sc-state short" title="The pot is ${n(it.price - (econ.pot || 0))} short">${n(it.price - (econ.pot || 0))} short</span>`
-    : `<button type="button" class="sc-btn buy${armed ? ' armed' : ''}" data-buy="${esc(it.id)}" data-for="${esc(who)}">${armed ? `Confirm ${n(it.price)}` : it.price ? 'Buy' : 'Use'}</button>`;
+    : `<button type="button" class="sc-btn buy${armed ? ' armed' : ''}" data-buy="${esc(it.id)}" data-for="${esc(who)}">${armed ? `Confirm ${naira(it.price)}` : it.price ? 'Buy' : 'Use'}</button>`;
   return `<div class="shop-card${using ? ' using' : ''}${owned && !using ? ' owned' : ''}">
     <span class="sc-art">${swatch ? `<i class="sc-swatch" style="background:${esc(it.color)}"></i>` : `<span class="sc-icon" aria-hidden="true">${it.icon}</span>`}</span>
     <span class="sc-name">${esc(it.name)}</span>
@@ -195,6 +197,7 @@ function render() {
 function paintButton() {
   if (!btn) return;
   btn.hidden = !econ || visiting.on;
+  for (const d of doors) d.hidden = btn.hidden;
   const b = btn.querySelector('b');
   if (b && econ) b.textContent = naira(econ.pot);
   btn.setAttribute('aria-label', econ ? `Shop. ${naira(econ.pot)} in the office pot.` : 'Shop');
@@ -275,6 +278,7 @@ export function initShop(a, { toast: t }) {
     <nav class="shop-tabs" role="tablist" aria-label="Shop">${TABS.map(([k, v]) => `<button type="button" role="tab" data-tab="${k}">${v}</button>`).join('')}</nav>
     <div class="shop-body" role="tabpanel"></div>`;
   btn.addEventListener('click', () => open());
+  for (const d of doors) d.addEventListener('click', () => open(d.dataset.shopTab));
   dlg.querySelector('.shop-x').addEventListener('click', () => dlg.close());
   dlg.addEventListener('click', (e) => {
     if (e.target === dlg) return dlg.close();

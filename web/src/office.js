@@ -953,7 +953,11 @@ export function buildOffice(scene, layoutId) {
   mat0.castShadow = false;
 
   // wall art and a clock — they fold away with their wall
-  framedArt(north, nx(-7.6), 2.5, 1.6, 1.1, ART.sunset);
+  // The Forbes list, framed between the library and the kanban (drawForbes).
+  north.attach.push(box(north.g, 5.6, 3.3, 0.06, '#2b2620', nx(-7.75), 2.25, 0.18));
+  const forbes = canvasPlane(north.g, 5.4, 3.1, 1170, 672);
+  forbes.mesh.position.set(nx(-7.75), 2.25, 0.22);
+  north.attach.push(forbes.mesh);
   wallClock(north, nx(7.6), 2.7);
   framedArt(east, 1.4, 2.4, 1.0, 1.4, ART.arcs);
   framedArt(east, 3.0, 2.4, 1.0, 1.4, ART.blocks);
@@ -1118,7 +1122,7 @@ export function buildOffice(scene, layoutId) {
   Object.assign(stations, wing.stations);
 
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, pool, standup, board, scribble, blinkers, globe: land, slab, updateWalls, decorSlots, setFinish, layout: L, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
+  return { grid, desks, stations, pool, standup, board, forbes, scribble, blinkers, globe: land, slab, updateWalls, decorSlots, setFinish, layout: L, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
 }
 
 
@@ -1423,6 +1427,52 @@ function wrap(ctx, text, x, y, maxW, lh, maxLines) {
     } else line = test;
   }
   ctx.fillText(line, x, y + n * lh);
+}
+
+// The Forbes list on the wall: the five richest agents by net worth.
+// `rows` is [{ name, worth, shirt }], richest first.
+export function drawForbes(board, rows) {
+  const { ctx, canvas, tex } = board;
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#f7f2e7';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#1d1b18';
+  ctx.fillRect(0, 0, W, 150);
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#f2c14e';
+  ctx.font = `italic 700 84px Georgia, "Times New Roman", serif`;
+  ctx.fillText('The Forbes List', 48, 100);
+  ctx.fillStyle = '#cfc6b6';
+  ctx.font = `500 28px ${FONT}`;
+  ctx.textAlign = 'right';
+  ctx.fillText('net worth', W - 48, 96);
+  const top = rows.slice(0, 5);
+  if (!top.some((r) => r.worth > 0)) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#8a8172';
+    ctx.font = `500 40px ${FONT}`;
+    ctx.fillText('Nobody’s been paid yet.', W / 2, H / 2 + 60);
+  }
+  else top.forEach((r, i) => {
+    const y = 150 + 22 + i * 100;
+    if (i) { ctx.fillStyle = '#e4dccd'; ctx.fillRect(48, y - 20, W - 96, 2); }
+    const mid = y + 44;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = i === 0 ? '#c98f1c' : '#8a8172';
+    ctx.font = `700 52px Georgia, serif`;
+    ctx.fillText(String(i + 1), 92, mid + 18);
+    ctx.fillStyle = r.shirt || '#999';
+    ctx.beginPath(); ctx.arc(170, mid, 22, 0, Math.PI * 2); ctx.fill();
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#1d1b18';
+    ctx.font = `${i === 0 ? 700 : 600} 56px ${FONT}`;
+    ctx.fillText(`${r.name}${i === 0 ? '  👑' : ''}`, 218, mid + 20);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = i === 0 ? '#a8740f' : '#3a352e';
+    ctx.font = `700 54px ${FONT}`;
+    ctx.fillText(r.money, W - 48, mid + 20);
+  });
+  tex.needsUpdate = true;
 }
 
 export function drawWhiteboard(wb, items) {

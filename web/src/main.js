@@ -17,7 +17,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { buildOffice, drawScreen, dressDesk, drawBoard, drawWhiteboard, FLOOR } from './office.js';
+import { buildOffice, drawScreen, dressDesk, drawBoard, drawForbes, drawWhiteboard, FLOOR } from './office.js';
 import { Agent } from './agent.js';
 import { BreakRoom } from './breakroom.js';
 import { PoolRoom } from './pool.js';
@@ -310,9 +310,28 @@ app.setEconomy = (econ) => {
   setPay(econ.pay);
   setEconomy(econ);
   dressRoom();
+  showRich();
   hud.renderTeam();
   hud.renderKudos();
 };
+
+// The Forbes list, in the room: the board on the wall, and a crown on the
+// richest agent's name tag. Same ranking as the shop's Forbes list tab.
+function showRich() {
+  const econ = app.economy;
+  const by = new Map((econ?.rich || []).map((r) => [r.id, r]));
+  const rows = app.staff.slice(0, app.progress?.capacity || 0)
+    .map((s) => ({ id: s.id, name: s.name, shirt: s.shirt, worth: by.get(s.id)?.worth || 0, earned: by.get(s.id)?.earned || 0 }))
+    .sort((a, b) => b.worth - a.worth || b.earned - a.earned)
+    .map((r) => ({ ...r, money: naira(r.worth) }));
+  drawForbes(office.forbes, rows);
+  const king = rows[0]?.worth > 0 ? rows[0].id : null;
+  for (const [id, a] of app.agents) {
+    if (!a.label || a.label.classList.contains('richest') === (id === king)) continue;
+    a.label.classList.toggle('richest', id === king);
+    a.labelDirty = true;
+  }
+}
 
 function dressRoom() {
   const econ = app.economy;
@@ -417,7 +436,7 @@ function hire(firstLoad, greeting) {
     app.agents.set(s.id, a);
     if (firstLoad) a.teleport('lounge');
     else { a.teleport('door'); a.say(greeting || `Hi, I'm ${s.name}!`, 'good', 5000); }
-  });
+  });  if (app.economy) showRich();
 }
 
 // Dismissed agents walk out; recalled ones walk back in.
@@ -980,6 +999,7 @@ function declutter(list, dt, now) {
 }
 
 drawBoard(office.board, []);
+drawForbes(office.forbes, []);
 drawWhiteboard(office.scribble, []);
 connect();
 frame();
