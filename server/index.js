@@ -154,6 +154,7 @@ const LADDER = ['haiku', 'sonnet', 'opus'];
 const DEFAULT_TIER = 'sonnet';
 const TIER_LABEL = { haiku: 'Haiku', sonnet: 'Sonnet', opus: 'Opus' };
 const tierOf = (model) => LADDER.find((t) => String(model || '').includes(t)) || '';
+const modelName = (m) => TIER_LABEL[m] || m;
 // The boss's picker wins; "Chief picks" (empty) hands the choice over, and only
 // a job sized that way is allowed to climb on its own.
 const sized = (model, tier) => (model
@@ -373,7 +374,7 @@ function send(msg) {
   if (!NOT_PRESENCE.has(msg.t)) links.sendPresence();
 }
 const publicJob = (j, tail = 40) => {
-  const { stopRequested, lastTurn, sent, handoffs, ...rest } = j;
+  const { stopRequested, lastTurn, sent, handoffs, staged, ...rest } = j;
   return { ...rest, log: j.log.slice(-tail) };
 };
 // Whose office this is: the owner set in Settings (default OFFICE_OWNER), else the first name on this account.
@@ -651,7 +652,7 @@ function overLimitAfterNudge(job) {
 const OFFICE_TOOLS = [
   'mcp__office__office_roster', 'mcp__office__message_colleague', 'mcp__office__hand_off', 'mcp__office__flag_for_boss',
   'mcp__office__list_channels', 'mcp__office__create_channel', 'mcp__office__invite_to_channel', 'mcp__office__post_to_channel',
-  'mcp__office__restart_office', 'mcp__office__clear_context',
+  'mcp__office__restart_office', 'mcp__office__clear_context', 'mcp__office__attach_files',
 ];
 // A guest's job can see who is in and ask the boss, nothing more: no
 // messaging colleagues, handing off or channels. Enforced again in agentApi,
@@ -801,6 +802,7 @@ function start(job, agentId) {
     endGrace(job);
     if (job.status !== 'working') return;
     if (job.clearing && !job.stopRequested) return recycle(job);
+    if (job.switching && !job.stopRequested) return resume(job);
     if (job.stopRequested) finish(job, 'stopped', job.stopWhy || 'Stopped by you.');
     else if (job.lastTurn) finish(job, job.lastTurn.ok ? 'done' : 'failed', job.lastTurn.ok ? null : job.lastTurn.error);
     else finish(job, 'failed', errTail.trim().split('\n').pop() || why);
@@ -831,6 +833,34 @@ function recycle(job) {
   pushJob(job);
   save();
   setImmediate(pump);
+}
+
+// The boss picked another model for a running job. The process can't change
+// model mid-flight, so it finishes its turn, exits, and the same session
+// resumes on the new one.
+function resume(job) {
+  const note = job.pending;
+  Object.assign(job, { switching: false, lastTurn: null, pending: [note, `The boss moved this job to ${modelName(job.model)}. Carry on from where you were.`].filter(Boolean).join('\n\n'),
+    status: 'queued', queuedAt: Date.now(), waiting: false });
+  tokens.delete(job.id);
+  pushJob(job);
+  save();
+  setImmediate(pump);
+}
+
+// Set by the boss from the job card. Any job can be switched; one the chief
+// sized stops climbing on its own, since the boss has now chosen.
+function setModel(job, model) {
+  model = String(model || '');
+  if (!model || !MODELS.has(model)) throw new Error('Pick a model.');
+  if (job.guest || job.away || job.visitor) throw new Error("That job runs on someone else's account.");
+  if (model === job.model) return;
+  const from = TIER_LABEL[tierOf(job.model)] || job.model || 'the default model';
+  Object.assign(job, { model, autoModel: false });
+  const live = job.status === 'working' && running.get(job.id);
+  addLog(job, { kind: 'system', summary: `Boss moved this from ${from} to ${modelName(model)}${live ? '; switching after the current turn' : ''}` });
+  if (live) { job.switching = true; live.stdin.end(); }
+  pushJob(job);
 }
 
 function write(child, text) {
@@ -1032,7 +1062,8 @@ function finish(job, status, error) {
   // A borrowed agent's chat belongs to the borrower: the host's feed carries
   // the finished job over the link, and remoteEnded posts it in their office.
   // Nothing about a guest's job goes in our own chat.
-  if (!job.guest) post(job.agentId, text, { jobId: job.id, status, denials: job.denials });
+  const attached = takeStaged(job);
+  if (!job.guest) post(job.agentId, text, { jobId: job.id, status, denials: job.denials, ...attached });
   // The result lands in the job's thread, which the boss may never open, so
   // the chief says so in #general. Not for a retry (the work isn't over), a
   // stop (the boss did that), or a colleague's handed-off piece (their asker
@@ -1040,7 +1071,7 @@ function finish(job, status, error) {
   if (!retry && status !== 'stopped' && !job.requestedBy && !job.guest) {
     const line = awaiting ? `${nameOf(job.agentId)} is waiting on you for "${clip(job.title, 80)}": ${clip(job.asking.summary, 200)}`
       : status === 'done' ? `${nameOf(job.agentId)} finished "${clip(job.title, 80)}".${briefOf(job.lastTurn?.text) ? `\n\n${briefOf(job.lastTurn.text)}` : ''}` : `${nameOf(job.agentId)} hit a wall on "${clip(job.title, 80)}": ${clip(error || 'something went wrong', 200)}`;
-    post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL });
+    post('chief', `**${awaiting ? 'Waiting on you' : status === 'done' ? 'Done' : 'Failed'}** · ${line}`, { kind: 'finished', status, awaiting, jobId: job.id, thread: null, channel: GENERAL, ...attached });
   }
 
   // Hand the result back to whoever delegated this, if they're still at it.
@@ -1756,7 +1787,7 @@ function officePrompt(agentId, job) {
   const me = nameOf(agentId);
   const others = onFloor().filter((s) => s.id !== agentId).map((s) => (s.role ? `${s.name} (${s.role})` : s.name)).join(', ');
   return `You are ${me}, one of the agents in the Agent Office. Your colleagues: ${others || 'none yet'}. ` + persona(agentId) +
-    `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
+    `Office tools: see colleagues, message them, hand off work, flag the boss, use channels. To show the boss an image or file (a screenshot, say), attach_files with absolute paths, then say it in your reply: it goes on your next message to them. Messages from colleagues arrive as user messages starting "Message from"; answer them with message_colleague. ` +
     `When your context has grown heavy and you are between steps, clear_context with notes to yourself lets you resume fresh and cheaper. ` +
     `Your updates collect in your job's thread, which the boss may not open: use flag_for_boss when you need them (question, decision, blocker, review), not for routine progress. If you flag a question, decision or blocker, you are not done: say plainly in your reply that you are waiting on the boss, and do not present the work as finished. ` +
     `This job is discussed in #${channelOf(job?.channel)}; everyday talk stays in #general.` + standupBrief(agentId) + recentWork(agentId, job);
@@ -1876,6 +1907,14 @@ const agentApi = {
       : `Delivered to ${target.name}.`;
   },
 
+  attach_files(me, { paths }) {
+    if (!Array.isArray(paths) || !paths.length) throw new Error('Give the absolute paths of the files to attach.');
+    const staged = (me.staged ||= []);
+    if (staged.length + paths.length > MAX_ATTACH) throw new Error(`At most ${MAX_ATTACH} files go on one message.`);
+    for (const p of paths) staged.push(stageFile(p));
+    return `${staged.length} file${staged.length === 1 ? '' : 's'} will go with your next message to the boss (your final reply, a flag, or a channel post). Nothing is sent yet.`;
+  },
+
   flag_for_boss(me, { kind, summary }) {
     summary = String(summary || '').replace(/\s+/g, ' ').trim().slice(0, 600);
     if (!summary) throw new Error('Say what the boss needs to know.');
@@ -1891,7 +1930,7 @@ const agentApi = {
     // keeps the "open job" link, and the explicit null thread keeps post()
     // from tucking it into the job's thread.
     post('chief', `**${FLAGS[kind]}** · ${nameOf(me.agentId)} on "${clip(me.title, 80)}": ${summary}`,
-      { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL });
+      { kind: 'flag', flag: kind, jobId: me.id, thread: null, channel: GENERAL, ...takeStaged(me) });
     return 'The chief has put it in front of the boss. Carry on, or wrap up this step if you cannot go further without them.';
   },
 
@@ -1960,7 +1999,7 @@ const agentApi = {
     if (!message) throw new Error('The message is empty.');
     if ((me.sent = (me.sent || 0) + 1) > MAX_MESSAGES) throw new Error("You've sent a lot of messages on this job. Finish the work with what you have.");
     joinChannel(id, me.agentId);
-    post(me.agentId, message, { channel: id, kind: 'channel' });
+    post(me.agentId, message, { channel: id, kind: 'channel', ...takeStaged(me) });
 
     // Whoever is in the channel and mid-job hears it now. Anyone free is left
     // alone on purpose: a word in a channel shouldn't pull half the office
@@ -2073,6 +2112,32 @@ function attachments(ids) {
   }
   return out;
 }
+
+// An agent's file, copied into the uploads so the chat can show it. Nothing
+// here is trusted beyond "a regular file the agent can already read".
+const MAX_ATTACH = 6;
+function stageFile(file) {
+  const src = path.resolve(String(file || ''));
+  if (!path.isAbsolute(String(file || ''))) throw new Error(`${file}: use an absolute path.`);
+  let st;
+  try { st = fs.statSync(src); } catch { throw new Error(`${file}: no such file.`); }
+  if (!st.isFile()) throw new Error(`${file}: not a file.`);
+  if (st.size > MAX_UPLOAD) throw new Error(`${file}: over 25 MB.`);
+  const id = crypto.randomBytes(6).toString('hex');
+  const dir = uploadDir(id);
+  fs.mkdirSync(dir, { recursive: true });
+  const name = path.basename(src).replace(/[\x00-\x1f\/\\:*?"<>|]/g, '_').replace(/^\.+/, '').slice(0, 120) || 'file';
+  fs.copyFileSync(src, path.join(dir, name));
+  const { path: _, ...f } = attachments([id])[0];
+  return f;
+}
+
+// What the agent staged with attach_files rides on the next thing it says to the boss.
+const takeStaged = (job) => {
+  const files = job.staged?.length ? job.staged : null;
+  if (job.staged) job.staged = [];
+  return files ? { files } : {};
+};
 
 function withFiles(text, files) {
   text = String(text || '').trim();
@@ -2552,6 +2617,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { diff: await fileDiff(cwd, job.changes, url.searchParams.get('path') || '') });
       }
       if (req.method === 'POST' && parts[3] === 'stop') { stopJob(job); return json(res, 200, { ok: true }); }
+      if (req.method === 'POST' && parts[3] === 'model') { setModel(job, (await readBody(req)).model); return json(res, 200, { ok: true }); }
       if (req.method === 'POST' && parts[3] === 'reply') { replyJob(job, await readBody(req)); return json(res, 200, { ok: true }); }
     }
     json(res, 404, { error: 'Not found.' });

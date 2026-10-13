@@ -4,11 +4,19 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.8.0 — 2026-10-13
 
 ### Added
+- Switch a job's model from its card. The Model row in the job's details is now a picker; a running job finishes its turn, then resumes the same session on the new model. A job the chief sized stops climbing on its own once you choose. Jobs on someone else's account stay as they are.
+- Agents can show you files. A new `attach_files` office tool stages images or files (screenshots, say), up to 6 of 25 MB each, and they ride on the agent's next message to you: its final reply, a flag or a channel post.
+- A "needs you" strip above the message box lists each job still waiting on you, with a link that scrolls to the message.
 - Open the office on a phone from anywhere. The phone button in the side panel is always there: **Make a public address** starts a Cloudflare quick tunnel and shows a QR code for it once the address works from outside. Nothing to install: `cloudflared` is used from the PATH, or a pinned, checksum-verified release is downloaded once. Off until you press it, closed when you press it again or the office stops, and the key stays the only way in. See [On your phone](docs/phone.md).
 - Open the office on a phone by scanning a QR code. `agentoffice --phone` (or `OFFICE_LAN=1`) also listens on your local network, prints a QR code with the link at start, and shows the same code under the new phone button in the side panel. Off unless you ask: by default the office still listens on `127.0.0.1` only. It is plain `http` with the key in the link, so home Wi-Fi only; see [On your phone](docs/phone.md).
+
+### Changed
+- A job's details fold away behind a **Details** row that summarises model, cost and time, and remembers whether you left it open.
+- On a phone the 3D view renders lighter (no ambient-occlusion pass, a small shadow map, no antialiasing, a lower pixel ratio). Add `?lite=0` or `?lite=1` to the address to override the guess.
+- The side panel's usage meters sit in a two-column grid, and its popovers no longer overflow narrow screens.
 
 ## 0.7.0 — 2026-10-12
 

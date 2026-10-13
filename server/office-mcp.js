@@ -36,6 +36,11 @@ const TOOLS = [
     inputSchema: obj({ kind: { type: 'string', enum: ['question', 'decision', 'blocker', 'review'] }, summary: { type: 'string' } }, ['kind', 'summary']),
   },
   {
+    name: 'attach_files',
+    description: 'Attach images or files (screenshots, say) to your next message to the boss: your final reply, a flag_for_boss, or a post_to_channel. Absolute paths, up to 6, 25 MB each. Nothing is sent by this call itself.',
+    inputSchema: obj({ paths: names }, ['paths']),
+  },
+  {
     name: 'restart_office',
     description: 'Restart the office server so changes to its own code (agent-office/server) take effect. Waits until nobody is mid-turn, so end your turn right after; you are messaged when it is back. Not needed for web changes: a build is enough.',
     inputSchema: obj({ now: { type: 'boolean', description: 'Skip the wait and interrupt anyone mid-turn. Only if asked to.' } }, []),

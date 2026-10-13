@@ -288,6 +288,10 @@ export class Hud {
       const b = e.target.closest('[data-recall]');
       if (b) this.app.recall(b.dataset.recall);
     };
+    $('attn').onclick = (e) => {
+      const b = e.target.closest('[data-attn]');
+      if (b) this.jumpTo(b.dataset.attn);
+    };
     $('jobs').onclick = (e) => {
       const btn = e.target.closest('[data-id]');
       if (btn) this.app.openJob(btn.dataset.id);
@@ -574,11 +578,26 @@ export class Hud {
         <button class="x" title="Close (Esc)">×</button>
       </div>
       <h2>${esc(job.title)}</h2>
-      <dl class="meta" id="meta"></dl>
+      <div class="meta-wrap" id="metaWrap">
+        <button type="button" class="meta-fold" id="metaFold" aria-controls="meta"><span class="chev" aria-hidden="true">▾</span> Details <span class="meta-sum" id="metaSum"></span></button>
+        <dl class="meta" id="meta"></dl>
+      </div>
       <div id="changes"></div>
       <div class="log" id="log">${job.log.map((e, i) => this.entry(e, null, job.log[i - 1])).join('')}</div>
       <div class="d-foot">${this.footer(job)}</div>`;
     el.querySelector('.x').onclick = () => this.closeDetail();
+    const fold = (open) => {
+      $('metaWrap').classList.toggle('shut', !open);
+      $('metaFold').setAttribute('aria-expanded', String(open));
+    };
+    let open = false;
+    try { open = localStorage.getItem('office.meta') === '1'; } catch {}
+    fold(open);
+    $('metaFold').onclick = () => {
+      open = !open;
+      fold(open);
+      try { localStorage.setItem('office.meta', open ? '1' : '0'); } catch {}
+    };
     this.renderMeta(job);
     this.renderChanges(job);
     const log = $('log');
@@ -635,6 +654,8 @@ export class Hud {
   renderMeta(job) {
     const meta = $('meta');
     if (!meta || !job) return;
+    // The model picker lives in here; a refresh must not close it under a click.
+    if (meta.contains(document.activeElement) && document.activeElement.tagName === 'SELECT') return;
     const end = job.status === 'working' || job.status === 'queued' ? Date.now() : job.endedAt || Date.now();
     // A guest's own agent: it runs on their machine and account, so no model, cost or XP here.
     if (job.visitor) {
@@ -653,8 +674,7 @@ export class Hud {
       ...(job.remote ? [['Office', `@${job.remote.host}`]] : []),
       ['Agent', job.agentId ? this.app.staffName(job.agentId) : 'Unassigned'],
       ['Clearance', this.app.modes[job.mode] || job.mode],
-      ['Model', [modelLabel(job.model), job.autoModel && 'chief’s pick',
-        job.escalations ? `moved up ${job.escalations}×` : ''].filter(Boolean).join(' · ')],
+      ['Model', this.modelPicker(job)],
       ['Context', job.context ? `${(job.context / 1000).toFixed(1)}k tokens` : '—'],
       ['Time', job.startedAt ? duration(end - job.startedAt) : '—'],
       ['Cost', `$${(job.cost || 0).toFixed(3)}`],
@@ -667,7 +687,33 @@ export class Hud {
       rows.push(['Memory', bytes(p.mem)]);
       rows.push(['Processes', String(p.procs)]);
     }
-    meta.innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('');
+    const sum = $('metaSum');
+    if (sum) sum.textContent = [modelLabel(job.model), `$${(job.cost || 0).toFixed(2)}`, job.startedAt ? duration(end - job.startedAt) : ''].filter(Boolean).join(' · ');
+    meta.innerHTML = rows.map(([k, v]) => (v && v.html ? `<div><dt>${k}</dt><dd>${v.html}</dd></div>` : `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`)).join('');
+    meta.onchange = (e) => {
+      if (e.target.name !== 'model') return;
+      const pick = e.target.value;
+      e.target.disabled = true;
+      api(jobPath(job.id, '/model'), { model: pick })
+        .then(() => this.toast(job.status === 'working' ? 'Switching after this turn' : 'Model changed', 'good'))
+        .catch((err) => this.toast(err.message, 'bad'))
+        .finally(() => this.renderMeta(this.app.job(job.id)));
+    };
+  }
+
+  // The same models as the composer's picker, minus "Chief picks": the boss is
+  // choosing now. A guest's job isn't ours to switch.
+  modelPicker(job) {
+    const note = [job.autoModel && 'chief’s pick', job.escalations ? `moved up ${job.escalations}×` : ''].filter(Boolean).join(' · ');
+    if (job.guest || job.away) return [modelLabel(job.model), note].filter(Boolean).join(' · ');
+    const src = $('model');
+    const opt = (o) => `<option value="${esc(o.value)}"${o.value === job.model ? ' selected' : ''}>${esc(o.textContent)}</option>`;
+    const groups = [...(src?.querySelectorAll('optgroup') || [])]
+      .map((g) => `<optgroup label="${esc(g.label)}">${[...g.querySelectorAll('option')].map(opt).join('')}</optgroup>`).join('');
+    // A family alias ("sonnet") is what the chief sizes jobs to; it isn't in the list.
+    const known = [...(src?.options || [])].some((o) => o.value === job.model);
+    const current = known || !job.model ? '' : `<option value="${esc(job.model)}" selected>${esc(modelLabel(job.model))}</option>`;
+    return { html: `<select name="model" class="model-pick" aria-label="Model for this job">${current}${groups}</select>${note ? `<small class="model-note">${esc(note)}</small>` : ''}` };
   }
 
   // The final answer usually repeats the last message; show it once.
@@ -1158,6 +1204,47 @@ export class Hud {
     this.unread.clear();
     this.renderChannels();
     this.paintChat();
+    this.renderAttention();
+  }
+
+  // Messages that need the boss: for each job still waiting on them, the latest
+  // flag or "waiting on you" line. Gone once the job is answered or moves on.
+  attention() {
+    const latest = new Map();
+    for (const m of this.chat?.values() || []) {
+      if (m.from !== 'chief' || !m.jobId) continue;
+      if (m.kind !== 'flag' && !(m.kind === 'finished' && m.awaiting)) continue;
+      if (m.kind === 'flag' && m.flag === 'review') continue;
+      if (!this.app.jobs.get(m.jobId)?.awaitingBoss) continue;
+      latest.set(m.jobId, m);
+    }
+    return [...latest.values()];
+  }
+
+  renderAttention() {
+    const box = $('attn');
+    if (!box) return;
+    const items = this.attention();
+    box.hidden = !items.length;
+    box.innerHTML = items.map((m) => {
+      const job = this.app.jobs.get(m.jobId);
+      const text = m.text.replace(/\*\*/g, '').replace(/^[^·]*·\s*/, '');
+      return `<button type="button" class="attn-item" data-attn="${esc(m.id)}" title="${esc(text)}" aria-label="${esc(this.app.doer(job))} needs you: ${esc(job.title)}. Go to message"><i aria-hidden="true">!</i><span><b>${esc(this.app.doer(job))} needs you</b> ${esc(job.title)}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>`;
+    }).join('');
+  }
+
+  jumpTo(id) {
+    const m = this.chat.get(id);
+    if (!m) return;
+    if (this.thread) this.closeThread();
+    if (!this.here(m)) this.selectChannel(m.channel || 'general');
+    this.tab('chat');
+    const el = $('msgs').querySelector(`.msg[data-id="${CSS.escape(id)}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.classList.remove('ping');
+    void el.offsetWidth;
+    el.classList.add('ping');
   }
 
   // Just this channel's messages, newest at the bottom.
@@ -1189,6 +1276,7 @@ export class Hud {
 
   addMessage(m) {
     this.chat.set(m.id, m);
+    this.renderAttention();
     if (m.from !== 'you' && $('app').dataset.m === 'office') $('mChatDot').hidden = false;
     if (!this.here(m)) {
       const id = m.channel || 'general';
@@ -1385,6 +1473,7 @@ export class Hud {
   forget(ids = []) {
     for (const id of ids) {
       this.chat?.delete(id);
+      this.renderAttention();
       for (const box of [$('msgs'), $('threadMsgs')]) box.querySelector(`.msg[data-id="${CSS.escape(id)}"]`)?.remove();
     }
   }

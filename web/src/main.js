@@ -99,11 +99,19 @@ import { speech, recorder } from './voice.js';
 const view = document.getElementById('view');
 const stage = document.getElementById('stage');
 const labels = document.getElementById('labels');
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+// Phones get a lighter render: no ambient-occlusion pass, a small shadow map,
+// no MSAA and a lower pixel ratio. ?lite=0 / ?lite=1 overrides the guess.
+const LITE = (() => {
+  const q = new URLSearchParams(location.search).get('lite');
+  if (q === '0' || q === '1') return q === '1';
+  return matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+})();
+const MAX_DPR = LITE ? 1.25 : 2;
+const renderer = new THREE.WebGLRenderer({ antialias: !LITE, alpha: true, powerPreference: LITE ? 'low-power' : 'high-performance' });
 renderer.setClearColor(0x000000, 0);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_DPR));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = LITE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 1.0;
 stage.appendChild(renderer.domElement);
@@ -119,7 +127,7 @@ const sun = new THREE.DirectionalLight('#fff0d8', 1.75);
 sun.position.set(FLOOR.cx - 18, 34, 20);
 sun.target.position.set(FLOOR.cx, 0, 0);
 sun.castShadow = true;
-sun.shadow.mapSize.set(4096, 4096);
+sun.shadow.mapSize.setScalar(LITE ? 1024 : 4096);
 Object.assign(sun.shadow.camera, { left: -38, right: 38, top: 30, bottom: -30, near: 1, far: 110 });
 sun.shadow.bias = -0.0003;
 sun.shadow.normalBias = 0.03;
@@ -162,14 +170,18 @@ function fitRadius(phi, theta, target) {
 
 // Ambient occlusion: soft shade where things meet, which is most of what
 // makes a miniature read as solid. Rendered with 4x MSAA.
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
-composer.addPass(new RenderPass(scene, camera));
-const ao = new GTAOPass(scene, camera, 1, 1);
-ao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.6, thickness: 1.5, scale: 1.1, samples: 16 });
-ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
-ao.blendIntensity = 0.85;
-composer.addPass(ao);
-composer.addPass(new OutputPass());
+// Lite mode skips all of this and renders straight to the screen.
+let composer = null;
+if (!LITE) {
+  composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  const ao = new GTAOPass(scene, camera, 1, 1);
+  ao.updateGtaoMaterial({ radius: 0.9, distanceExponent: 1.6, thickness: 1.5, scale: 1.1, samples: 16 });
+  ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+  ao.blendIntensity = 0.85;
+  composer.addPass(ao);
+  composer.addPass(new OutputPass());
+}
 
 function backdrop() {
   const c = document.createElement('canvas');
@@ -193,8 +205,11 @@ function resize() {
   viewW = stage.clientWidth;
   viewH = stage.clientHeight;
   renderer.setSize(viewW, viewH, false);
-  composer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
-  composer.setSize(viewW, viewH);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, MAX_DPR));
+  if (composer) {
+    composer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+    composer.setSize(viewW, viewH);
+  }
   camera.aspect = viewW / viewH;
   camera.updateProjectionMatrix();
   // Until you've moved the camera yourself, keep the whole office framed.
@@ -296,6 +311,7 @@ app.refreshLists = () => {
   hud.renderJobs(jobs, app.staffName);
   hud.renderStats(jobs, app.chiefCost);
   drawBoard(office.board, jobs);
+  hud.renderAttention();
 };
 
 app.openJob = (id) => {
@@ -821,7 +837,8 @@ function frame() {
     for (const led of office.blinkers) if (Math.random() < 0.25) led.material.emissiveIntensity = Math.random() < 0.5 ? 0.15 : 1.4;
   }
 
-  composer.render(dt);
+  if (composer) composer.render(dt);
+  else renderer.render(scene, camera);
   // Zoomed far out, names stay but speech bubbles step back.
   const isFar = camera.position.distanceTo(controls.target) > HOME.radius * 1.25;
   const onScreen = [];

@@ -130,16 +130,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
   -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
 }
 .brand { padding: 20px 20px 14px; position: relative; }
-.title-end { display: flex; align-items: center; gap: 6px; }
+.title-end { display: flex; align-items: center; gap: 4px; flex: none; }
 .theme-btn {
-  all: unset; cursor: pointer; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
+  all: unset; cursor: pointer; flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
   color: var(--ink-3); transition: background 0.15s, color 0.15s;
 }
 .theme-btn:hover, .theme-btn[aria-expanded="true"] { background: var(--t2); color: var(--ink); }
 .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .theme-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .theme-pop {
-  position: absolute; z-index: 40; top: 52px; right: 14px; width: 252px; padding: 10px 12px 12px;
+  position: absolute; z-index: 40; top: 52px; right: 14px; width: 252px; max-width: calc(100% - 28px); box-sizing: border-box; padding: 10px 12px 12px;
   background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: 0 10px 30px rgb(0 0 0 / 0.16);
 }
@@ -204,7 +204,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- linked offices ---------- */
 
-.link-pop { width: 320px; max-height: calc(100dvh - 80px); overflow-y: auto; overscroll-behavior: contain; }
+.link-pop { width: 320px; overflow-x: hidden; max-height: calc(100dvh - 80px); overflow-y: auto; overscroll-behavior: contain; }
 .link-actions { display: grid; gap: 8px; margin-top: 10px; }
 .link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .link-actions .link-row .ghost { flex: 1; background: var(--t1); }
@@ -280,8 +280,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .title-start { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand h1 {
   margin: 0; font-size: 20px; font-weight: 720; letter-spacing: -0.03em; white-space: nowrap;
-  background: linear-gradient(120deg, var(--ink) 40%, color-mix(in srgb, var(--accent) 75%, var(--ink)) 100%);
-  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* Progress is drawn as SVG rings: --p (0-100) is set from hud.js, and the
@@ -320,19 +319,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .fold[aria-expanded="true"] svg { transform: rotate(180deg); }
 @media (prefers-reduced-motion: reduce) { .fold svg { transition: none; } }
 .gauges {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
-  padding: 10px 0 2px; border-top: 1px solid var(--line);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px;
+  padding: 12px 0 4px; border-top: 1px solid var(--line);
 }
 .usage, #load { display: contents; }
 .usage[hidden], #load[hidden], .meter[hidden] { display: none; }
 .meter {
   --bar: var(--work);
   display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "ring v" "ring k"; column-gap: 8px; align-items: center;
-  padding: 0 10px; min-width: 0; cursor: default; position: relative;
-}
-#useSession { padding-left: 0; }
-.meter:not(#useSession)::before {
-  content: ""; position: absolute; left: 0; top: 3px; bottom: 3px; width: 1px; background: var(--line);
+  padding: 0; min-width: 0; cursor: default; position: relative;
 }
 .meter .bar { grid-area: ring; width: 30px; height: 30px; }
 .meter .ico { fill: none; stroke: var(--ink-3); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; transform: rotate(90deg); transform-origin: 18px 18px; }
@@ -618,6 +613,23 @@ button, input, textarea, select { font: inherit; color: inherit; }
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .composer:focus-within { border-color: var(--ink-3); box-shadow: 0 0 0 4px var(--t1); }
+/* Jobs waiting on the boss: a slim tinted row each, a red dot that pulses, a link to the message. */
+.attn { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; max-height: 84px; overflow-y: auto; }
+.attn[hidden] { display: none; }
+.attn-item {
+  all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 4px 8px;
+  border-radius: 8px; background: var(--bad-bg); color: var(--bad-fg); font-size: 12px; line-height: 1.3;
+}
+.attn-item:hover { filter: brightness(0.97); }
+.attn-item i { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--bad); font-size: 0; animation: attn-pulse 2s ease-in-out infinite; }
+.attn-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attn-item b { font-weight: 640; margin-right: 4px; }
+.attn-item svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.attn-item:focus-visible { outline: 2px solid var(--bad); outline-offset: 1px; }
+@keyframes attn-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .attn-item i { animation: none; } }
+.msg.ping { animation: ping 1.8s ease-out; }
+@keyframes ping { 0%, 40% { background: var(--bad-bg); } }
 .composer textarea { all: unset; display: block; width: 100%; font-size: 14px; line-height: 1.45; min-height: 20px; white-space: pre-wrap; overflow-y: auto; }
 .composer textarea::placeholder { color: var(--ink-3); }
 /* The row has to fit the sidebar, so the selects drop the chunky native arrow
@@ -864,7 +876,6 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
   .brand h1 { font-size: 18px; }
   /* Plan usage and machine load stay visible, just tighter: the reset time is
      kept for the plan (it's the useful bit) and dropped for CPU/memory. */
-  .meter { padding: 6px 10px 6px; row-gap: 4px; }
   .tabs { display: none; }
   .msgs { padding: 12px 14px 8px; }
   .channels { padding: 8px 10px 0; }
@@ -1054,3 +1065,19 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .set-foot .acct-forget { margin: 0; }
 @media (max-width: 520px) { .set-row { grid-template-columns: 1fr; } .set-switch { justify-self: start; } }
 @media (prefers-reduced-motion: reduce) { .set-switch, .set-switch::after { transition: none; } }
+
+.model-pick { font: inherit; font-weight: 550; max-width: 100%; padding: 1px 4px; margin-left: -5px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
+.model-pick:hover, .model-pick:focus-visible { border-color: var(--line, rgba(0,0,0,.15)); background: rgba(255,255,255,.6); }
+.model-pick:disabled { opacity: .5; cursor: progress; }
+.model-note { display: block; font-size: 11px; font-weight: 400; color: var(--ink-3); }
+
+.meta-wrap { margin: 0 0 14px; }
+.meta-wrap .meta { margin-top: 8px; }
+.meta-wrap.shut .meta { display: none; }
+.meta-fold { display: flex; align-items: center; gap: 6px; margin: 0 20px; padding: 4px 0; border: 0; background: none; font: inherit; font-size: 12px; font-weight: 600; color: var(--ink-3); cursor: pointer; min-height: 28px; }
+.meta-fold:hover { color: var(--ink); }
+.meta-fold .chev { display: inline-block; transition: transform .15s ease; }
+.meta-wrap.shut .chev { transform: rotate(-90deg); }
+.meta-sum { display: none; font-weight: 400; }
+.meta-wrap.shut .meta-sum { display: inline; }
+@media (max-width: 700px) { .meta-fold { margin: 0 16px; } }
