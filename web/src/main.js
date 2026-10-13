@@ -23,6 +23,7 @@ import { BreakRoom } from './breakroom.js';
 import { PoolRoom } from './pool.js';
 import { Visitors } from './visitors.js';
 import { Confetti } from './fx.js';
+import { AgentChat } from './talk.js';
 import { Hud, api } from './hud.js';
 import { initShop, setEconomy, bumpPot } from './shop.js';
 import { decorateDesk, placeOfficeItems } from './decor.js';
@@ -844,6 +845,10 @@ function steer(dt) {
 
 // ---------- picking ----------
 
+const chat = new AgentChat(labels, { onDetails: (id) => { chat.close(); app.select(id); } });
+chat.onClose = () => app.select(null);
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && chat.id && !e.defaultPrevented) chat.close(); });
+
 const ray = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 function aim(e) {
@@ -859,11 +864,19 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || e.button !== 0) return;
   aim(e);
   const hit = ray.intersectObjects(people(), true)[0];
-  if (!hit) return;
+  if (!hit) { if (chat.id) { chat.close(); app.select(null); } return; }
   if (hit.object.userData.agentId === 'chief') {
     hud.focusInput();
     chief.say('Tell me what you need.', '', 3000);
-  } else app.select(hit.object.userData.agentId);
+  } else if (visiting.on) app.select(hit.object.userData.agentId);
+  else {
+    // A click opens a chat right over their head; "Open job" in it brings up
+    // the side panel the way a click used to.
+    const agent = app.agents.get(hit.object.userData.agentId);
+    app.select(agent.id, false);
+    focus();
+    chat.open(agent);
+  }
 });
 renderer.domElement.addEventListener('dblclick', (e) => {
   aim(e);
@@ -927,6 +940,7 @@ function frame() {
     if (!a.gone) continue;
     a.dispose();
     app.agents.delete(a.id);
+    if (chat.id === a.id) chat.close();
     if (app.selected === a.id) app.select(null);
   }
   breakRoom.update([...app.agents.values()], t);
@@ -953,6 +967,7 @@ function frame() {
     if (a.onScreen) onScreen.push(a);
   }
   declutter(onScreen, dt, t);
+  chat.place(viewW);
   visitors.placeSign(viewW, viewH);
   far = isFar;
   requestAnimationFrame(frame);

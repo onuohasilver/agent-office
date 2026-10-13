@@ -11,6 +11,7 @@ import { canSee, route } from './chief.js';
 import { fetchUsage } from './usage.js';
 import { writeStandup, dueToday } from './standup.js';
 import { writeBanter } from './banter.js';
+import { writeReply } from './talk.js';
 import { sampleProcs, resetProcs, machine } from './procstat.js';
 import { transcribe, vocabulary, voiceReady, speak, piperReady } from './voice.js';
 import { snapshotTree, summarize, fileDiff } from './changes.js';
@@ -655,6 +656,38 @@ async function claimBanter(pair, game = false) {
   } catch {
     banterAt = Date.now() - BANTER_GAP() + 30 * 1000;
     return { id: c.id };
+  }
+}
+
+// Click-an-agent chat: a quick in-character answer from one cheap call. The
+// browser keeps the last few turns and sends them back, so nothing is stored
+// here. One question at a time per agent, so a held-down Enter can't run up a bill.
+const talking = new Set();
+async function talkTo(agentId, text, history) {
+  const s = onFloor().find((x) => x.id === agentId);
+  if (!s) throw new Error('They are not on the floor right now.');
+  text = clip(text, 400);
+  if (!text) throw new Error('Say something first.');
+  if (talking.has(agentId)) throw new Error(`${s.name} is still answering.`);
+  talking.add(agentId);
+  try {
+    const job = state.jobs.find((j) => j.agentId === agentId && j.status === 'working');
+    const last = job && [...job.log].reverse().find((e) => e.kind === 'text' || e.kind === 'tool');
+    const now = job
+      ? `Right now: working on "${clip(job.title, 100)}" in ${job.repo}${job.waiting ? ' (waiting on the boss)' : ''}.${last ? ` Last thing you did: ${clip(last.summary || last.text, 140)}.` : ''}`
+      : 'Right now: between jobs, in the office.';
+    const said = (Array.isArray(history) ? history : []).slice(-6)
+      .map((h) => `${h.who === 'you' ? 'Boss' : s.name}: ${clip(h.text, 240)}`);
+    const { reply, cost } = await writeReply([
+      `You are ${s.name}. ${persona(agentId)}`, '', now, '',
+      said.length ? `This chat so far:\n${said.join('\n')}` : 'This chat has just started.', '',
+      `Boss: ${text}`,
+    ].join('\n'), { bin: CLAUDE, model: settings.get('banterModel'), env: auth.env() });
+    state.chiefCost += cost || 0;
+    send({ t: 'chief', busy: false, cost: state.chiefCost });
+    return reply;
+  } finally {
+    talking.delete(agentId);
   }
 }
 
@@ -2621,6 +2654,10 @@ const server = http.createServer(async (req, res) => {
       const text = parts[3] === 'dismiss' ? dismiss([parts[2]]) : recall([parts[2]]);
       if (parts[3] === 'dismiss' && !state.dismissed.includes(parts[2])) return json(res, 400, { error: text });
       return json(res, 200, { text });
+    }
+    if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && parts[3] === 'talk' && !parts[4]) {
+      const { text, history } = await readBody(req);
+      try { return json(res, 200, { reply: await talkTo(parts[2], text, history) }); } catch (err) { return json(res, 400, { error: err.message }); }
     }
     if (req.method === 'POST' && parts[1] === 'staff' && parts[2] && parts[3] === 'profile' && !parts[4]) {
       let p;
