@@ -1,0 +1,29 @@
+.chip.pot.goal-chip { gap: 8px; }
+.goal-chip i { font-style: normal; }
+.chip.pot.goal-chip .goal-name { padding-left: 0; margin-left: 0; border-left: 0; max-width: 11ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.goal-bar { display: inline-block; position: relative; width: 64px; height: 6px; border-radius: 3px; background: var(--t2); overflow: hidden; vertical-align: middle; }
+.chip.pot.goal-chip .goal-bar { padding: 0; margin: 0; border-left: 0; }
+.goal-bar u { position: absolute; inset: 0 auto 0 0; background: var(--good); border-radius: inherit; text-decoration: none; transition: width 0.6s var(--ease); }
+.goal-chip.done .goal-bar u { background: var(--wait); }
+.goal-bar.big { display: block; width: 100%; height: 10px; margin-top: 8px; border-radius: 5px; }
+@media (max-width: 720px) { .goal-chip .goal-bar { width: 40px; } .goal-chip .goal-name { display: none; } }
+.goal-dialog { border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: var(--paper); color: var(--ink); width: min(420px, calc(100vw - 32px)); }
+.goal-dialog::backdrop { background: rgba(29, 27, 24, 0.35); }
+.goal-form { display: grid; gap: 12px; }
+.goal-form h2, .goal-form h3 { margin: 0; font-size: 16px; }
+.goal-form h3 { font-size: 13px; color: var(--ink-2); margin-top: 6px; }
+.goal-form label { display: grid; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.goal-form input { font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); }
+.goal-form .row { display: flex; gap: 8px; justify-content: flex-end; }
+.goal-now { font-size: 13px; }
+.goal-error { margin: 0; color: var(--bad); font-size: 12px; }
+.bets { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; font-size: 12px; }
+.bet { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; background: var(--t1); }
+.bet em { font-style: normal; color: var(--ink-2); }
+.bet.won em { color: var(--good); }
+.bet.void { opacity: 0.7; }
+.bet.empty { display: block; color: var(--ink-3); }
+.goal-confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 9999; }
+.goal-confetti i { position: absolute; top: -12px; left: var(--x); width: 8px; height: 12px; border-radius: 2px; animation: goal-fall var(--d) var(--w) cubic-bezier(0.3, 0.4, 0.6, 1) forwards; }
+@keyframes goal-fall { to { transform: translate(var(--dx), 110vh) rotate(720deg); opacity: 0.9; } }
+@media (prefers-reduced-motion: reduce) { .goal-bar u { transition: none; } .goal-confetti { display: none; } }
