@@ -1,0 +1,14 @@
+{
+  "name": "agent-office-desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "stage": "node scripts/stage.mjs",
+    "build": "node scripts/stage.mjs && tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
