@@ -635,6 +635,7 @@ export class Hud {
     }
     const open = this.changesOpen === job.id;
     const status = { added: 'A', modified: 'M', deleted: 'D' };
+    const editable = !visiting.on && !job.visitor && !job.away;
     box.innerHTML = `
       <div class="changes">
         <button class="c-head" aria-expanded="${open}">
@@ -643,15 +644,19 @@ export class Hud {
           <span class="c-caret">${open ? '▾' : '▸'}</span>
         </button>
         ${open ? `<ul class="c-files">${c.files.map((f, i) => `
-          <li><button class="c-file" data-i="${i}" aria-expanded="false">
+          <li class="c-li"><button class="c-file" data-i="${i}" aria-expanded="false">
             <span class="st ${known(status, f.status)}">${status[known(status, f.status)] || ''}</span><span class="p" title="${esc(f.path)}">${esc(f.path)}</span>
             <span class="n">${f.binary ? 'binary' : `<b class="add">+${num(f.add)}</b> <b class="del">−${num(f.del)}</b>`}</span>
-          </button></li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${num(c.count - c.files.length)} more</li>` : ''}</ul>` : ''}
+          </button>${editable && f.status !== 'deleted' && !f.binary ? `<button class="c-open" data-path="${esc(f.path)}" title="Open in the editor" aria-label="Edit ${esc(f.path)}">Edit</button>` : ''}</li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${num(c.count - c.files.length)} more</li>` : ''}</ul>` : ''}
       </div>`;
     box.querySelector('.c-head').onclick = () => {
       this.changesOpen = open ? null : job.id;
       this.renderChanges(job);
     };
+    box.querySelectorAll('.c-open').forEach((b) => (b.onclick = () => {
+      this.mobile('office');
+      openFiles(job.repo, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); }, b.dataset.path);
+    }));
     box.querySelectorAll('.c-file').forEach((b) => (b.onclick = async () => {
       const li = b.parentElement;
       const shown = li.querySelector('pre');

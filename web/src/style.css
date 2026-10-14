@@ -1029,6 +1029,11 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .c-files .more { padding: 7px 12px; font-size: 12px; color: var(--ink-3); }
 .c-file { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 12px; cursor: pointer; font-size: 12.5px; }
 .c-file:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.c-li { display: flex; align-items: center; }
+.c-li .c-file { flex: 1; min-width: 0; width: auto; }
+.c-open { all: unset; cursor: pointer; margin-right: 10px; padding: 3px 10px; border-radius: 7px; font-size: 12px; font-weight: 600; color: var(--accent); border: 1px solid var(--line); }
+.c-open:hover { background: var(--t2); }
+.c-open:focus-visible { outline: 2px solid var(--accent); }
 .c-file .st { font: 700 10.5px/1 ui-monospace, monospace; width: 16px; text-align: center; padding: 3px 0; border-radius: 4px; background: var(--t2); color: var(--ink-2); }
 .c-file .st.added { background: var(--good-bg); color: var(--good-fg); }
 .c-file .st.deleted { background: var(--bad-bg); color: var(--bad-fg); }

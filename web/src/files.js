@@ -23,7 +23,7 @@ let dirty = false;
 
 export function initFiles(a) { app = a; }
 
-export async function openFiles(name, back = null) {
+export async function openFiles(name, back = null, startPath = '') {
   onClose = back;
   repo = name; tree = new Map(); open = new Set(['']); file = null; state = 'idle'; message = ''; dirty = false;
   if (!root) build();
@@ -32,6 +32,7 @@ export async function openFiles(name, back = null) {
   paint();
   await loadDir('');
   root.querySelector('.fe-x').focus();
+  if (startPath) await reveal(startPath);
 }
 
 export function closeFiles(force = false) {
@@ -41,6 +42,20 @@ export function closeFiles(force = false) {
   root.parentElement.classList.remove('fe-open');
   repo = null; file = null; dirty = false;
   onClose?.();
+}
+
+// Opens a file given by path, with its folders expanded in the tree.
+async function reveal(p) {
+  const was = repo;
+  const parts = p.split('/').filter(Boolean);
+  for (let i = 1; i < parts.length; i++) {
+    const dir = parts.slice(0, i).join('/');
+    open.add(dir);
+    if (!Array.isArray(tree.get(dir))) await loadDir(dir);
+    if (repo !== was) return;
+  }
+  paintTree();
+  await openFile(parts.join('/'), true);
 }
 
 const editor = () => root.querySelector('.fe-text');
