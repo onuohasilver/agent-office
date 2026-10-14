@@ -360,7 +360,7 @@ export class Guests {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const threads = Object.entries(this.asked.threads);
       if (threads.length > MAX_THREADS) this.asked.threads = Object.fromEntries(threads.slice(-MAX_THREADS));
-      fs.writeFileSync(this.file + '.tmp', JSON.stringify({ used: this.used, asked: this.asked }));
+      fs.writeFileSync(this.file + '.tmp', JSON.stringify({ used: this.used, asked: this.asked }), { mode: 0o600 });
       fs.renameSync(this.file + '.tmp', this.file);
     } catch (err) { console.error('[guests] could not save', err.message); }
   }
