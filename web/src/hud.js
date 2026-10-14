@@ -8,6 +8,7 @@ import { allowRepos, jobPath, replyBody, visitJob, visiting } from './links.js';
 import { PAY, modelPay, naira } from '../../shared/shop.js';
 
 import { openJourneys } from './journeys.js';
+import { openFiles } from './files.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -310,6 +311,11 @@ export class Hud {
         this.mobile('office');
         return openJourneys(map.dataset.journeys, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); });
       }
+      const edit = e.target.closest('[data-files]');
+      if (edit) {
+        this.mobile('office');
+        return openFiles(edit.dataset.files, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); });
+      }
       const add = e.target.closest('[data-new]');
       if (add) return this.focusInput(`#${add.dataset.new.replace(/\s+/g, '-')} `);
       const head = e.target.closest('[data-project]');
@@ -529,7 +535,7 @@ export class Hud {
       $('projects').innerHTML = `<p class="empty">No projects worked on yet. Ask for something in the chat.</p>`;
       return;
     }
-    const sub = (p) => `<div class="sub">${visiting.on ? '' : `<button type="button" class="map" data-journeys="${esc(p.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.5"/><rect x="15" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 12c3 0 3-5 6-5M9 12c3 0 3 5 6 5"/></svg><span>User journeys</span><span class="go" aria-hidden="true">→</span></button>`}${p.js.length ? p.js.slice(0, 8).map((j) => `
+    const sub = (p) => `<div class="sub">${visiting.on ? '' : `<button type="button" class="map" data-journeys="${esc(p.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="9" width="6" height="6" rx="1.5"/><rect x="15" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 12c3 0 3-5 6-5M9 12c3 0 3 5 6 5"/></svg><span>User journeys</span><span class="go" aria-hidden="true">→</span></button><button type="button" class="map" data-files="${esc(p.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span>Edit files</span><span class="go" aria-hidden="true">→</span></button>`}${p.js.length ? p.js.slice(0, 8).map((j) => `
           <button class="job" data-id="${esc(j.id)}"><span class="dot ${known(STATUS, j.status)}"></span><span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
             <span class="m">${j.agentId ? esc(this.app.staffName(j.agentId)) + ' · ' : ''}${statusText(j.status)}</span></button>`).join('')
       : `<p class="none">Nothing has run here yet.</p>`}

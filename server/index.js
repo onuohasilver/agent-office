@@ -26,6 +26,7 @@ import { Guests } from './guests.js';
 import { Visits, visitJob } from './visits.js';
 import { findIcon } from './icons.js';
 import { Journeys } from './journeys.js';
+import * as files from './files.js';
 import { lanAddresses, phoneLinks, qrSvg, qrText } from './phone.js';
 import { Tunnel } from './tunnel.js';
 import { findCloudflared } from './cloudflared.js';
@@ -2721,13 +2722,13 @@ function trusted(req) {
   } catch { return false; }
 }
 
-function readBody(req) {
+function readBody(req, limit = 200_000) {
   return new Promise((resolve, reject) => {
     let size = 0;
     const parts = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > 200_000) { reject(new Error('Too large.')); req.destroy(); }
+      if (size > limit) { reject(new Error('Too large.')); req.destroy(); }
       else parts.push(c);
     });
     req.on('end', () => {
@@ -2814,6 +2815,19 @@ const server = http.createServer(async (req, res) => {
         'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'x-content-type-options': 'nosniff',
       });
       return fs.createReadStream(icon.file).pipe(res);
+    }
+    // The boss's own file editor: a project's folders and text files.
+    if (url.pathname === '/api/files' && ['GET', 'PUT'].includes(req.method)) {
+      const body = req.method === 'PUT' ? await readBody(req, 2 * files.MAX_BYTES) : null;
+      const dir = repoPath(body ? body.repo : url.searchParams.get('repo'));
+      if (!dir) return json(res, 404, { error: 'Unknown project folder.' });
+      try {
+        if (body) return json(res, 200, files.write(dir, body.path, body.text, body.mtime ?? null));
+        const rel = url.searchParams.get('path') || '';
+        return json(res, 200, url.searchParams.get('dir') === '1' ? files.list(dir, rel) : files.read(dir, rel));
+      } catch (err) {
+        return json(res, err.code >= 400 && err.code < 600 ? err.code : 500, { error: err.message });
+      }
     }
     if (req.method === 'GET' && url.pathname === '/api/repos') return json(res, 200, { root: ROOT, repos: listRepos() });
     // A project's user journey map, and the job drawing it if one is under way.

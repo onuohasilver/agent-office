@@ -32,6 +32,7 @@ import { decorateDesk, placeOfficeItems } from './decor.js';
 import { itemById, setPay, naira } from '../../shared/shop.js';
 
 import { initJourneys, journeyJobs } from './journeys.js';
+import { initFiles } from './files.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
@@ -293,6 +294,7 @@ const app = {
 const world = { scene, ...office, agentIndex: (id) => app.staff.findIndex((s) => s.id === id) };
 const hud = new Hud(app);
 initJourneys(app);
+initFiles(app);
 initSettings({ toast: (m, k) => hud.toast(m, k), renderOwner: (n) => { if (!visiting.on) hud.renderOwner(n); } });
 initShop(app, { toast: (m, k) => hud.toast(m, k) });
 const chief = new Agent(CHIEF, world, labels, { desk: office.reception, face: 0 });

@@ -1449,6 +1449,7 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 @media (prefers-reduced-motion: reduce) { .jmap, .jm-card, .jm-ghosts i { animation: none; } }
 /* The office goes quiet under the map: no name tags or controls poking through. */
 .view.jm-open :is(#labels, .hud, .hint, #stage) { visibility: hidden; }
+.view.fe-open :is(#labels, .hud, .hint, #stage) { visibility: hidden; }
 /* A wire back to an earlier step: dashed, so it reads as "go round again". */
 .jm-wires path.loop { stroke-dasharray: 5 4; }
 
@@ -1476,3 +1477,71 @@ body.viewing { overflow: hidden; }
 .ac-tip { border: 1px solid var(--line); background: transparent; color: inherit; border-radius: 10px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
 .ac-tip:hover { background: var(--line); }
 .ac-tips + .ac-form { border-top: 0; }
+
+/* ---------- file editor ---------- */
+.fedit {
+  position: absolute; inset: 0; z-index: 21; display: flex; flex-direction: column;
+  background: var(--paper); animation: jm-in 0.22s var(--ease);
+}
+.fe-bar {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; min-height: 58px;
+  border-bottom: 1px solid var(--line); background: var(--glass);
+  -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+}
+.fe-x, .fe-toggle {
+  all: unset; cursor: pointer; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: var(--ink-2); flex: none;
+}
+.fe-x:hover, .fe-toggle:hover { background: var(--t2); color: var(--ink); }
+.fe-x:focus-visible, .fe-toggle:focus-visible { outline: 2px solid var(--accent); }
+.fe-x svg, .fe-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.fe-toggle { display: none; }
+.fe-title { display: flex; flex-direction: column; min-width: 0; }
+.fe-title b { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fe-sub { font: 12px var(--mono); color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fe-fill { flex: 1; }
+.fe-note { font-size: 12px; color: var(--good); }
+.fe-note[data-kind="bad"] { color: var(--bad); }
+.fe-save {
+  all: unset; cursor: pointer; padding: 7px 16px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  background: var(--ink); color: var(--paper); transition: opacity 0.15s var(--ease), transform 0.12s var(--ease);
+}
+.fe-save:active:not(:disabled) { transform: scale(0.97); }
+.fe-save:disabled { opacity: 0.3; cursor: default; }
+.fe-save:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fe-body { flex: 1; min-height: 0; display: flex; }
+.fe-tree { width: 260px; flex: none; overflow: auto; padding: 8px 6px; border-right: 1px solid var(--line); background: var(--paper-2); }
+.fe-row {
+  all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; cursor: pointer;
+  padding: 5px 8px 5px calc(8px + var(--d, 0) * 14px); border-radius: 7px; font-size: 13px; color: var(--ink-2);
+}
+.fe-row span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fe-row:hover { background: var(--t1); color: var(--ink); }
+.fe-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.fe-row[aria-current="true"] { background: var(--t3); color: var(--ink); font-weight: 600; }
+.fe-row svg { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; opacity: 0.7; }
+.fe-caret { width: 10px; flex: none; font-size: 14px; color: var(--ink-3); transition: transform 0.15s var(--ease); }
+.fe-row[aria-expanded="true"] .fe-caret { transform: rotate(90deg); }
+.fe-none, .fe-err { padding: 4px 8px 4px calc(30px + var(--d, 0) * 14px); font-size: 12px; color: var(--ink-3); }
+.fe-err { color: var(--bad); }
+.fe-err button { all: unset; cursor: pointer; text-decoration: underline; }
+.fe-skel { display: grid; gap: 8px; padding: 6px 8px 6px calc(8px + var(--d, 0) * 14px); }
+.fe-skel i { height: 10px; border-radius: 5px; background: linear-gradient(90deg, var(--t1), var(--t3), var(--t1)); background-size: 200% 100%; animation: fe-shimmer 1.2s linear infinite; }
+.fe-skel i:nth-child(2) { width: 70%; } .fe-skel i:nth-child(3) { width: 85%; } .fe-skel i:nth-child(4) { width: 55%; } .fe-skel i:nth-child(5) { width: 75%; }
+.fe-skel.big { padding: 22px; gap: 12px; }
+@keyframes fe-shimmer { to { background-position: -200% 0; } }
+.fe-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.fe-empty { margin: auto; padding: 24px; color: var(--ink-3); font-size: 14px; text-align: center; }
+.fe-conflict { padding: 9px 16px; font-size: 13px; background: var(--wait-bg); color: var(--wait-fg); }
+.fe-conflict button { all: unset; cursor: pointer; font-weight: 650; text-decoration: underline; margin-left: 6px; }
+.fe-text {
+  flex: 1; min-height: 0; width: 100%; box-sizing: border-box; border: 0; outline: 0; resize: none; padding: 16px 20px;
+  background: var(--surface); color: var(--ink); font: 13px/1.6 var(--mono); tab-size: 2; white-space: pre; overflow: auto;
+}
+.fe-foot { display: flex; justify-content: space-between; padding: 5px 16px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--ink-3); background: var(--paper-2); }
+@media (max-width: 860px) {
+  .fe-toggle { display: grid; }
+  .fe-tree { position: absolute; top: 58px; bottom: 0; left: 0; z-index: 3; width: min(300px, 86%); transform: translateX(-102%); transition: transform 0.2s var(--ease); box-shadow: 6px 0 24px rgba(0,0,0,0.12); }
+  .fedit.fe-tree-open .fe-tree { transform: none; }
+  .fe-text { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) { .fedit, .fe-skel i { animation: none; } .fe-tree, .fe-caret { transition: none; } }
