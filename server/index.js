@@ -739,8 +739,9 @@ const running = new Map();
 const graces = new Map();
 // A guest job's tokens counted so far this turn, by API call (message id).
 const guestTurn = new Map();
-// Everything a call was billed for. Cache reads and writes are most of it.
-const allTokens = (u) => (u.input_tokens || 0) + (u.output_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+// Everything a call was billed for. Cache reads are most of it but cost a
+// tenth of fresh input, so they count at a tenth.
+const allTokens = (u) => (u.input_tokens || 0) + (u.output_tokens || 0) + Math.ceil((u.cache_read_input_tokens || 0) / 10) + (u.cache_creation_input_tokens || 0);
 const tokens = new Map();
 // Jobs paused until a colleague answers or finishes handed-off work:
 // jobId -> [{ kind: 'job', id } | { kind: 'reply', from, timer }]
@@ -3172,6 +3173,7 @@ function shutdown(code = 0) {
   for (const child of running.values()) child.kill('SIGTERM');
   clearTimeout(saveTimer);
   board.flush();
+  guests?.save();
   fs.mkdirSync(DATA, { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state));
   // A stale port file points the desktop app and --link at whatever takes

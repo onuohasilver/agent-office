@@ -342,11 +342,14 @@ export class Guests {
     const u = this.used[linkId]?.day === day ? this.used[linkId] : { day, tokens: 0 };
     u.tokens += n;
     this.used[linkId] = u;
-    this.save();
     const p = this.links.guestPolicy(linkId);
     if (p && u.tokens >= p.tokensPerDay) {
+      this.save();
       for (const j of this.jobsOf(linkId, true)) this.office.stopJob(j, 'Stopped: the guest used today’s tokens.');
+      return;
     }
+    // This runs on every API call, so the file is written at most every few seconds.
+    if (!this.saveTimer) { this.saveTimer = setTimeout(() => { this.saveTimer = null; this.save(); }, 5000); this.saveTimer.unref?.(); }
   }
 
   save() {
