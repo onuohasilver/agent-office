@@ -629,13 +629,28 @@ export class Hud {
     const box = $('changes');
     const c = job.changes;
     if (!box) return;
+    const editable = !visiting.on && !job.visitor && !job.away;
+    const bindOpen = () => box.querySelectorAll('.c-open').forEach((b) => (b.onclick = () => {
+      this.mobile('office');
+      openFiles(job.repo, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); }, b.dataset.path);
+    }));
+    const openBtn = (p) => `<button class="c-open" data-path="${esc(p)}" title="Open in the editor" aria-label="Edit ${esc(p)}">Edit</button>`;
+    // No git to diff against (or no diff yet): the files the agent wrote to.
+    if (!c?.count && editable && job.edited?.length) {
+      box.innerHTML = `
+        <div class="changes">
+          <div class="c-head static"><span class="c-title">Files edited</span><span class="c-sum">${num(job.edited.length)} file${job.edited.length === 1 ? '' : 's'}</span></div>
+          <ul class="c-files">${job.edited.map((p) => `
+            <li class="c-li"><span class="c-file plain"><span class="p" title="${esc(p)}">${esc(p)}</span></span>${openBtn(p)}</li>`).join('')}</ul>
+        </div>`;
+      return bindOpen();
+    }
     if (!c || !c.count) {
       box.innerHTML = c ? `<div class="changes none">No files changed.</div>` : '';
       return;
     }
     const open = this.changesOpen === job.id;
     const status = { added: 'A', modified: 'M', deleted: 'D' };
-    const editable = !visiting.on && !job.visitor && !job.away;
     box.innerHTML = `
       <div class="changes">
         <button class="c-head" aria-expanded="${open}">
@@ -647,16 +662,13 @@ export class Hud {
           <li class="c-li"><button class="c-file" data-i="${i}" aria-expanded="false">
             <span class="st ${known(status, f.status)}">${status[known(status, f.status)] || ''}</span><span class="p" title="${esc(f.path)}">${esc(f.path)}</span>
             <span class="n">${f.binary ? 'binary' : `<b class="add">+${num(f.add)}</b> <b class="del">−${num(f.del)}</b>`}</span>
-          </button>${editable && f.status !== 'deleted' && !f.binary ? `<button class="c-open" data-path="${esc(f.path)}" title="Open in the editor" aria-label="Edit ${esc(f.path)}">Edit</button>` : ''}</li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${num(c.count - c.files.length)} more</li>` : ''}</ul>` : ''}
+          </button>${editable && f.status !== 'deleted' && !f.binary ? openBtn(f.path) : ''}</li>`).join('')}${c.count > c.files.length ? `<li class="more">and ${num(c.count - c.files.length)} more</li>` : ''}</ul>` : ''}
       </div>`;
     box.querySelector('.c-head').onclick = () => {
       this.changesOpen = open ? null : job.id;
       this.renderChanges(job);
     };
-    box.querySelectorAll('.c-open').forEach((b) => (b.onclick = () => {
-      this.mobile('office');
-      openFiles(job.repo, () => { if ($('app').dataset.m === 'office' && matchMedia('(max-width: 860px)').matches) this.tab('projects'); }, b.dataset.path);
-    }));
+    bindOpen();
     box.querySelectorAll('.c-file').forEach((b) => (b.onclick = async () => {
       const li = b.parentElement;
       const shown = li.querySelector('pre');

@@ -1106,6 +1106,22 @@ function deliver(job, text) {
   return 'resumed';
 }
 
+// The files a job's agent wrote to, project-relative, so the job can link
+// them into the editor even where git can't say what changed.
+const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+function noteEdit(job, c) {
+  const file = c.input?.file_path || c.input?.notebook_path;
+  if (job.away || !EDIT_TOOLS.has(c.name) || typeof file !== 'string') return;
+  const root = repoPath(job.repo);
+  if (!root) return;
+  const rel = path.relative(root, path.resolve(root, file));
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return;
+  const p = rel.split(path.sep).join('/');
+  if (job.edited?.includes(p)) return;
+  job.edited = [...(job.edited || []), p].slice(-50);
+  pushJob(job);
+}
+
 const textOf = (content) =>
   typeof content === 'string' ? content
     : Array.isArray(content) ? content.map((c) => c.text || '').join('\n')
@@ -1151,6 +1167,7 @@ function onLine(job, line) {
           entry.todos = c.input.todos.slice(0, 12).map((t) => ({ text: String(t.content || '').slice(0, 80), done: t.status === 'completed' }));
         }
         addLog(job, entry);
+        noteEdit(job, c);
       }
     }
   } else if (e.type === 'user') {
@@ -1250,7 +1267,7 @@ function adoptNewProject(job) {
   if (born.length !== 1) return false;
   const from = job.repo;
   const note = whereItStood(job);
-  Object.assign(job, { repo: born[0], changes: undefined, baseTree: undefined });
+  Object.assign(job, { repo: born[0], changes: undefined, baseTree: undefined, edited: undefined });
   if (job.sessionId) Object.assign(job, { sessionId: null, context: null, hinted: false, lastClear: { note, by: 'office', at: Date.now() } });
   addLog(job, { kind: 'system', summary: `Filed under ${born[0]}, the project this job created (was ${from}).` });
   pushJob(job);
