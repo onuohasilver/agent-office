@@ -322,5 +322,95 @@ test('movers: the snapshot survives a restart and stays put within the week', ()
   assert.equal(e2.books.weekly.start, saved.weekly.start, 'the snapshot was retaken mid-week');
 });
 
+const has = (e, id, who = 'mira') => (e.books.achievements[who] || []).includes(id);
+const work = (e, j, min) => { e.accrue(j, min * 60000, j.model); return e.pay(j); };
+
+test('kudos on a job that was never reopened earns Straight through; a reopened one does not', () => {
+  const e = make();
+  const re = job();
+  work(e, re, 2); work(e, re, 1);          // finished, reopened, finished again
+  e.kudos(re);
+  assert.ok(!has(e, 'straight-through'));
+  const clean = job();
+  work(e, clean, 2);
+  e.kudos(clean);
+  assert.ok(has(e, 'straight-through'));
+});
+
+test('finishing a reopened job again earns Second wind, once', () => {
+  const e = make();
+  const j = job();
+  work(e, j, 2);
+  assert.ok(!has(e, 'second-wind'));
+  work(e, j, 1);
+  assert.ok(has(e, 'second-wind'));
+  assert.equal(e.books.achievements.mira.filter((x) => x === 'second-wind').length, 1);
+  balanced(e);
+});
+
+test('Team player and Second pair of eyes count handed-off work, not your own', () => {
+  const e = make();
+  for (let i = 0; i < 4; i++) work(e, job({ title: 'Do my own thing' }), 1);
+  assert.ok(!has(e, 'team-player'));
+  for (let i = 0; i < 3; i++) work(e, job({ requestedBy: 'x', title: 'Review the ledger fix' }), 1);
+  assert.ok(has(e, 'team-player'));
+  assert.ok(has(e, 'second-eyes'));
+  const f = make();
+  for (let i = 0; i < 3; i++) work(f, job({ requestedBy: 'x', title: 'Build the card form' }), 1);
+  assert.ok(has(f, 'team-player'));
+  assert.ok(!has(f, 'second-eyes'));
+  const g = make();
+  for (let i = 0; i < 3; i++) work(g, job({ requestedBy: 'x', status: 'failed', title: 'Review it' }), 1);
+  assert.ok(!has(g, 'team-player'), 'a failed handoff is not a clean one');
+});
+
+test('a hand-off from someone in a bet on the job earns no hand-off badges', () => {
+  const e = make();
+  for (const id of ['amara', 'obi']) { e.books.wallets[id] = 10000; e.books.totals.earned += 10000; }
+  for (let i = 0; i < 3; i++) {
+    const bet = e.offerBet({ by: 'amara', subject: 'mira', minutes: 10, stake: 100 });
+    e.takeBet(bet.id, { by: 'obi' });
+    now += 1000;
+    work(e, job({ requestedBy: 'x', requestedByAgent: i % 2 ? 'obi' : 'amara', title: 'Review the ledger fix', startedAt: now }), 1);
+    now += 1000;
+  }
+  assert.ok(!has(e, 'team-player'));
+  assert.ok(!has(e, 'second-eyes'));
+  assert.equal(e.statsOf('mira').handed, 0);
+  // Someone outside the bet still counts, and so does a bettor once the bet is gone.
+  const bet = e.offerBet({ by: 'amara', subject: 'mira', minutes: 10, stake: 100 });
+  e.takeBet(bet.id, { by: 'obi' });
+  now += 1000;
+  work(e, job({ requestedBy: 'x', requestedByAgent: 'lin', title: 'Review it', startedAt: now }), 1);
+  now += 1000;
+  work(e, job({ requestedBy: 'x', requestedByAgent: 'amara', title: 'Review it', startedAt: now }), 1);
+  assert.equal(e.statsOf('mira').handed, 2);
+  const b = e.books;
+  assert.equal(b.pot + Object.values(b.wallets).reduce((x, y) => x + y, 0) + b.escrow, b.totals.earned - b.totals.spent, 'the books do not add up');
+});
+
+test('Quick study compares you to your own average, needs 5 jobs, and ignores tiny jobs', () => {
+  const e = make();
+  for (let i = 0; i < 4; i++) work(e, job(), 10);
+  work(e, job(), 1);                          // only the 5th job: too early
+  assert.ok(!has(e, 'quick-study'));
+  work(e, job(), 0.2);                        // under 0.5 min: too small to count
+  assert.ok(!has(e, 'quick-study'));
+  work(e, job(), 3);                          // well under half the ~8.5 min average
+  assert.ok(has(e, 'quick-study'));
+  const slow = make();
+  for (let i = 0; i < 6; i++) work(slow, job({ model: 'opus' }), 10);
+  assert.ok(!has(slow, 'quick-study'), 'steady work is not quick');
+});
+
+test('old stats without the new counters still load and pay', () => {
+  const books = emptyBooks();
+  books.stats.mira = { jobs: 2, earned: 10, byTier: {}, kudos: 0, bought: 0, streak: 1, lastDay: '' };
+  const e = new Economy(books, { now: () => now });
+  work(e, job(), 2);
+  e.kudos(job());
+  assert.ok(has(e, 'straight-through'));
+});
+
 console.log(`\n${n - failed} passed, ${failed} failed`);
 if (failed) process.exit(1);

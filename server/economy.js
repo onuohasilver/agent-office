@@ -19,6 +19,8 @@ const weekStart = (ms) => { const d = Math.floor(ms / 86400000); return (d - ((d
 // moment it is offered, so a wallet can never go below zero.
 export const BET = { minStake: 100, maxStake: 5000, maxOpen: 3, maxMinutes: 60, openMs: 6 * 3600000, liveMs: 24 * 3600000, keep: 40 };
 export const GOAL = { minTarget: 1000, maxTarget: 1e9, maxName: 40 };
+// A handed-off job whose brief is a review, a test pass or an audit.
+const REVIEW = /review|adversarial|audit|qa\b|test/i;
 const day = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 export function emptyBooks() {
@@ -57,7 +59,7 @@ export class Economy {
   get books() { return this.b; }
   wallet(id) { return this.b.wallets[id] || 0; }
   statsOf(id) {
-    return (this.b.stats[id] ||= { jobs: 0, earned: 0, byTier: {}, kudos: 0, bought: 0, streak: 0, lastDay: '' });
+    return (this.b.stats[id] ||= { jobs: 0, earned: 0, byTier: {}, kudos: 0, bought: 0, streak: 0, lastDay: '', minutes: 0, cleanKudos: 0, comebacks: 0, handed: 0, reviews: 0 });
   }
 
   record(entry) {
@@ -109,6 +111,7 @@ export class Economy {
     const again = !!job.payCounted;
     job.payCounted = true;
     const s = this.statsOf(job.agentId);
+    if (again) { job.reopens = (job.reopens || 0) + 1; s.comebacks = (s.comebacks || 0) + 1; }
     let boost = 0;
     if (!again) {
       // The day's first finish keeps or restarts the streak, and the
@@ -124,11 +127,23 @@ export class Economy {
     const e = this.credit(job.agentId, q.wage * (1 + boost) + (again ? 0 : q.bonus), { kind: 'pay', jobId: job.id, title: job.title, minutes: Math.round(q.minutes * 10) / 10, tier: q.tier, mult: q.mult, ...(boost ? { streak: s.streak, boost } : {}) });
     if (e) job.earned = (job.earned || 0) + e.gross;
     if (again) return { pay: e, achievements: this.milestones(job.agentId) };
+    // A hand-off from someone betting on this job is not teamwork, so it
+    // earns no hand-off badges. Checked before the bets close.
+    this.sweep();
+    const fromBet = this.b.bets.some((x) => this.boundTo(x, job) && this.inBet(x, job.requestedByAgent));
     // A bet that cannot be settled cleanly must never hold up the pay.
     try { this.settleBets(job, q.minutes); } catch (err) { this.record({ kind: 'bet', phase: 'error', jobId: job.id, why: err.message }); }
+    // Quality counters. "Quick" is against this agent's own average, so a
+    // slower model is not penalised, and short jobs don't count.
+    const quick = s.jobs >= 5 && q.minutes >= 0.5 && q.minutes < 0.5 * ((s.minutes || 0) / s.jobs);
+    s.minutes = (s.minutes || 0) + q.minutes;
+    if (job.requestedBy && job.status === 'done' && !fromBet) {
+      s.handed = (s.handed || 0) + 1;
+      if (REVIEW.test(`${job.title || ''} ${job.prompt || ''}`)) s.reviews = (s.reviews || 0) + 1;
+    }
     s.jobs++;
     if (q.tier) s.byTier[q.tier] = (s.byTier[q.tier] || 0) + 1;
-    const won = this.milestones(job.agentId, q);
+    const won = this.milestones(job.agentId, { ...q, quick });
     return { pay: e, achievements: won };
   }
 
@@ -156,7 +171,9 @@ export class Economy {
     job.kudosPaid = true;
     this.b.kudos.push(job.id);
     if (this.b.kudos.length > 2000) this.b.kudos.splice(0, 1000);
-    this.statsOf(job.agentId).kudos++;
+    const ks = this.statsOf(job.agentId);
+    ks.kudos++;
+    if (!job.reopens) ks.cleanKudos = (ks.cleanKudos || 0) + 1;
     const e = this.credit(job.agentId, PAY.finishBonus * modelPay(job.model), { kind: 'kudos', jobId: job.id, title: job.title });
     return { pay: e, achievements: this.milestones(job.agentId) };
   }
@@ -415,13 +432,17 @@ export class Economy {
     return bet.state === 'live' && bet.subject === job.agentId && Number.isFinite(job.startedAt) && bet.acceptedAt <= job.startedAt;
   }
 
+  inBet(bet, id) {
+    return !!id && (id === bet.by || id === bet.against);
+  }
+
   // The job finished for the first time, in `minutes` of active work.
   settleBets(job, minutes) {
     this.sweep();
     for (const bet of this.b.bets.filter((x) => this.boundTo(x, job))) {
       if (!(minutes > 0)) { this.close(bet, 'void', 'no working time was recorded'); continue; }
       // A job one side of the bet handed over is one they could have sized to win.
-      if (job.requestedByAgent && (job.requestedByAgent === bet.by || job.requestedByAgent === bet.against)) { this.close(bet, 'void', 'the job came from someone in the bet'); continue; }
+      if (this.inBet(bet, job.requestedByAgent)) { this.close(bet, 'void', 'the job came from someone in the bet'); continue; }
       const under = minutes < bet.minutes;
       this.close(bet, under ? 'won' : 'lost', `${Math.round(minutes * 10) / 10} min on "${job.title}"`, under ? bet.by : bet.against);
     }

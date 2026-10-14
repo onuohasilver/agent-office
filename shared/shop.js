@@ -101,6 +101,13 @@ export const ACHIEVEMENTS = [
   { id: 'kudos', name: 'Great work', blurb: 'Got kudos from the boss.', bonus: 5000, test: (s) => s.kudos >= 1 },
   { id: 'streak-3', name: 'On a roll', blurb: 'Finished jobs three days running.', bonus: 12000, test: (s) => s.streak >= 3 },
   { id: 'big-earner', name: 'Big earner', blurb: 'Earned ₦200,000 in all.', bonus: 20000, test: (s) => s.earned >= 200000 },
+  // Quality over volume: none of these scale with the model, so nobody gains
+  // by picking a model for the badge.
+  { id: 'straight-through', name: 'Straight through', blurb: 'Got kudos on a job that never needed reopening.', bonus: 4000, test: (s) => s.cleanKudos >= 1 },
+  { id: 'second-wind', name: 'Second wind', blurb: 'Finished a job again after it was reopened.', bonus: 3000, test: (s) => s.comebacks >= 1 },
+  { id: 'team-player', name: 'Team player', blurb: 'Finished 3 jobs handed over by a colleague.', bonus: 8000, test: (s) => s.handed >= 3 },
+  { id: 'second-eyes', name: 'Second pair of eyes', blurb: 'Finished 3 reviews or test passes for a colleague.', bonus: 8000, test: (s) => s.reviews >= 3 },
+  { id: 'quick-study', name: 'Quick study', blurb: 'Finished a job in under half your usual time (after 5 jobs).', bonus: 5000, test: (s, j) => !!j?.quick },
   { id: 'shopper', name: 'Treat yourself', blurb: 'Bought something for the desk.', bonus: 1500, test: (s) => s.bought >= 1 },
 ];
 
