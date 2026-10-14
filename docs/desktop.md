@@ -34,3 +34,19 @@ npm run build   # stages from HEAD, writes src-tauri/target/release/bundle/{maco
 ```
 
 Rust comes via rustup. The build log goes to `~/.agent-office/desktop.log`.
+
+## Opening a downloaded build
+
+The dmg is signed ad hoc (`signingIdentity: "-"` in `tauri.conf.json`) and is **not notarized**: that needs an Apple *Developer ID Application* certificate and an Apple notarization login, which the project doesn't have. So on another Mac, Gatekeeper blocks the first launch of a downloaded copy.
+
+Before the ad-hoc signing was added, the bundle carried only the linker's signature on the executable, with no sealed resources. Gatekeeper treats that as a broken signature and says "Agent Office is damaged and can't be opened". Now the signature is valid, and the message is the milder "can't be opened because Apple cannot check it for malicious software".
+
+For users, any one of:
+
+- Terminal: `xattr -cr "/Applications/Agent Office.app"`, then open it (drag it to Applications first). This strips the download quarantine flag.
+- Right-click the app, choose Open, then Open again.
+- macOS 15 and later: try to open it once, then System Settings, Privacy & Security, Open Anyway.
+
+To remove the warning properly: enrol in the Apple Developer Program, create a Developer ID Application certificate, then build with `APPLE_SIGNING_IDENTITY="Developer ID Application: …"` and either `APPLE_ID`, `APPLE_PASSWORD` (app-specific) and `APPLE_TEAM_ID`, or `APPLE_API_KEY`, `APPLE_API_ISSUER` and `APPLE_API_KEY_PATH`. Tauri then signs, notarizes and staples the dmg. Those variables take precedence over the ad-hoc identity.
+
+The dmg is arm64 only (Apple Silicon).

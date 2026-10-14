@@ -27,6 +27,13 @@ Prefer an app window to a browser tab? There's a [desktop app](docs/desktop.md)
 (Tauri, macOS): it starts the office for you on a free local port and opens it
 in its own window. Build it from source with `cd desktop && npm install && npm run build`.
 
+**Opening a downloaded dmg.** The app isn't notarized by Apple yet, so macOS
+blocks it the first time. If you see "Agent Office is damaged" or "can't be
+opened", it isn't damaged: run `xattr -cr "/Applications/Agent Office.app"` in
+Terminal, then open it. Or right-click the app, choose Open, and confirm (on
+macOS 15+: System Settings, Privacy & Security, Open Anyway). Details in
+[Desktop app](docs/desktop.md#opening-a-downloaded-build).
+
 You need Node.js 20+, git, and [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 signed in on this machine (or an Anthropic API key). Your projects are the
 folders next to this one (or, with `agentoffice`, in the folder you run it from) — see [Getting started](docs/getting-started.md).
