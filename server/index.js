@@ -1601,10 +1601,10 @@ function parseTags(text) {
     .replace(/#([\w.-]+)/g, (m, n) => repoFor(n) || m)
     .replace(/[ \t]+/g, ' ')
     .trim();
-  return { agent: agents[0], repo: projects[0], clean: clean || text };
+  return { agent: agents[0], agents: [...new Set(agents)], repo: projects[0], clean: clean || text };
 }
 
-function chiefContext(text, agent, repo, channel = GENERAL) {
+function chiefContext(text, agents, repo, channel = GENERAL) {
   const roster = STAFF.slice(0, capacity());
   const lines = ['Staff:'];
   for (const s of roster) {
@@ -1634,7 +1634,8 @@ function chiefContext(text, agent, repo, channel = GENERAL) {
     lines.push(`${who}: ${m.text.slice(0, 200).replace(/\n/g, ' ')}${reacts ? ` [reactions: ${reacts}]` : ''}`);
   }
   lines.push('', `New message from the boss: ${text}`);
-  if (agent) lines.push(`Tagged agent: ${agent.name} (id ${agent.id})`);
+  if (agents.length === 1) lines.push(`Tagged agent: ${agents[0].name} (id ${agents[0].id})`);
+  if (agents.length > 1) lines.push(`Tagged agents: ${agents.map((a) => `${a.name} (id ${a.id})`).join(', ')}`);
   if (repo) lines.push(`Tagged project: ${repo}`);
   return lines.join('\n');
 }
@@ -1660,12 +1661,13 @@ function hireWork({ repo, brief, agentId, mode, model, auto, say, files, thread,
 // `root` is the thread this conversation lives in: the boss's message, or the
 // thread they replied in (`inThread`), where the chief answers too.
 async function dispatch(text, mode, model, files, root, inThread, channel) {
-  const { agent, repo, clean } = parseTags(text);
+  const { agent, agents, repo, clean } = parseTags(text);
   const say = (line, extra = {}) => post('chief', line, { channel, ...(inThread ? { thread: root } : {}), ...extra });
   const open = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');
 
-  // A named project with nothing open in it can only be new work.
-  if (repo && !open.some((j) => j.repo === repo)) {
+  // A named project with nothing open in it can only be new work. Several
+  // tagged agents still go past the chief, who decides how to split it.
+  if (repo && agents.length < 2 && !open.some((j) => j.repo === repo)) {
     return hireWork({ repo, brief: clean, agentId: agent?.id, mode, ...sized(model), files, thread: root, inThread, channel });
   }
 
@@ -1679,7 +1681,7 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
     const said = files.length
       ? `${text}\n(Attached: ${files.map((f) => f.name).join(', ')}${shown.length ? `. ${shown.length === 1 ? 'The image is' : 'The images are'} attached for you to look at.` : ''})`
       : text;
-    d = await route(chiefContext(said, agent, repo, channel), { bin: CLAUDE, model: settings.get('chiefModel'), images: shown, env: auth.env() });
+    d = await route(chiefContext(said, agents, repo, channel), { bin: CLAUDE, model: settings.get('chiefModel'), images: shown, env: auth.env() });
     state.chiefCost += d.cost || 0;
     nudgeUsage();
   } finally {
@@ -1709,11 +1711,21 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
     }
   }
   if (d.action === 'new' || d.action === 'followup') {
-    const project = repo || listRepos().find((r) => norm(r) === norm(d.repo || ''));
-    if (!project) return say('Which project is that for? Tag it with #project.');
     const roster = STAFF.slice(0, capacity());
-    const agentId = agent?.id || (roster.some((s) => s.id === d.agentId) ? d.agentId : '');
-    return hireWork({ repo: project, brief: (d.brief || '').trim() || clean, agentId, mode, ...sized(model, d.model), say: d.say, files, thread: root, inThread, channel });
+    const onRoster = (id) => roster.some((s) => s.id === id);
+    // Never more jobs than there are people to do them: the list comes from
+    // the model, and chat it reads can ask for a hundred.
+    const asked = Array.isArray(d.jobs) && d.jobs.length ? d.jobs : [d];
+    const work = asked.slice(0, roster.length).map((w) => ({ ...w, project: repo || listRepos().find((r) => norm(r) === norm(w.repo || '')) }));
+    if (asked.length > work.length) console.warn(`[chief] asked for ${asked.length} jobs; handing out ${work.length}, the roster size`);
+    if (work.some((w) => !w.project)) return say('Which project is that for? Tag it with #project.');
+    // One job for the one agent tagged: the tag decides who, as it always
+    // has. Otherwise each job goes to the chief's pick.
+    for (const w of work) w.agentId = (work.length === 1 && agents.length === 1 && agent.id) || (onRoster(w.agentId) ? w.agentId : work.length === 1 ? agent?.id || '' : '');
+    for (const w of work) {
+      hireWork({ repo: w.project, brief: (w.brief || '').trim() || clean, agentId: w.agentId, mode, ...sized(model, w.model), say: w.say || (work.length === 1 ? d.say : ''), files, thread: root, inThread, channel });
+    }
+    return;
   }
   if (d.action === 'dismiss' || d.action === 'recall') {
     const ids = [...new Set([...(d.agentIds || []), ...(agent ? [agent.id] : [])])];
