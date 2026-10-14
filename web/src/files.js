@@ -1,5 +1,5 @@
-// The office's own file editor: a project's folders on the left, a text file
-// on the right. Cmd/Ctrl+S saves; a save is refused if the file changed on
+// The office's own file editor: a project's folders on the left, the file in
+// a code editor on the right (code.js, loaded on first open). Cmd/Ctrl+S saves; a save is refused if the file changed on
 // disk since it was opened (an agent may be mid-job), and says so.
 
 import { api } from './hud.js';
@@ -20,6 +20,10 @@ let file = null;        // { path, mtime, size, base } once loaded
 let state = 'idle';     // idle | loading | ready | saving | error
 let message = '';
 let dirty = false;
+let cm = null;          // the code view, while a file is showing
+let Code = null;        // code.js, once loaded
+
+const loadCode = async () => { Code ??= await import('./code.js'); };
 
 export function initFiles(a) { app = a; }
 
@@ -27,6 +31,7 @@ export async function openFiles(name, back = null, startPath = '') {
   onClose = back;
   repo = name; tree = new Map(); open = new Set(['']); file = null; state = 'idle'; message = ''; dirty = false;
   if (!root) build();
+  loadCode().catch(() => {});
   root.hidden = false;
   root.parentElement.classList.add('fe-open');
   paint();
@@ -41,6 +46,7 @@ export function closeFiles(force = false) {
   root.hidden = true;
   root.parentElement.classList.remove('fe-open');
   repo = null; file = null; dirty = false;
+  cm?.destroy(); cm = null;
   onClose?.();
 }
 
@@ -58,7 +64,6 @@ async function reveal(p) {
   await openFile(parts.join('/'), true);
 }
 
-const editor = () => root.querySelector('.fe-text');
 
 function build() {
   root = document.createElement('section');
@@ -78,23 +83,11 @@ function build() {
     else if (act === 'retry') loadDir(t.dataset.path);
     else if (act === 'tree') root.classList.toggle('fe-tree-open');
   });
-  root.addEventListener('input', (e) => {
-    if (!e.target.classList.contains('fe-text')) return;
-    if (!dirty) { dirty = true; paintBar(); }
-    paintStatus();
-  });
-  root.addEventListener('keyup', paintStatus);
-  root.addEventListener('click', paintStatus);
-  root.addEventListener('keydown', (e) => {
-    if (!e.target.classList.contains('fe-text') || e.key !== 'Tab' || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
-    // Tab types a tab stop instead of leaving the editor; Esc then Tab leaves.
-    e.preventDefault();
-    document.execCommand('insertText', false, '  ');
-  });
   addEventListener('keydown', (e) => {
     if (root.hidden) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); e.stopPropagation(); save(); }
-    else if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); closeFiles(); }
+    // Esc in the find bar closes the find bar, not the editor.
+    else if (e.key === 'Escape' && !e.defaultPrevented && !e.target.closest?.('.cm-panels')) { e.stopPropagation(); closeFiles(); }
   }, true);
   addEventListener('beforeunload', (e) => { if (dirty && root && !root.hidden) { e.preventDefault(); e.returnValue = ''; } });
 }
@@ -130,13 +123,14 @@ function paintBar() {
   note.dataset.kind = state === 'error' ? 'bad' : '';
 }
 
-function paintStatus() {
-  const t = root?.hidden ? null : editor();
-  if (!t) return;
-  const upto = t.value.slice(0, t.selectionStart);
-  const line = upto.split('\n').length;
-  root.querySelector('.fe-pos').textContent = `Ln ${line}, Col ${upto.length - upto.lastIndexOf('\n')}`;
-  root.querySelector('.fe-size').textContent = kb(new Blob([t.value]).size);
+function paintStatus(line, col) {
+  if (!root || root.hidden) return;
+  root.querySelector('.fe-pos').textContent = cm ? `Ln ${line}, Col ${col}` : '';
+  root.querySelector('.fe-size').textContent = cm ? kb(new Blob([cm.text()]).size) : '';
+}
+
+function edited() {
+  if (!dirty) { dirty = true; paintBar(); }
 }
 
 function paintTree() {
@@ -162,14 +156,15 @@ function paintTree() {
 function paintMain(text = '') {
   const main = root?.querySelector('.fe-main');
   if (!main) return;
+  cm?.destroy(); cm = null;
   if (state === 'loading') main.innerHTML = `<div class="fe-skel big" aria-busy="true" aria-label="Opening file"><i></i><i></i><i></i><i></i><i></i></div>`;
   else if (state === 'error' && !file) main.innerHTML = `<p class="fe-empty">${esc(message)}</p>`;
   else if (!file) main.innerHTML = `<p class="fe-empty">Pick a file to edit it here. Cmd/Ctrl+S saves.</p>`;
   else {
-    main.innerHTML = `${state === 'error' && /changed on disk|deleted/.test(message) ? `<div class="fe-conflict">${esc(message)} <button type="button" data-act="reload">Reload from disk</button></div>` : ''}<textarea class="fe-text" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(file.path)}" wrap="off"></textarea>`;
-    editor().value = text;
+    main.innerHTML = `${state === 'error' && /changed on disk|deleted/.test(message) ? `<div class="fe-conflict">${esc(message)} <button type="button" data-act="reload">Reload from disk</button></div>` : ''}<div class="fe-code"></div>`;
+    cm = Code.mountCode(main.querySelector('.fe-code'), text, file.path, { change: edited, cursor: paintStatus, save });
   }
-  paintStatus();
+  paintStatus(1, 1);
 }
 
 async function loadDir(dir) {
@@ -201,12 +196,12 @@ async function openFile(p, force = false) {
   paintMain(); paintBar();
   root.classList.remove('fe-tree-open');
   try {
-    const r = await api(`/api/files?${q({ repo, path: p })}`);
+    const [r] = await Promise.all([api(`/api/files?${q({ repo, path: p })}`), loadCode()]);
     if (repo !== was) return;
     file = { path: r.path, mtime: r.mtime, size: r.size };
     state = 'ready';
     paintMain(r.text);
-    editor().focus({ preventScroll: true });
+    cm.focus();
   } catch (err) {
     if (repo !== was) return;
     state = 'error'; message = err.message;
@@ -220,7 +215,7 @@ async function save() {
   const was = repo;
   state = 'saving'; message = ''; paintBar();
   try {
-    const r = await api('/api/files', { repo, path: file.path, text: editor().value, mtime: file.mtime }, 'PUT');
+    const r = await api('/api/files', { repo, path: file.path, text: cm.text(), mtime: file.mtime }, 'PUT');
     if (repo !== was) return;
     file.mtime = r.mtime; file.size = r.size;
     dirty = false; state = 'ready'; message = 'Saved';
@@ -229,9 +224,7 @@ async function save() {
     if (repo !== was) return;
     state = 'error'; message = err.message;
     // A conflict puts its banner above the text; the text stays as typed.
-    const t = editor().value;
-    paintMain(t);
-    editor().value = t;
+    paintMain(cm.text());
     if (/changed on disk|deleted/.test(err.message)) message = '';
     else app?.hud?.toast?.(err.message, 'bad');
   }

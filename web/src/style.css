@@ -1541,15 +1541,21 @@ body.viewing { overflow: hidden; }
 .fe-empty { margin: auto; padding: 24px; color: var(--ink-3); font-size: 14px; text-align: center; }
 .fe-conflict { padding: 9px 16px; font-size: 13px; background: var(--wait-bg); color: var(--wait-fg); }
 .fe-conflict button { all: unset; cursor: pointer; font-weight: 650; text-decoration: underline; margin-left: 6px; }
-.fe-text {
-  flex: 1; min-height: 0; width: 100%; box-sizing: border-box; border: 0; outline: 0; resize: none; padding: 16px 20px;
-  background: var(--surface); color: var(--ink); font: 13px/1.6 var(--mono); tab-size: 2; white-space: pre; overflow: auto;
+/* Syntax colours, light then dark; code.js maps the grammar onto these. */
+.fedit {
+  --syn-keyword: #a3337f; --syn-string: #2f7d4f; --syn-number: #b0571a; --syn-comment: #8d8577;
+  --syn-type: #2f6fae; --syn-fn: #6a4fb3; --syn-prop: #1d6a7a; --syn-punct: #6b655c;
 }
+html[data-mode="dark"] .fedit {
+  --syn-keyword: #e48bc6; --syn-string: #8fcf9f; --syn-number: #f0a56b; --syn-comment: #8a8478;
+  --syn-type: #7fb3e8; --syn-fn: #b9a2f2; --syn-prop: #79c6d4; --syn-punct: #a8a196;
+}
+.fe-code { flex: 1; min-height: 0; overflow: hidden; background: var(--surface); }
 .fe-foot { display: flex; justify-content: space-between; padding: 5px 16px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--ink-3); background: var(--paper-2); }
 @media (max-width: 860px) {
   .fe-toggle { display: grid; }
   .fe-tree { position: absolute; top: 58px; bottom: 0; left: 0; z-index: 3; width: min(300px, 86%); transform: translateX(-102%); transition: transform 0.2s var(--ease); box-shadow: 6px 0 24px rgba(0,0,0,0.12); }
   .fedit.fe-tree-open .fe-tree { transform: none; }
-  .fe-text { font-size: 16px; }
+  .fe-code .cm-editor { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) { .fedit, .fe-skel i { animation: none; } .fe-tree, .fe-caret { transition: none; } }
