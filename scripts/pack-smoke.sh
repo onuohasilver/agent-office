@@ -40,7 +40,7 @@ COOKIE="office_key_$PORT=$KEY"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/repos")" = 401 ] || { echo "the API answered without the key"; exit 1; }
 curl -fs -H "cookie: $COOKIE" "$BASE/api/repos" > "$TMP/repos.json"
 grep -q storefront "$TMP/repos.json" || { echo "project not listed: $(cat "$TMP/repos.json")"; exit 1; }
-curl -fs -H "cookie: $COOKIE" "$BASE/" | grep -q '<title>Agent Office</title>' || { echo "web app not served"; exit 1; }
+curl -fs -H "cookie: $COOKIE" "$BASE/" | grep -q '<title>Office</title>' || { echo "web app not served"; exit 1; }
 agentoffice --link | grep -q "?key=$KEY" || { echo "--link did not print the key"; exit 1; }
 
 # State belongs in OFFICE_DATA; an upgrade replaces the package folder.

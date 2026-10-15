@@ -4,6 +4,28 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.9.0 — 2026-10-15
+
+### Added
+- **Edit files in the office.** Each project has an Edit files button that opens its folders and text files; Cmd/Ctrl+S saves, and a save is refused if the file changed on disk meanwhile. The editor is CodeMirror, with syntax highlighting by file type, line numbers, folding, bracket matching, find (Cmd/Ctrl+F) and undo, coloured from the office theme, and it loads only when opened.
+- A job's "What changed" list has an Edit button on each changed file. Jobs also remember the files their agent wrote to, and where git can't say what changed they show them as "Files edited", each with an Edit button.
+- **A desktop app** (Tauri) with a designed DMG installer. The dmg is ad-hoc signed as a whole bundle so a downloaded copy isn't reported damaged; the README covers the Gatekeeper workaround.
+- Chief can hand out several jobs from one message, at most one per person.
+- Quality badges: Straight through, Second wind, Team player, Second pair of eyes and Quick study.
+
+### Security
+- Two hardening passes over guests, links and the office page. The key cookie holds a MAC of the key, and the office page sends a CSP that limits images and forms. Leaderboard rate limits use the IPv6 /64.
+- Guests: a guest's cache tokens are counted call by call (reads at a tenth), their replies and open jobs are held to the host's current limits, an unlinked guest's open jobs are stopped, and `guests.json` is written private to the account.
+- Link handles and project names match exactly (case aside), and prototype names are refused as link ids.
+- Snapshotting never runs a project's clean or smudge filters. Away jobs are limited to roster, flag and clear_context. Below Full autonomy, `attach_files` takes only files in the job's project. Job tokens stay out of the projects folder.
+- Desktop: the office is proved before its key is sent, IPC is scoped to its port, and `tauri.localhost` is allowed only on Windows on its default port.
+
+### Fixed
+- A process-group kill happens only when the group's leader is the process we saw.
+- A bet on a job handed over by one of its parties is voided.
+- Visits drop copies with nothing to review and cap copies per guest.
+- The installed-package check in CI looked for a page title the app dropped on Oct 12, which kept CI red on master.
+
 ## 0.8.1 — 2026-10-13
 
 ### Added
