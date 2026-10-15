@@ -5,7 +5,7 @@ import './pwa.js';
 import './desktop.js';
 import './theme.js';
 import { setAccess, setContextLimit } from './account.js';
-import { initSettings, setSettings } from './settings.js';
+import { initSettings, setSettings, settingValue } from './settings.js';
 import { setLeaderboard, onWelcomed } from './leaderboard.js';
 import { meetTeam } from './meet.js';
 import './phone.js';
@@ -29,6 +29,8 @@ import { Hud, api } from './hud.js';
 import { showGoals } from './goals.js';
 import { initShop, setEconomy, bumpPot } from './shop.js';
 import { decorateDesk, placeOfficeItems } from './decor.js';
+import { initBuild, loadArrangement } from './build.js';
+import './detail-move.js';
 import { itemById, setPay, naira } from '../../shared/shop.js';
 
 import { initJourneys, journeyJobs } from './journeys.js';
@@ -36,52 +38,15 @@ import { initFiles } from './files.js';
 import { sound } from './sound.js';
 import { speech, recorder } from './voice.js';
 
-// ---------- side panel width: drag the grip, arrow keys nudge, remembered ----------
+// ---------- text zoom: Ctrl/Cmd + / - / 0 scales the side panel and its windows, not the whole page ----------
 
 {
-  const app = document.getElementById('app');
-  const grip = document.getElementById('side-grip');
-  const KEY = 'office.sideWidth', MIN = 320, STEP = 24;
-  const max = () => Math.max(MIN, Math.min(900, innerWidth - 420));
-  const set = (w) => app.style.setProperty('--side-w', `${Math.round(Math.min(max(), Math.max(MIN, w)))}px`);
-  const saved = Number(localStorage.getItem(KEY));
-  if (saved) set(saved);
-  const current = () => grip.parentElement.getBoundingClientRect().width;
-  const save = () => localStorage.setItem(KEY, String(Math.round(current())));
-  grip.addEventListener('pointerdown', (e) => {
-    grip.setPointerCapture(e.pointerId);
-    app.classList.add('resizing');
-    e.preventDefault();
-  });
-  grip.addEventListener('pointermove', (e) => {
-    if (grip.hasPointerCapture(e.pointerId)) set(e.clientX);
-  });
-  const end = (e) => {
-    if (!grip.hasPointerCapture(e.pointerId)) return;
-    grip.releasePointerCapture(e.pointerId);
-    app.classList.remove('resizing');
-    save();
-  };
-  grip.addEventListener('pointerup', end);
-  grip.addEventListener('pointercancel', end);
-  grip.addEventListener('dblclick', () => { app.style.removeProperty('--side-w'); localStorage.removeItem(KEY); });
-  grip.addEventListener('keydown', (e) => {
-    const d = e.key === 'ArrowLeft' ? -STEP : e.key === 'ArrowRight' ? STEP : 0;
-    if (!d) return;
-    e.preventDefault();
-    set(current() + d);
-    save();
-  });
-}
-
-// ---------- text zoom: Ctrl/Cmd + / - / 0 scales the side panel, not the whole page ----------
-
-{
-  const app = document.getElementById('app');
-  const KEY = 'office.sideZoom', MIN = 0.8, MAX = 1.8;
+  // On the root: the windows (#wins) sit outside #app and must inherit it too.
+  const root = document.documentElement;
+  const KEY = 'office.sideZoom', MIN = 0.5, MAX = 1.8;
   const set = (z) => {
     z = Math.round(Math.min(MAX, Math.max(MIN, z)) * 100) / 100;
-    app.style.setProperty('--side-zoom', String(z));
+    root.style.setProperty('--side-zoom', String(z));
     if (z === 1) localStorage.removeItem(KEY); else localStorage.setItem(KEY, String(z));
     return z;
   };
@@ -97,8 +62,9 @@ import { speech, recorder } from './voice.js';
     e.preventDefault();
   });
   // Ctrl + wheel / trackpad pinch over the panel zooms it the same way.
-  document.querySelector('.side').addEventListener('wheel', (e) => {
-    if (!e.ctrlKey) return;
+  // Delegated, since the windows are built after this runs.
+  addEventListener('wheel', (e) => {
+    if (!e.ctrlKey || !e.target.closest?.('.side, #wins, #detail')) return;
     e.preventDefault();
     zoom = set(zoom - Math.sign(e.deltaY) * 0.05);
   }, { passive: false });
@@ -236,7 +202,7 @@ resize();
 // here and a change of layout reloads the page (see applyLook).
 const LAYOUT_KEY = 'office.layout';
 const storedLayout = (() => { try { return localStorage.getItem(LAYOUT_KEY) || ''; } catch { return ''; } })();
-const office = buildOffice(scene, storedLayout);
+const office = buildOffice(scene, storedLayout, loadArrangement(storedLayout));
 const confetti = new Confetti(scene);
 
 // ---------- state ----------
@@ -865,11 +831,12 @@ function aim(e) {
   ray.setFromCamera(ndc, camera);
 }
 const people = () => [...app.agents.values(), chief].map((a) => a.root);
+const build = initBuild({ renderer, camera, controls, scene, office, layoutId: storedLayout, aim, ray });
 
 let down = null;
 renderer.domElement.addEventListener('pointerdown', (e) => { down = [e.clientX, e.clientY]; });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || e.button !== 0) return;
+  if (build.on || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || e.button !== 0) return;
   aim(e);
   const hit = ray.intersectObjects(people(), true)[0];
   if (!hit) { if (chat.id) { chat.close(); app.select(null); } return; }
@@ -887,6 +854,7 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   }
 });
 renderer.domElement.addEventListener('dblclick', (e) => {
+  if (build.on) return;
   aim(e);
   const hit = ray.intersectObject(office.slab, false)[0];
   if (hit) {
@@ -896,7 +864,7 @@ renderer.domElement.addEventListener('dblclick', (e) => {
 });
 renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (e.buttons) return;
+  if (e.buttons || build.on) return;
   aim(e);
   renderer.domElement.style.cursor = ray.intersectObjects(people(), true).length ? 'pointer' : '';
 });
@@ -951,8 +919,11 @@ function frame() {
     if (chat.id === a.id) chat.close();
     if (app.selected === a.id) app.select(null);
   }
-  breakRoom.update([...app.agents.values()], t);
-  poolRoom.update([...app.agents.values()], t, dt);
+  // Off until the server says otherwise. With nobody offered, a chat or game
+  // already under way plays out and no new one starts.
+  const idlers = settingValue('breakRoom') ? [...app.agents.values()] : [];
+  breakRoom.update(idlers, t);
+  poolRoom.update(idlers, t, dt);
   chief.update(dt, t);
   visitors.update(dt, t);
   confetti.update(dt);

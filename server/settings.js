@@ -23,6 +23,7 @@ export const SETTINGS = [
   { key: 'standupAt', group: 'Standup', label: 'Standup time', kind: 'time', hint: 'Local time, 24-hour. Blank turns the daily standup off.', fallback: () => (env('STANDUP_AT') ?? '09:30') === 'off' ? '' : (env('STANDUP_AT') ?? '09:30') },
   { key: 'standupWeekends', group: 'Standup', label: 'Hold standups on weekends', kind: 'bool', fallback: () => env('STANDUP_WEEKENDS') === '1' },
 
+  { key: 'breakRoom', group: 'Break room', label: 'Break-room chatter and pool', kind: 'bool', hint: 'Off: idle agents just wait, with no small talk or pool games, and nothing is posted to #chill-room.', fallback: () => env('BREAK_ROOM') === 'on' || env('BREAK_ROOM') === '1' },
   { key: 'banter', group: 'Break room', label: 'Written break-room talk', kind: 'bool', hint: 'Off: the break room uses canned lines only.', fallback: () => on(env('BANTER')) },
   { key: 'banterModel', group: 'Break room', label: 'Break-room model', kind: 'choice', options: ['haiku', 'sonnet', 'opus'], fallback: () => env('BANTER_MODEL') || 'haiku' },
   { key: 'banterGap', group: 'Break room', label: 'Time between conversations', kind: 'number', min: 10, max: 86400, step: 10, unit: 'seconds', hint: 'At most one written conversation per this long.', fallback: () => Math.max(10, Number(env('BANTER_GAP_SECONDS') ?? 120) || 120) },

@@ -24,6 +24,7 @@ let board = null;   // the leaderboard status, which also knows the handle
 let invite = null;  // { kind, code, expiresAt }
 let guestForm = null; // { repos: Set, clearance, full, tokensPerDay, ourAgents, theirAgents, edit: link id | null }
 let repos = null;
+let staff = null;   // our agents, for choosing which to lend: [{ id, name, role }]
 let busy = '';
 let note = '';
 let copied = false;
@@ -71,7 +72,7 @@ function policy(g) {
   const mode = MODES.find((m) => m.id === g.clearance)?.name || g.clearance;
   const theirs = g.theirAgents === 'read' ? 'their agents read only' : g.theirAgents === 'edit' ? 'their agents edit a copy' : '';
   return [n === 1 ? g.repos[0] : `${n} projects`,
-    ...(g.ourAgents === false ? ['our agents not lent'] : [mode, `${tokens(g.tokensPerDay || 0)} tokens a day`]),
+    ...(g.ourAgents === false ? ['our agents not lent'] : [g.agents ? `${g.agents.length} of our agents` : 'all our agents', mode, `${tokens(g.tokensPerDay || 0)} tokens a day`]),
     theirs].filter(Boolean).join(' · ');
 }
 
@@ -165,8 +166,8 @@ async function openGuest(l) {
   const g = l?.guest;
   guestForm = g
     ? { repos: new Set(g.repos || []), clearance: g.clearance === 'auto' ? 'edit' : g.clearance || 'edit', full: g.clearance === 'auto',
-      tokensPerDay: g.tokensPerDay || TOKENS_PER_DAY, ourAgents: g.ourAgents !== false, theirAgents: g.theirAgents || 'off', edit: l.id, peer: l.peer }
-    : { repos: new Set(), clearance: 'edit', full: false, tokensPerDay: TOKENS_PER_DAY, ourAgents: true, theirAgents: 'off', edit: null };
+      tokensPerDay: g.tokensPerDay || TOKENS_PER_DAY, ourAgents: g.ourAgents !== false, theirAgents: g.theirAgents || 'off', agents: g.agents ? new Set(g.agents) : null, edit: l.id, peer: l.peer }
+    : { repos: new Set(), clearance: 'edit', full: false, tokensPerDay: TOKENS_PER_DAY, ourAgents: true, theirAgents: 'off', agents: null, edit: null };
   invite = null;
   note = '';
   render();
@@ -174,6 +175,8 @@ async function openGuest(l) {
     try { repos = (await call('/api/repos')).repos || []; } catch (err) { repos = []; note = err.message; }
     render();
   }
+  try { staff = (await call('/api/links/staff')).staff || []; } catch { staff = staff || []; }
+  render();
 }
 
 function guest() {
@@ -214,11 +217,20 @@ function guest() {
     el('p', { textContent: 'Full autonomy lets the guest run any command on this machine, with your files and your logins. Only allow it for someone you’d hand your laptop to.' }),
     el('label', {}, full, el('span', { textContent: 'Allow full autonomy anyway' })));
 
+  // Which of our agents they may use. Null means all of them, as before this was a choice.
+  const lent = f.agents || new Set((staff || []).map((s) => s.id));
+  const agentPick = el('fieldset', { className: 'link-repos' }, el('legend', { textContent: `Agents they can use (${staff ? [...lent].filter((id) => staff.some((s) => s.id === id)).length : '…'} picked)` }));
+  if (!staff) agentPick.append(say('Loading…', 'acct-note acct-fine'));
+  for (const s of staff || []) {
+    const box = el('input', { type: 'checkbox', checked: lent.has(s.id) });
+    box.addEventListener('change', () => { f.agents = new Set(lent); box.checked ? f.agents.add(s.id) : f.agents.delete(s.id); render(); });
+    agentPick.append(el('label', {}, box, el('span', { textContent: s.role ? `${s.name} · ${s.role}` : s.name })));
+  }
   const perDay = el('input', { type: 'number', min: 100000, step: 100000, value: f.tokensPerDay, required: f.ourAgents });
   perDay.setAttribute('aria-label', 'Tokens per day');
   const hint = el('span', { className: 'acct-fine', textContent: tokens(f.tokensPerDay) });
   perDay.addEventListener('input', () => { f.tokensPerDay = Math.floor(Number(perDay.value)) || 0; hint.textContent = tokens(f.tokensPerDay); });
-  ours.append(el('p', { className: 'link-k', textContent: 'Clearance cap' }), caps, warn,
+  ours.append(agentPick, el('p', { className: 'link-k', textContent: 'Clearance cap' }), caps, warn,
     el('label', { className: 'link-k link-tokens' }, el('span', { textContent: 'Tokens per day' }), perDay, hint));
 
   // Their agents: run on their machine and account, in a copy of the project.
@@ -234,8 +246,9 @@ function guest() {
   }
 
   const neither = !f.ourAgents && f.theirAgents === 'off';
-  const ready = f.repos.size > 0 && !neither && !busy;
-  const why = !f.repos.size ? 'Pick at least one project.' : neither ? 'Lend your agents, or let theirs in.' : '';
+  const noAgents = f.ourAgents && !!staff && ![...lent].some((id) => staff.some((s) => s.id === id));
+  const ready = f.repos.size > 0 && !neither && !noAgents && !busy && (!f.ourAgents || !!staff);
+  const why = !f.repos.size ? 'Pick at least one project.' : neither ? 'Lend your agents, or let theirs in.' : noAgents ? 'Pick at least one agent to lend.' : '';
   form.append(pick,
     el('label', { className: 'link-switch' }, lend, el('span', {}, el('strong', { textContent: 'Lend our agents' }),
       el('span', { className: 'acct-fine', textContent: 'They start jobs with your agents, on your Claude account.' }))),
@@ -250,9 +263,10 @@ function guest() {
       why ? el('span', { className: 'acct-fine', textContent: why }) : null));
   form.addEventListener('submit', (e) => {
     e.preventDefault();
-    if (!f.repos.size || neither) { note = why; render(); return; }
+    if (!f.repos.size || neither || noAgents) { note = why; render(); return; }
     if (f.ourAgents && f.tokensPerDay < 100000) { note = 'Allow at least 100,000 tokens a day.'; render(); return; }
-    const g = { repos: [...f.repos], clearance: f.full ? 'auto' : f.clearance, tokensPerDay: Math.max(f.tokensPerDay, 100000), ourAgents: f.ourAgents, theirAgents: f.theirAgents };
+    const g = { repos: [...f.repos], clearance: f.full ? 'auto' : f.clearance, tokensPerDay: Math.max(f.tokensPerDay, 100000), ourAgents: f.ourAgents, theirAgents: f.theirAgents,
+      ...(f.ourAgents && { agents: [...lent].filter((id) => staff.some((s) => s.id === id)) }) };
     if (f.edit) saveGuest(f.edit, g);
     else makeInvite('guest', g);
   });

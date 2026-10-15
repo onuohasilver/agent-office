@@ -674,6 +674,7 @@ function banterContext(pair) {
 }
 
 async function claimBanter(pair, game = false) {
+  if (!settings.get('breakRoom')) return { id: null };
   const c = claimChill(pair, game);
   if (!c) return { id: null };
   if (game) return { id: c.id };
@@ -835,9 +836,9 @@ function pump() {
   const roster = onFloor();
   for (const job of queued) {
     const busy = new Set(state.jobs.filter((j) => j.status === 'working').map((j) => j.agentId));
-    const free = roster.filter((s) => !busy.has(s.id) && (!job.wantAgent || s.id === job.wantAgent));
+    const free = roster.filter((s) => !busy.has(s.id) && (!job.wantAgent || s.id === job.wantAgent) && (!job.pool || job.pool.includes(s.id)));
     // Waiting on a busy colleague is ordinary, so it goes in the job's log only.
-    if (!free.length) { hold(job, job.wantAgent ? `${nameOf(job.wantAgent)} is busy on another job` : 'everyone in is busy', { quiet: true }); continue; }
+    if (!free.length) { hold(job, job.wantAgent ? `${nameOf(job.wantAgent)} is busy on another job` : job.pool ? 'the agents lent to this guest are busy' : 'everyone in is busy', { quiet: true }); continue; }
     const why = machineSays(job);
     if (why) { hold(job, why); continue; }
     // Follow-ups go back to whoever did the first round, if they're free.
@@ -1080,6 +1081,14 @@ function write(child, text) {
   if (!child.stdin.writable) return false;
   child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: text } }) + '\n');
   return true;
+}
+
+// The boss has spoken to this job, so whatever it was waiting on them for is answered.
+function answered(job) {
+  if (!job.asking && !job.awaitingBoss) return;
+  job.asking = null;
+  job.awaitingBoss = false;
+  pushJob(job);
 }
 
 // Hand a message to a job, whatever state it is in.
@@ -1491,6 +1500,7 @@ function replyJob(job, { message, mode, files }) {
   message = withFiles(message, attachments(files));
   if (job.status === 'working' || job.status === 'queued') {
     if (!String(message || '').trim()) throw new Error('Say something first.');
+    answered(job);
     deliver(job, String(message).trim());
     return;
   }
@@ -1719,6 +1729,7 @@ async function dispatch(text, mode, model, files, root, inThread, channel) {
       // keeps its model: its session is mid-flight and nobody is restarting it.
       const up = d.escalate && job.status !== 'working' ? bump(job) : null;
       if (up) addLog(job, { kind: 'system', summary: `Sent back by the boss; moving up to ${TIER_LABEL[up]}` });
+      answered(job);
       deliver(job, withFiles(clean, files));
       return post('chief', (d.say || `Passed to ${nameOf(job.agentId)}.`) + (up ? ` Running it on ${TIER_LABEL[up]} this time.` : ''), {
         jobId: job.id,
@@ -1804,7 +1815,7 @@ function chat({ text, mode = 'edit', model = '', files, thread, channel }) {
   if (!text) text = files.length === 1 ? 'Take a look at the attached file.' : 'Take a look at the attached files.';
   // A reply in a job's thread goes straight to that job; no routing needed.
   const job = root && threadJob(root);
-  if (job) return void deliver(job, withFiles(text, files));
+  if (job) { answered(job); return void deliver(job, withFiles(text, files)); }
   const remoteJob = root && guests.threadJob(root.id);
   const say = (line, extra = {}) => post('chief', line, { channel: where, thread: root?.id || msg.id, ...extra });
   if (remoteJob) {
@@ -2308,7 +2319,7 @@ const agentApi = {
     flagged.push(summary);
     // A question, decision or blocker means the boss's answer is still owed,
     // so the job must not be reported as done when the agent's turn ends.
-    if (kind !== 'review') me.asking = { kind, summary };
+    if (kind !== 'review') me.asking = { kind, summary, at: Date.now() };
     // Top level in #general on purpose: that is where the boss looks. jobId
     // keeps the "open job" link, and the explicit null thread keeps post()
     // from tucking it into the job's thread.
@@ -2833,6 +2844,18 @@ const server = http.createServer(async (req, res) => {
       });
       return fs.createReadStream(icon.file).pipe(res);
     }
+    // A PDF from a project, for the file viewer to show.
+    if (req.method === 'GET' && url.pathname === '/api/files/pdf') {
+      const dir = repoPath(url.searchParams.get('repo'));
+      if (!dir) return json(res, 404, { error: 'Unknown project folder.' });
+      try {
+        const f = files.pdf(dir, url.searchParams.get('path') || '');
+        res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': f.size, 'content-disposition': 'inline', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        return fs.createReadStream(f.abs).pipe(res);
+      } catch (err) {
+        return json(res, err.code >= 400 && err.code < 600 ? err.code : 500, { error: err.message });
+      }
+    }
     // The boss's own file editor: a project's folders and text files.
     if (url.pathname === '/api/files' && ['GET', 'PUT'].includes(req.method)) {
       const body = req.method === 'PUT' ? await readBody(req, 2 * files.MAX_BYTES) : null;
@@ -2957,6 +2980,7 @@ const server = http.createServer(async (req, res) => {
       const linkErr = (err) => json(res, err.code >= 400 && err.code < 600 ? err.code : 502, { error: err.message });
       try {
         if (req.method === 'GET' && url.pathname === '/api/links') return json(res, 200, await links.refresh().catch(() => links.status()));
+        if (req.method === 'GET' && url.pathname === '/api/links/staff') return json(res, 200, { staff: hired().map((s) => ({ id: s.id, name: s.name, role: s.role })) });
         if (req.method === 'POST' && url.pathname === '/api/links/invite') return json(res, 201, await links.invite(await readBody(req)));
         if (req.method === 'POST' && url.pathname === '/api/links/redeem') return json(res, 200, await links.redeem(await readBody(req)));
         if (req.method === 'DELETE' && parts[2] && !parts[3]) return json(res, 200, await links.unlink(parts[2]));
@@ -3088,6 +3112,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'DELETE' && parts[1] === 'chill' && parts[2] && !parts[3]) { endChill(parts[2]); return json(res, 200, { ok: true }); }
     if (req.method === 'POST' && url.pathname === '/api/jobs') return json(res, 201, publicJob(createJob(await readBody(req)), 0));
+    // Dismiss what the Needs you pane lists: one job's ask, or every ask when no id is given.
+    // The job itself is untouched; a fresh flag from the agent shows up again.
+    if (req.method === 'POST' && url.pathname === '/api/jobs/needs/dismiss') {
+      const { id } = await readBody(req);
+      for (const j of state.jobs) if (j.asking && !j.asking.dismissed && (!id || j.id === id)) { j.asking.dismissed = true; pushJob(j); }
+      return json(res, 200, { ok: true });
+    }
     if (req.method === 'POST' && url.pathname === '/api/jobs/clear') {
       state.jobs = state.jobs.filter((j) => j.status === 'working' || j.status === 'queued');
       save();

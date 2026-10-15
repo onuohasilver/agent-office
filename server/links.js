@@ -80,7 +80,11 @@ function cleanPolicy(guest) {
   const ourAgents = guest?.ourAgents !== false;
   const theirAgents = ['read', 'edit'].includes(guest?.theirAgents) ? guest.theirAgents : 'off';
   if (!ourAgents && theirAgents === 'off') throw fail(400, 'Let them use your agents, or let their agents work here, or both.');
-  return { repos, clearance, tokensPerDay, ourAgents, theirAgents };
+  // Which of our agents they may use. Absent (a guest made before this existed)
+  // means all of them.
+  const agents = ourAgents && Array.isArray(guest?.agents) ? [...new Set(guest.agents.map(String).filter((a) => ID_RE.test(a)))] : null;
+  if (agents && !agents.length) throw fail(400, 'Pick at least one of your agents to lend.');
+  return { repos, clearance, tokensPerDay, ourAgents, theirAgents, agents };
 }
 
 export class Links {

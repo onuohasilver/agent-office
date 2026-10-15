@@ -96,12 +96,25 @@ test('the boss buys from the pot, for a desk or the office', () => {
 
 test('a bought look goes into use, and only owned looks can be used', () => {
   const e = make();
-  assert.throws(() => e.use('layout-pods'), /doesn't own/);
+  assert.throws(() => e.use('floor-walnut'), /doesn't own/);
   e.books.pot = 500000;
-  e.buy('layout-pods', { by: 'boss' });
-  assert.equal(e.books.using.layout, 'layout-pods');
-  e.use('layout-classic');
-  assert.equal(e.books.using.layout, 'layout-classic');
+  e.buy('floor-walnut', { by: 'boss' });
+  assert.equal(e.books.using.floor, 'floor-walnut');
+  e.use('floor-oak');
+  assert.equal(e.books.using.floor, 'floor-oak');
+});
+
+test('every layout is free to switch to, no purchase needed', () => {
+  const e = make();
+  for (const id of ['layout-pods', 'layout-studio', 'layout-campus', 'layout-classic']) {
+    e.use(id);
+    assert.equal(e.books.using.layout, id);
+  }
+  assert.equal(e.books.pot, 0);
+});
+
+test('only floors, walls and layouts can be put into use', () => {
+  const e = make();
   assert.throws(() => e.use('arcade'), /floor, wall or layout/);
 });
 

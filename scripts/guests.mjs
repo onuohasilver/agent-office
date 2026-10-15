@@ -38,6 +38,22 @@ check('hello caps modes and shares the policy', r.ok && !('auto' in r.body.modes
 check('hello shows none of the host’s jobs', r.body.jobs.length === 0);
 r = await ask(OTHER, 'hello');
 check('no policy, no access', !r.ok && r.code === 403, JSON.stringify(r));
+// Lending only some agents.
+const PICK = { id: 'L9', peer: 'pal', kind: 'guest', role: 'host' };
+links.policies.L9 = { repos: ['shared'], clearance: 'edit', tokensPerDay: 1000, agents: ['mira'] };
+office.staff = () => [{ id: 'tunde', name: 'Tunde' }, { id: 'mira', name: 'Mira' }];
+r = await ask(PICK, 'hello');
+check('hello lists only the lent agents', r.ok && r.body.staff.length === 1 && r.body.staff[0].id === 'mira' && r.body.policy.agents[0] === 'mira', JSON.stringify(r));
+r = await ask(PICK, 'createJob', { repo: 'shared', prompt: 'x', agentId: 'tunde' });
+check('an agent that isn’t lent is refused', !r.ok && r.code === 403, JSON.stringify(r));
+r = await ask(PICK, 'createJob', { repo: 'shared', prompt: 'x', agentId: 'mira' });
+check('a lent agent works, and the job is held to the lent pool', r.ok && jobs.at(-1).wantAgent === undefined && jobs.at(-1).pool?.[0] === 'mira' && jobs.at(-1).agentId === 'mira', JSON.stringify(r));
+r = await ask(PICK, 'createJob', { repo: 'shared', prompt: 'y' });
+check('no agent named: still limited to the pool', r.ok && jobs.at(-1).pool?.length === 1);
+r = await ask(HOST, 'hello');
+check('a guest with no list gets every agent', r.body.staff.length === 2 && r.body.policy.agents === null);
+office.staff = () => [{ id: 'tunde', name: 'Tunde' }];
+for (let i = jobs.length - 1; i >= 0; i--) if (jobs[i].guest?.link === 'L9') jobs.splice(i, 1);
 r = await ask(HOST, 'createJob', { repo: 'secret', prompt: 'x' });
 check('only shared repos', !r.ok && r.code === 403, JSON.stringify(r));
 r = await ask(HOST, 'createJob', { repo: 'shared', prompt: 'x', mode: 'auto' });

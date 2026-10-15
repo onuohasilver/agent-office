@@ -46,7 +46,7 @@ export function split(gross) {
 //           boss buys it for them out of the pot
 //   office  somewhere in the room; bought out of the pot
 //   floor / wall  the room's finish; bought out of the pot, one in use at a time
-//   layout  a different floor plan; bought out of the pot, one in use at a time
+//   layout  a different floor plan; free to switch between, one in use at a time
 export const ITEMS = [
   // desk
   { id: 'mug', scope: 'desk', name: 'Coffee mug', price: 2000, icon: '☕' },
@@ -80,9 +80,9 @@ export const ITEMS = [
   { id: 'wall-blush', scope: 'wall', name: 'Blush walls', price: 35000, color: '#f1d9d2', icon: '🧱' },
   // layouts
   { id: 'layout-classic', scope: 'layout', name: 'Classic', price: 0, icon: '🏢', blurb: 'Two rows of desks, the library and server room on the back wall.' },
-  { id: 'layout-pods', scope: 'layout', name: 'Pods', price: 150000, icon: '🧩', blurb: 'Desks in two back-to-back clusters of four, a table and rug between them.' },
-  { id: 'layout-studio', scope: 'layout', name: 'Studio', price: 250000, icon: '🎨', blurb: 'One long row of desks along the back, the floor left open for the table and the pool.' },
-  { id: 'layout-campus', scope: 'layout', name: 'Campus', price: 400000, icon: '🏛️', blurb: 'Desks facing in round a courtyard, with the pool table at its heart.' },
+  { id: 'layout-pods', scope: 'layout', name: 'Pods', price: 0, icon: '🧩', blurb: 'Desks in two back-to-back clusters of four, a table and rug between them.' },
+  { id: 'layout-studio', scope: 'layout', name: 'Studio', price: 0, icon: '🎨', blurb: 'One long row of desks along the back, the floor left open for the table and the pool.' },
+  { id: 'layout-campus', scope: 'layout', name: 'Campus', price: 0, icon: '🏛️', blurb: 'Desks facing in round a courtyard, with the pool table at its heart.' },
 ];
 
 export const itemById = (id) => ITEMS.find((i) => i.id === id);

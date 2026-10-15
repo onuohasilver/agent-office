@@ -24,6 +24,15 @@ export class Grid {
         if (this.inside(i, j)) this.cells[j * this.w + i] = 1;
   }
 
+  // The opposite of block: open these cells up again.
+  free(x0, x1, z0, z1) {
+    const [i0, j0] = this.cellOf(x0, z0);
+    const [i1, j1] = this.cellOf(x1 - 1e-6, z1 - 1e-6);
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++)
+        if (this.inside(i, j)) this.cells[j * this.w + i] = 0;
+  }
+
   nearestFree(i, j) {
     if (!this.blocked(i, j)) return [i, j];
     const seen = new Set([j * this.w + i]);

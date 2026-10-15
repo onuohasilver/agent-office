@@ -15,6 +15,13 @@ const MODES = [
   { id: 'auto', name: 'Auto' },
 ];
 
+// How you move around: a floating dock (default) or the sidebar over a full-screen
+// office. Pure CSS on <html data-nav>, so switching is instant and loses nothing.
+const NAVS = [
+  { id: 'sidebar', name: 'Sidebar' },
+  { id: 'dock', name: 'Dock' },
+];
+
 const root = document.documentElement;
 const dark = matchMedia('(prefers-color-scheme: dark)');
 const read = (k, fallback, valid) => {
@@ -41,6 +48,7 @@ try {
 
 let theme = read('office.theme', 'paper', THEMES);
 let mode = read('office.appearance', 'auto', MODES);
+let nav = read('office.nav', 'dock', NAVS);
 
 const btn = document.getElementById('themeBtn');
 const pop = document.getElementById('themePop');
@@ -49,6 +57,7 @@ function apply() {
   const resolved = mode === 'dark' || (mode === 'auto' && dark.matches) ? 'dark' : 'light';
   root.dataset.theme = theme;
   root.dataset.mode = resolved;
+  root.dataset.nav = nav;
   // The browser / installed-app chrome follows the paper colour.
   const meta = document.querySelector('meta[name="theme-color"]');
   if (meta) meta.content = getComputedStyle(root).getPropertyValue('--paper').trim() || meta.content;
@@ -81,6 +90,8 @@ function render() {
     group(THEMES, theme, (id) => { theme = id; save('office.theme', id); apply(); }, 'theme-swatches'),
     label('Mode'),
     group(MODES, mode, (id) => { mode = id; save('office.appearance', id); apply(); }, 'theme-modes'),
+    label('Navigation'),
+    group(NAVS, nav, (id) => { nav = id; save('office.nav', id); apply(); }, 'theme-modes nav-modes'),
   );
 }
 
@@ -95,6 +106,15 @@ pop?.addEventListener('click', (e) => e.stopPropagation());
 document.addEventListener('click', () => { if (pop && !pop.hidden) open(false); });
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && pop && !pop.hidden) { open(false); btn.focus(); }
+});
+// Dock only: Esc puts the windows away behind the Office button. (Pressing a dock
+// button toggles that one window; see panes.js.)
+const dockOpen = () => root.dataset.nav === 'dock' && document.getElementById('app')?.dataset.m === 'side';
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented || !dockOpen()) return;
+  if (document.querySelector('dialog[open]') || (pop && !pop.hidden)) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+  document.querySelector('#mnav [data-m="office"]').click();
 });
 dark.addEventListener('change', () => { if (mode === 'auto') apply(); });
 

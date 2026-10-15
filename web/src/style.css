@@ -91,12 +91,12 @@ body {
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 
-/* ---------- layout: three columns, nothing floats over the office ---------- */
+/* ---------- layout: the office fills the screen; the panes float over it as windows ---------- */
 
 /* The office backdrop is painted once on .app, behind all three columns, so the
-   side and detail panes can be frosted glass over it. */
+   panes can be frosted glass over it. */
 .app {
-  display: grid; grid-template-columns: var(--side-w, 480px) minmax(0, 1fr) auto; height: 100vh; height: 100dvh;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; height: 100vh; height: 100dvh;
   background:
     radial-gradient(40% 36% at 8% 14%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 100%),
     radial-gradient(38% 34% at 94% 86%, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 100%),
@@ -112,34 +112,47 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- sidebar ---------- */
 
-.side-grip {
-  position: absolute; z-index: 30; top: 0; bottom: 0; right: -4px; width: 9px; cursor: col-resize; touch-action: none;
-}
-.side-grip::after {
-  content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 2px; background: var(--accent);
-  opacity: 0; transition: opacity 0.15s;
-}
-.side-grip:hover::after, .side-grip:focus-visible::after, .app.resizing .side-grip::after { opacity: 0.6; }
-.side-grip:focus-visible { outline: none; }
-.app.resizing { cursor: col-resize; user-select: none; }
-.app.resizing #stage { pointer-events: none; }
 .side {
   position: relative; zoom: var(--side-zoom, 1);
   display: flex; flex-direction: column; min-height: 0;
   background: var(--pane); border-right: 1px solid var(--pane-edge);
   -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
 }
+/* On a wide screen the sidebar is only the brand card (name, level, usage, tabs);
+   Chat, Jobs, Projects and Team are windows in #wins, see panes.js. */
+@media (min-width: 861px) {
+  .view { grid-column: 1; grid-row: 1; }
+  .detail { grid-column: 2; grid-row: 1; }
+  .side {
+    position: fixed; z-index: 30000; left: 16px; top: 16px; width: 400px; box-sizing: border-box;
+    border: 1px solid var(--pane-edge); border-radius: 18px;
+    box-shadow: 0 18px 50px rgb(0 0 0 / 0.22);
+  }
+}
 .brand { padding: 20px 20px 14px; position: relative; }
-.title-end { display: flex; align-items: center; gap: 4px; flex: none; }
+.title-end { display: flex; align-items: center; gap: 2px; flex: none; }
 .theme-btn {
   all: unset; cursor: pointer; flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 8px;
   color: var(--ink-3); transition: background 0.15s, color 0.15s;
 }
 .theme-btn:hover, .theme-btn[aria-expanded="true"] { background: var(--t2); color: var(--ink); }
+/* The buttons get a row of their own under the name: a tray as wide as the card, six
+   even 40px targets with 21px icons, so the name keeps its room and nothing is tiny. */
+.brand .title { flex-wrap: wrap; row-gap: 12px; }
+.brand .title-start { flex: 1 1 100%; }
+.brand .title-end {
+  flex: 1 1 100%; justify-content: space-between; gap: 4px; padding: 4px; box-sizing: border-box;
+  background: var(--t1, var(--t2)); border-radius: 14px;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.brand .theme-btn { flex: 1 1 0; width: auto; height: 40px; border-radius: 10px; color: var(--ink-2, var(--ink-3)); }
+.brand .theme-btn svg { width: 21px; height: 21px; }
+.brand .theme-btn:hover, .brand .theme-btn[aria-expanded="true"] { background: var(--paper); box-shadow: 0 1px 3px rgb(0 0 0 / 0.1); }
+.brand .theme-btn:active { transform: scale(0.95); }
 .theme-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .theme-btn svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .theme-pop {
-  position: absolute; z-index: 40; top: 52px; right: 14px; width: 252px; max-width: calc(100% - 28px); box-sizing: border-box; padding: 10px 12px 12px;
+  position: absolute; z-index: 40; top: 112px; right: 14px; width: 252px; max-width: calc(100% - 28px); box-sizing: border-box; padding: 10px 12px 12px;
   background: var(--paper); border: 1px solid var(--line); border-radius: 14px;
   box-shadow: 0 10px 30px rgb(0 0 0 / 0.16);
 }
@@ -204,7 +217,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ---------- linked offices ---------- */
 
-.link-pop { width: 320px; overflow-x: hidden; max-height: calc(100dvh - 80px); overflow-y: auto; overscroll-behavior: contain; }
+/* The side pane is zoomed (Cmd/Ctrl +), which scales this height too; divide it back out to fit the window. */
+.link-pop { width: 320px; overflow-x: hidden; max-height: calc((100dvh - 80px) / var(--side-zoom, 1)); overflow-y: auto; overscroll-behavior: contain; }
 .link-actions { display: grid; gap: 8px; margin-top: 10px; }
 .link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .link-actions .link-row .ghost { flex: 1; background: var(--t1); }
@@ -350,7 +364,17 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .tabs button.on { color: var(--ink); background: var(--t2); }
 .tabs #jobCount:not(:empty) { font-size: 11px; background: var(--accent); color: var(--paper); border-radius: 99px; padding: 0 6px; line-height: 17px; }
 .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-#jobsPane { padding: 8px 12px 12px; }
+#jobsPane, #needsPane { padding: 8px 12px 12px; }
+.tabs #needsCount:not(:empty) { font-size: 11px; background: var(--bad); color: var(--paper); border-radius: 99px; padding: 0 6px; line-height: 17px; }
+.needs .job .ask { grid-column: 2 / 4; margin-top: 4px; font-size: 12.5px; line-height: 1.4; color: var(--ink-2, var(--ink)); overflow-wrap: anywhere; text-wrap: pretty; }
+.need-wrap { position: relative; }
+.needs .need-wrap > .job { padding-right: 36px; width: 100%; }
+.need-x { position: absolute; top: 8px; right: 6px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 6px; color: var(--ink-3); }
+.need-x:hover { background: var(--t2); color: var(--ink); }
+.need-x svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.needs > .ghost { margin-top: 8px; }
+.needs .job .kind { font-weight: 600; color: var(--bad); }
+.needs .job .w { font-weight: 600; color: var(--ink-2, var(--ink-3)); }
 
 /* ---------- team ---------- */
 
@@ -464,16 +488,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
 }
 .jgroup:first-child { margin-top: 4px; }
 .jgroup span { font-variant-numeric: tabular-nums; font-weight: 500; letter-spacing: 0; opacity: 0.8; }
-.jobs > .job { grid-template-columns: 10px 1fr auto; padding: 10px 12px; }
-.jobs > .job .t {
+.jobs > .job, .needs .job { grid-template-columns: 10px 1fr auto; padding: 10px 12px; }
+.jobs > .job .t, .needs .job .t {
   white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   font-weight: 540; line-height: 1.35; text-wrap: pretty; overflow-wrap: anywhere;
 }
-.jobs > .job .dot { margin-top: 6px; }
-.jobs > .job .w { align-self: start; margin-top: 2px; font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.jobs > .job .m { grid-column: 2 / 4; display: flex; align-items: center; margin-top: 3px; white-space: pre; }
-.jobs > .job .m .pico { --s: 14px; font-size: 8px; margin-right: 6px; }
-.jobs > .job .m .r { overflow: hidden; text-overflow: ellipsis; }
+.jobs > .job .dot, .needs .job .dot { margin-top: 6px; }
+.jobs > .job .w, .needs .job .w { align-self: start; margin-top: 2px; font-size: 11.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.jobs > .job .m, .needs .job .m { grid-column: 2 / 4; display: flex; align-items: center; margin-top: 3px; white-space: pre; }
+.jobs > .job .m .pico, .needs .job .m .pico { --s: 14px; font-size: 8px; margin-right: 6px; }
+.jobs > .job .m .r, .needs .job .m .r { overflow: hidden; text-overflow: ellipsis; }
 .job .m .s.working { color: var(--work-fg); font-weight: 560; }
 .job .m .s.queued { color: var(--wait-fg); font-weight: 560; }
 .job .m .s.failed { color: var(--bad); font-weight: 560; }
@@ -704,7 +728,9 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; ba
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(60, 45, 25, 0.06);
 }
 #stats span { white-space: nowrap; }
-#stats b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; margin-right: 3px; }
+#stats span { display: inline-flex; align-items: center; gap: 4px; }
+#stats svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+#stats b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
 .chip.tools { padding: 0 4px; gap: 2px; }
 .chip.tools button {
   all: unset; cursor: pointer; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; color: var(--ink-2);
@@ -724,6 +750,8 @@ select { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; ba
 
 /* ---------- detail drawer (a docked column) ---------- */
 
+/* The text zoom (Cmd/Ctrl +/-) scales what is inside the job card, not the card. */
+.detail > * { zoom: var(--side-zoom, 1); }
 .detail {
   width: 440px; display: flex; flex-direction: column; min-height: 0; padding-top: 18px;
   background: var(--pane); border-left: 1px solid var(--pane-edge);
@@ -881,7 +909,6 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
 /* ---------- smaller screens ---------- */
 
 @media (max-width: 1180px) {
-  .app { grid-template-columns: min(var(--side-w, 320px), 320px) minmax(0, 1fr) auto; }
   .detail { width: 380px; }
 }
 /* The HUD answers to the office's own width, not the window's. */
@@ -896,7 +923,6 @@ code { font-family: var(--mono); font-size: 0.88em; background: var(--t2); paddi
      a bare 1fr won't shrink below its content. */
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .view, .side { grid-area: 1 / 1; min-width: 0; }
-  .side-grip { display: none; }
   .app[data-m="office"] .side, .app[data-m="side"] .view { visibility: hidden; pointer-events: none; }
   .side { border-right: 0; padding-top: env(safe-area-inset-top); }
   .brand { display: block; padding: 12px 16px 8px; }
@@ -1128,14 +1154,15 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 .coins { display: inline-flex; align-items: center; gap: 4px; font-weight: 650; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
 
 /* The pot, in the office view: a tap opens the shop. */
-.chip.pot { all: unset; pointer-events: auto; cursor: pointer; box-sizing: border-box; display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px;
+.chip.pot { all: unset; pointer-events: auto; cursor: pointer; position: relative; box-sizing: border-box; display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 12px;
   background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border: 1px solid var(--line); border-radius: 12px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(60, 45, 25, 0.06); font-size: 13px; color: var(--ink-2);
   -webkit-tap-highlight-color: transparent; transition: background 0.15s, transform 0.12s; }
 .chip.pot[hidden] { display: none; }
 .chip.pot b { color: var(--ink); font-weight: 680; font-variant-numeric: tabular-nums; }
-.chip.pot span { padding-left: 8px; margin-left: 2px; border-left: 1px solid var(--line); font-weight: 600; }
-.chip.pot.shop-door span { padding-left: 0; margin-left: 0; border-left: 0; white-space: nowrap; }
+/* Icon-only: the words stay for screen readers and tooltips (aria-label, title). */
+.chip.pot span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.chip.pot .goal-name, .chip.pot .goal-bar { display: none; }
 .chip.pot.shop-door i { font-style: normal; }
 .chip.pot:active { transform: scale(0.96); }
 .chip.pot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1282,7 +1309,6 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
   .sc-btn, .sp-treat { min-height: 40px; padding: 0 14px; font-size: 13.5px; }
   .shop-pot small { display: none; }
   .chip.pot { height: 40px; }
-  .chip.pot span { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .chip.pot.bump b { animation: none; }
@@ -1479,7 +1505,8 @@ audio.voice { width: 100%; max-width: 260px; height: 32px; }
 body.viewing { overflow: hidden; }
 @media (max-width: 700px) { .viewer-nav { margin: 0 4px; width: 32px; height: 32px; } }
 
-.agent-label .perk { margin-left: 5px; font-size: 10px; font-weight: 600; opacity: .75; white-space: nowrap; }
+.agent-label .perk { margin-left: 5px; display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 600; opacity: .75; white-space: nowrap; }
+.agent-label .perk .rank { height: 11px; width: auto; }
 .ac-tips { display: flex; align-items: center; gap: 5px; padding: 5px 8px 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--ink-3); }
 .ac-tips span { margin-right: auto; }
 .ac-tip { border: 1px solid var(--line); background: transparent; color: inherit; border-radius: 10px; padding: 2px 7px; font-size: 11px; cursor: pointer; }
@@ -1552,10 +1579,178 @@ html[data-mode="dark"] .fedit {
 }
 .fe-code { flex: 1; min-height: 0; overflow: hidden; background: var(--surface); }
 .fe-foot { display: flex; justify-content: space-between; padding: 5px 16px; border-top: 1px solid var(--line); font: 11px var(--mono); color: var(--ink-3); background: var(--paper-2); }
+.fe-read {
+  all: unset; cursor: pointer; padding: 7px 14px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  color: var(--ink-2); background: var(--t2);
+}
+.fe-read[hidden] { display: none; }
+.fe-read:hover { color: var(--ink); background: var(--t3); }
+.fe-read:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fe-pdf { flex: 1; min-height: 0; overflow: auto; padding: 12px; background: var(--surface); }
+.fe-pdf-page { margin: 0 auto 12px; width: fit-content; max-width: 100%; }
+.fe-pdf-page canvas { display: block; background: #fff; box-shadow: 0 1px 6px rgb(0 0 0 / 0.18); }
+.fe-doc { flex: 1; min-height: 0; overflow: auto; padding: 32px max(20px, calc((100% - 760px) / 2)) 64px; background: var(--surface); font-size: 15px; line-height: 1.65; color: var(--ink); }
+.fe-doc h1 { font-size: 28px; letter-spacing: -0.02em; margin: 0 0 4px; }
+.fe-doc h2 { font-size: 18px; margin: 28px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+.fe-doc h3 { font-size: 15px; margin: 18px 0 4px; }
+.fe-doc p, .fe-doc ul, .fe-doc ol { margin: 8px 0; }
+.fe-doc ul, .fe-doc ol { padding-left: 22px; }
+.fe-doc a { color: var(--accent); }
+.fe-doc code { font: 13px var(--mono); background: var(--t1); padding: 1px 5px; border-radius: 5px; }
+.fe-doc pre { overflow: auto; padding: 12px 14px; background: var(--t1); border-radius: 9px; }
+.fe-doc pre code { background: none; padding: 0; }
+.fe-doc blockquote { margin: 10px 0; padding-left: 14px; border-left: 3px solid var(--line); color: var(--ink-2); }
+.fe-doc table { border-collapse: collapse; } .fe-doc th, .fe-doc td { border: 1px solid var(--line); padding: 5px 10px; }
+.fe-doc hr { border: 0; border-top: 1px solid var(--line); margin: 20px 0; }
 @media (max-width: 860px) {
   .fe-toggle { display: grid; }
   .fe-tree { position: absolute; top: 58px; bottom: 0; left: 0; z-index: 3; width: min(300px, 86%); transform: translateX(-102%); transition: transform 0.2s var(--ease); box-shadow: 6px 0 24px rgba(0,0,0,0.12); }
   .fedit.fe-tree-open .fe-tree { transform: none; }
   .fe-code .cm-editor { font-size: 16px; }
 }
+.fedit.fe-pane { position: relative; inset: auto; z-index: auto; flex: 1; min-height: 0; animation: none; }
+.fedit.fe-pane .fe-bar { min-height: 46px; padding: 6px 10px; }
+.fedit.fe-pane .fe-toggle { display: grid; }
+.fedit.fe-pane .fe-tree { position: absolute; top: 46px; bottom: 0; left: 0; z-index: 3; width: min(300px, 86%); transform: translateX(-102%); transition: transform 0.2s var(--ease); box-shadow: 6px 0 24px rgba(0,0,0,0.12); }
+.fedit.fe-pane.fe-tree-open .fe-tree { transform: none; }
+.fedit.fe-pane .fe-doc { padding: 20px 22px 48px; }
 @media (prefers-reduced-motion: reduce) { .fedit, .fe-skel i { animation: none; } .fe-tree, .fe-caret { transition: none; } }
+
+/* ---------- dock navigation (Appearance → Navigation → Dock) ----------
+   The office goes full-bleed. The same bottom bar the phone uses floats as a
+   pill; Chat / Jobs / Projects / Team each open (or close) their own window,
+   and Office (or Esc) puts the brand card and every window away until you
+   come back. The windows and dock sit above the agent name labels (z-index
+   20000). It is all keyed off <html data-nav="dock">, so Sidebar is untouched. */
+
+@media (min-width: 861px) {
+  html[data-nav="dock"] .detail {
+    position: fixed; z-index: 30000; right: 16px; top: 16px; bottom: 84px;
+    width: min(440px, calc(100vw - 32px)); box-sizing: border-box;
+    border: 1px solid var(--pane-edge); border-radius: 18px; overflow: hidden;
+    box-shadow: 0 18px 50px rgb(0 0 0 / 0.22);
+    translate: var(--dx, 0) var(--dy, 0);
+  }
+  /* Its top is the handle (see detail-move.js). */
+  html[data-nav="dock"] .detail .d-head, html[data-nav="dock"] .detail h2 { cursor: grab; }
+  html[data-nav="dock"] .detail .d-head { padding-bottom: 2px; border-radius: 8px; }
+  html[data-nav="dock"] .detail .d-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  html[data-nav="dock"] .detail.moving, html[data-nav="dock"] .detail.moving * { cursor: grabbing; user-select: none; }
+  html[data-nav="dock"] .detail.moving { transition: none; }
+  html[data-nav="dock"] .tabs { display: none; }
+  html[data-nav="dock"] .side, html[data-nav="dock"] #wins {
+    transition: opacity 0.18s var(--ease, ease), transform 0.22s var(--ease, ease), visibility 0s;
+  }
+  /* Office puts every window away (they come back as they were) and shows the brand
+     card; with a window up, the card steps aside so it never covers anything. */
+  html[data-nav="dock"] .app:not([data-m="office"]) .side, html[data-nav="dock"] .app[data-m="office"] ~ #wins {
+    opacity: 0; transform: translateX(-14px) scale(0.985); visibility: hidden; pointer-events: none;
+    transition: opacity 0.14s ease, transform 0.14s ease, visibility 0s 0.14s;
+  }
+  html[data-nav="dock"] .mnav {
+    position: fixed; z-index: 30001; left: 50%; bottom: 16px; transform: translateX(-50%);
+    display: flex; gap: 2px; padding: 5px; border-radius: 20px;
+    background: var(--pane); border: 1px solid var(--pane-edge);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
+    box-shadow: 0 10px 34px rgb(0 0 0 / 0.2);
+  }
+  html[data-nav="dock"] .mnav button {
+    all: unset; cursor: pointer; position: relative; box-sizing: border-box; display: flex; align-items: center; gap: 7px;
+    height: 40px; padding: 0 13px; border-radius: 15px; font-size: 13px; font-weight: 600; color: var(--ink-3);
+    transition: background 0.15s, color 0.15s, transform 0.12s;
+  }
+  html[data-nav="dock"] .mnav .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  html[data-nav="dock"] .mnav button:hover { background: var(--t2); color: var(--ink); }
+  html[data-nav="dock"] .mnav button:active { transform: scale(0.96); }
+  html[data-nav="dock"] .mnav button.on { background: var(--t2); color: var(--ink); }
+  html[data-nav="dock"] .mnav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  html[data-nav="dock"] .mnav svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  html[data-nav="dock"] .mnav b:not(:empty) {
+    font-size: 10.5px; background: var(--accent); color: var(--paper); border-radius: 99px; padding: 0 6px; line-height: 16px; font-weight: 700;
+  }
+  html[data-nav="dock"] .mnav .dot { position: absolute; top: 7px; left: 26px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  html[data-nav="dock"] .toast { bottom: 84px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-nav="dock"] .side, html[data-nav="dock"] #wins, html[data-nav="dock"] .mnav button { transition: none !important; }
+}
+.nav-modes { grid-template-columns: 1fr 1fr; }
+
+/* Arrange mode: the bar over the room while you move furniture. */
+.chip.tools button[aria-pressed="true"] { background: var(--accent); color: #fff; }
+.build-bar {
+  position: absolute; top: 14px; left: 50%; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 14px; max-width: calc(100% - 24px);
+  background: var(--glass); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--line); border-radius: 12px; font-size: 13px; color: var(--ink-2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 18px rgba(60, 45, 25, 0.1);
+}
+.build-bar[hidden] { display: none; }
+.build-bar b { color: var(--ink); font-weight: 650; }
+.build-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.build-hint.bad { color: #d23b40; }
+.build-bar button {
+  all: unset; cursor: pointer; height: 28px; padding: 0 12px; border-radius: 8px; box-sizing: border-box;
+  display: grid; place-items: center; color: var(--ink-2); background: var(--t2);
+  transition: background 0.15s, transform 0.12s;
+}
+.build-bar button:hover { background: var(--line); }
+.build-bar button:active { transform: scale(0.96); }
+.build-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.build-bar button.primary { background: var(--accent); color: #fff; font-weight: 600; }
+.build-bar button.primary:hover { filter: brightness(1.08); }
+body.building .hint { display: none; }
+@media (prefers-reduced-motion: reduce) { .build-bar button { transition: none; } }
+
+/* ---------- windows: Chat, Jobs, Projects and Team (panes.js) ---------- */
+
+#wins { display: none; }
+@media (min-width: 861px) {
+  #wins { display: block; position: fixed; inset: 0; z-index: 21000; pointer-events: none; }
+}
+.win {
+  position: fixed; display: flex; flex-direction: column; box-sizing: border-box; pointer-events: auto;
+  background: var(--pane); border: 1px solid var(--pane-edge); border-radius: 16px;
+  -webkit-backdrop-filter: blur(24px) saturate(1.5); backdrop-filter: blur(24px) saturate(1.5);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.14);
+  animation: win-in 0.16s var(--ease, ease);
+}
+.win[hidden] { display: none; }
+.win.front { box-shadow: 0 18px 50px rgb(0 0 0 / 0.26); }
+.win.moving { transition: none; user-select: none; }
+@keyframes win-in { from { opacity: 0; transform: scale(0.985); } }
+.win-bar {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 8px 0 14px; box-sizing: border-box;
+  border-radius: 15px 15px 0 0; border-bottom: 1px solid var(--line); cursor: grab; touch-action: none; user-select: none;
+}
+.win.moving .win-bar { cursor: grabbing; }
+.win-bar:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.win-title { font-size: 13px; font-weight: 640; letter-spacing: -0.005em; color: var(--ink-2); }
+.win.front .win-title { color: var(--ink); }
+.win-badge:not(:empty) { font-size: 11px; font-weight: 650; background: var(--accent); color: var(--paper); border-radius: 99px; padding: 0 6px; line-height: 17px; }
+.win-x {
+  all: unset; cursor: pointer; margin-left: auto; flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 8px; color: var(--ink-3); transition: background 0.15s, color 0.15s;
+}
+.win-x:hover { background: var(--t2); color: var(--ink); }
+.win-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.win-x svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* The text zoom (Cmd/Ctrl +) scales what is inside a window, not the window. */
+.win-body {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 0 0 15px 15px; zoom: var(--side-zoom, 1);
+}
+.win-rz { position: absolute; z-index: 3; touch-action: none; }
+.win-rz[data-edge="n"], .win-rz[data-edge="s"] { left: 14px; right: 14px; height: 9px; cursor: ns-resize; }
+.win-rz[data-edge="e"], .win-rz[data-edge="w"] { top: 14px; bottom: 14px; width: 9px; cursor: ew-resize; }
+.win-rz[data-edge="n"] { top: -5px; } .win-rz[data-edge="s"] { bottom: -5px; }
+.win-rz[data-edge="e"] { right: -5px; } .win-rz[data-edge="w"] { left: -5px; }
+.win-rz[data-edge="ne"], .win-rz[data-edge="nw"], .win-rz[data-edge="se"], .win-rz[data-edge="sw"] { width: 18px; height: 18px; }
+.win-rz[data-edge="ne"] { top: -5px; right: -5px; cursor: nesw-resize; }
+.win-rz[data-edge="sw"] { bottom: -5px; left: -5px; cursor: nesw-resize; }
+.win-rz[data-edge="nw"] { top: -5px; left: -5px; cursor: nwse-resize; }
+.win-rz[data-edge="se"] { bottom: -5px; right: -5px; cursor: nwse-resize; }
+.app.pane-drag { user-select: none; }
+.app.pane-drag #stage { pointer-events: none; }
+.app.visiting ~ #wins [data-pane="team"] { display: none !important; }
+@media (prefers-reduced-motion: reduce) { .win { animation: none; } .win-x { transition: none; } }

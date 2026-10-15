@@ -63,6 +63,20 @@ export function read(root, rel) {
   return { path: at, text: buf.toString('utf8'), mtime: st.mtimeMs, size: st.size };
 }
 
+// A PDF to show in the viewer: its real path and size, or an error. Only files
+// that are really PDFs are served, whatever they are called.
+export function pdf(root, rel) {
+  const { abs } = resolve(root, rel);
+  const st = fs.statSync(abs);
+  if (!st.isFile()) throw fail(400, 'That is a folder, not a file.');
+  if (!/\.pdf$/i.test(abs)) throw fail(415, 'That is not a PDF.');
+  const fd = fs.openSync(abs, 'r');
+  const head = Buffer.alloc(5);
+  try { fs.readSync(fd, head, 0, 5, 0); } finally { fs.closeSync(fd); }
+  if (head.toString('latin1') !== '%PDF-') throw fail(415, 'That file is not a valid PDF.');
+  return { abs, size: st.size };
+}
+
 // `mtime` is what read() gave; null means the file must not exist yet.
 export function write(root, rel, text, mtime) {
   if (typeof text !== 'string') throw fail(400, 'Nothing to save.');

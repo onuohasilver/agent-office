@@ -113,7 +113,7 @@ function looksPane() {
     swatch: scope !== 'layout',
     blurb: it.blurb,
   })).join('')}</div>`;
-  return section('layout', 'Layout', 'A new floor plan. Everyone’s desk comes with them, and the page reloads to move in.')
+  return section('layout', 'Layout', 'A new floor plan, free to switch any time. Everyone’s desk comes with them, and the page reloads to move in.')
     + section('floor', 'Floor') + section('wall', 'Walls');
 }
 

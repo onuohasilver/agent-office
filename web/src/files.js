@@ -2,10 +2,24 @@
 // a code editor on the right (code.js, loaded on first open). Cmd/Ctrl+S saves; a save is refused if the file changed on
 // disk since it was opened (an agent may be mid-job), and says so.
 
+import { Marked } from 'marked';
 import { api } from './hud.js';
+import { panes } from './panes.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const kb = (n) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`);
+// Markdown files can be read rendered. Raw HTML is shown as text and only web
+// links survive, as in chat, since a file can hold anything.
+const md = new Marked({ gfm: true });
+md.use({
+  renderer: {
+    html: (t) => esc(t.text ?? t),
+    link: ({ href, text }) => (/^(https?:|mailto:)/i.test(href) ? `<a href="${esc(href)}" target="_blank" rel="noreferrer">${esc(text)}</a>` : esc(text)),
+    image: ({ text }) => esc(text),
+  },
+});
+const isPdf = (p) => /\.pdf$/i.test(p || '');
+const isMd = (p) => /\.(md|markdown|mdx)$/i.test(p || '');
 const q = (o) => new URLSearchParams(o).toString();
 const FOLDER = '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>';
 const FILE = '<path d="M7 3h7l5 5v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/>';
@@ -20,20 +34,36 @@ let file = null;        // { path, mtime, size, base } once loaded
 let state = 'idle';     // idle | loading | ready | saving | error
 let message = '';
 let dirty = false;
+let reading = false;    // showing the rendered Markdown instead of the code
 let cm = null;          // the code view, while a file is showing
+let pdfView = null;     // the PDF being shown, if any
 let Code = null;        // code.js, once loaded
 
 const loadCode = async () => { Code ??= await import('./code.js'); };
 
-export function initFiles(a) { app = a; }
+export function initFiles(a) {
+  app = a;
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest?.('a[data-doc]');
+    if (!a || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const i = a.dataset.doc.indexOf('/');
+    openFiles(a.dataset.doc.slice(0, i), null, a.dataset.doc.slice(i + 1));
+  });
+  // #doc=project/path/to/file.md opens that file straight away.
+  const m = /^#doc=([^/]+)\/(.+)$/.exec(decodeURIComponent(location.hash));
+  if (m) { history.replaceState(null, '', location.pathname + location.search); openFiles(m[1], null, m[2]); }
+}
 
 export async function openFiles(name, back = null, startPath = '') {
   onClose = back;
   repo = name; tree = new Map(); open = new Set(['']); file = null; state = 'idle'; message = ''; dirty = false;
   if (!root) build();
+  place();
   loadCode().catch(() => {});
   root.hidden = false;
-  root.parentElement.classList.add('fe-open');
+  // The dock stows the windows while the office view is up; leave it for the window.
+  if (inPane) { document.getElementById('app').dataset.m = 'side'; panes.show('doc'); } else root.parentElement.classList.add('fe-open');
   paint();
   await loadDir('');
   root.querySelector('.fe-x').focus();
@@ -45,8 +75,10 @@ export function closeFiles(force = false) {
   if (dirty && !force && !confirm('Close without saving your changes?')) return;
   root.hidden = true;
   root.parentElement.classList.remove('fe-open');
+  if (inPane) panes.close('doc');
   repo = null; file = null; dirty = false;
   cm?.destroy(); cm = null;
+  pdfView?.destroy(); pdfView = null;
   onClose?.();
 }
 
@@ -65,12 +97,28 @@ async function reveal(p) {
 }
 
 
+// On a wide screen the editor is a window like Chat and Jobs; on a phone it
+// takes the whole view.
+let inPane = false;
+function place() {
+  inPane = panes.desktop();
+  root.classList.toggle('fe-pane', inPane);
+  const host = inPane ? panes.body('doc') : document.getElementById('view');
+  if (root.parentElement !== host) host.append(root);
+}
+
+// Closing the window itself ends the session the same way the back button does.
+document.addEventListener('pane:closed', (e) => {
+  if (e.detail !== 'doc' || !root || root.hidden) return;
+  if (dirty && !confirm('Close without saving your changes?')) { panes.show('doc'); return; }
+  closeFiles(true);
+});
+
 function build() {
   root = document.createElement('section');
   root.className = 'fedit';
   root.setAttribute('aria-label', 'File editor');
   root.hidden = true;
-  document.getElementById('view').append(root);
   root.addEventListener('click', (e) => {
     const t = e.target.closest('[data-act]');
     if (!t) return;
@@ -79,6 +127,7 @@ function build() {
     else if (act === 'dir') toggle(t.dataset.path);
     else if (act === 'file') openFile(t.dataset.path);
     else if (act === 'save') save();
+    else if (act === 'read') { reading = !reading; paintMain(cm?.text() ?? ''); paintBar(); }
     else if (act === 'reload') openFile(file.path, true);
     else if (act === 'retry') loadDir(t.dataset.path);
     else if (act === 'tree') root.classList.toggle('fe-tree-open');
@@ -101,6 +150,7 @@ function paint() {
       <div class="fe-title"><b>${esc(repo)}</b><span class="fe-sub"></span></div>
       <span class="fe-fill"></span>
       <span class="fe-note" role="status"></span>
+      <button type="button" class="fe-read" data-act="read" hidden aria-pressed="false">Read</button>
       <button type="button" class="fe-save" data-act="save" disabled>Save</button>
     </header>
     <div class="fe-body">
@@ -118,6 +168,10 @@ function paintBar() {
   root.querySelector('.fe-sub').textContent = file ? `${file.path}${dirty ? ' · unsaved' : ''}` : 'Pick a file';
   root.querySelector('.fe-save').disabled = !file || !dirty || state === 'saving';
   root.querySelector('.fe-save').textContent = state === 'saving' ? 'Saving…' : 'Save';
+  const rd = root.querySelector('.fe-read');
+  rd.hidden = !file || !isMd(file.path);
+  rd.setAttribute('aria-pressed', String(reading));
+  rd.textContent = reading ? 'Edit' : 'Read';
   const note = root.querySelector('.fe-note');
   note.textContent = message;
   note.dataset.kind = state === 'error' ? 'bad' : '';
@@ -157,12 +211,31 @@ function paintMain(text = '') {
   const main = root?.querySelector('.fe-main');
   if (!main) return;
   cm?.destroy(); cm = null;
+  pdfView?.destroy(); pdfView = null;
   if (state === 'loading') main.innerHTML = `<div class="fe-skel big" aria-busy="true" aria-label="Opening file"><i></i><i></i><i></i><i></i><i></i></div>`;
   else if (state === 'error' && !file) main.innerHTML = `<p class="fe-empty">${esc(message)}</p>`;
   else if (!file) main.innerHTML = `<p class="fe-empty">Pick a file to edit it here. Cmd/Ctrl+S saves.</p>`;
+  else if (isPdf(file.path)) {
+    main.innerHTML = `<div class="fe-pdf" role="document" aria-label="${esc(file.path)}" aria-busy="true"><div class="fe-skel big"><i></i><i></i><i></i></div></div>`;
+    const host = main.querySelector('.fe-pdf'), at = file.path, was = repo;
+    import('./pdf.js').then((m) => m.mountPdf(host, `/api/files/pdf?${q({ repo, path: at })}`)).then((v) => {
+      host.removeAttribute('aria-busy');
+      if (!host.isConnected) { v.destroy(); return; }
+      pdfView = v;
+      root.querySelector('.fe-size').textContent = `${v.pages} page${v.pages === 1 ? '' : 's'}`;
+    }).catch((err) => { if (repo === was && host.isConnected) host.innerHTML = `<p class="fe-empty">${esc(err.message)}</p>`; });
+  }
   else {
     main.innerHTML = `${state === 'error' && /changed on disk|deleted/.test(message) ? `<div class="fe-conflict">${esc(message)} <button type="button" data-act="reload">Reload from disk</button></div>` : ''}<div class="fe-code"></div>`;
     cm = Code.mountCode(main.querySelector('.fe-code'), text, file.path, { change: edited, cursor: paintStatus, save });
+    if (reading && isMd(file.path)) {
+      const doc = document.createElement('article');
+      doc.className = 'fe-doc';
+      doc.innerHTML = md.parse(text);
+      main.querySelector('.fe-code').replaceWith(doc);
+      paintStatus(1, 1);
+      return;
+    }
   }
   paintStatus(1, 1);
 }
@@ -195,13 +268,19 @@ async function openFile(p, force = false) {
   file = null;
   paintMain(); paintBar();
   root.classList.remove('fe-tree-open');
+  if (isPdf(p)) {
+    file = { path: p }; state = 'ready'; reading = false;
+    paintMain(); paintTree(); paintBar();
+    return;
+  }
   try {
     const [r] = await Promise.all([api(`/api/files?${q({ repo, path: p })}`), loadCode()]);
     if (repo !== was) return;
     file = { path: r.path, mtime: r.mtime, size: r.size };
     state = 'ready';
+    reading = isMd(r.path);
     paintMain(r.text);
-    cm.focus();
+    if (!reading) cm.focus();
   } catch (err) {
     if (repo !== was) return;
     state = 'error'; message = err.message;

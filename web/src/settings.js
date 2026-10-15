@@ -165,6 +165,9 @@ function apply(msg) {
   if (msg.owner !== undefined) onOwner(msg.owner);
 }
 
+// The current value of a setting, or undefined before the server has said.
+export const settingValue = (key) => defs?.find((d) => d.key === key)?.value;
+
 // From the server's hello, and from changes made in another tab.
 export function setSettings(msg) {
   if (!msg?.settings) return;

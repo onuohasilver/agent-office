@@ -51,6 +51,19 @@ export const LAYOUTS = {
 };
 export const layoutOf = (id) => LAYOUTS[id] || LAYOUTS['layout-classic'];
 
+// What a desk, the communal table and the pool table take up on the floor.
+// Build mode (build.js) moves them, so the room and the mover share these.
+export const deskRect = (x, z, turned) => (turned ? [x - 1.3, x + 1.3, z - 0.5, z + 0.7] : [x - 1.3, x + 1.3, z - 0.7, z + 0.5]);
+export const tableRect = (x, z) => [x - 2.8, x + 2.8, z - 1.3, z + 1.3];
+export const poolRect = (x, z) => [x - 1.95, x + 1.95, z - 1.15, z + 1.15];
+
+// A layout with the boss's own arrangement laid over it: custom is
+// { desks: { [index]: [x, z, turned] }, table: [x, z], pool: [x, z], items: { [id]: [x, z, face] } }.
+export function arrange(L, custom) {
+  if (!custom) return L;
+  return { ...L, desks: L.desks.map((d, i) => custom.desks?.[i] || d), table: custom.table || L.table, pool: custom.pool || L.pool };
+}
+
 // The paint and floor bought from the shop. The floor is a tint over the
 // planks, so oak is no tint at all.
 const FLOOR_TINT = { 'floor-oak': '#ffffff', 'floor-walnut': '#a77c55', 'floor-terrazzo': '#f2efea', 'floor-concrete': '#b8b9b6' };
@@ -553,10 +566,9 @@ function buildDesk(scene, grid, x, z, index, turned = false) {
   g.add(chair);
 
   scene.add(g);
-  if (turned) grid.block(x - 1.3, x + 1.3, z - 0.5, z + 0.7);
-  else grid.block(x - 1.3, x + 1.3, z - 0.7, z + 0.5);
+  grid.block(...deskRect(x, z, turned));
   // `face` is which way someone sitting there looks: at the screen.
-  const desk = { index, x, z, group: g, face: turned ? 0 : Math.PI, seat: new THREE.Vector3(x, 0, z + (turned ? -1.05 : 1.05)), seatY: SEAT, screen: main.face, side: side.face, plate, led: ledMat, chair };
+  const desk = { index, x, z, turned, group: g, face: turned ? 0 : Math.PI, seat: new THREE.Vector3(x, 0, z + (turned ? -1.05 : 1.05)), seatY: SEAT, screen: main.face, side: side.face, plate, led: ledMat, chair };
   dressDesk(desk, {});
   return desk;
 }
@@ -758,8 +770,8 @@ export function dressDesk(desk, { name = '', accent = '#7d8a9c', state = 'open' 
 
 // ---------- the room ----------
 
-export function buildOffice(scene, layoutId) {
-  const L = layoutOf(layoutId);
+export function buildOffice(scene, layoutId, custom) {
+  const L = arrange(layoutOf(layoutId), custom);
   POOL.x = L.pool[0];
   POOL.z = L.pool[1];
   const [TX, TZ] = L.table;
@@ -1012,7 +1024,7 @@ export function buildOffice(scene, layoutId) {
     table.add(glow);
   }
   scene.add(table);
-  grid.block(TX - 2.8, TX + 2.8, TZ - 1.3, TZ + 1.3);
+  grid.block(...tableRect(TX, TZ));
 
   // pool table on the open floor beside the lobby. Table space is the sim's
   // (cloth middle at the origin, long side along x), so the balls can be
@@ -1041,7 +1053,7 @@ export function buildOffice(scene, layoutId) {
     pool.add(m);
   }
   scene.add(pool);
-  grid.block(POOL.x - 1.95, POOL.x + 1.95, POOL.z - 1.15, POOL.z + 1.15);
+  grid.block(...poolRect(POOL.x, POOL.z));
 
   // lounge floor lamp
   const lamp = new THREE.Group();
@@ -1066,7 +1078,22 @@ export function buildOffice(scene, layoutId) {
 
   // Open floor for whatever the office buys, facing the middle of the room.
   // Anything that ended up under furniture is dropped.
-  const decorSlots = L.slots.filter(([x, z]) => !grid.blocked(...grid.cellOf(x, z)))
+  // What's fixed to the floor, for build mode: the grid without anything the
+  // boss can pick up. Office items are placed after this.
+  const fixed = new Grid(W, D, FLOOR.x0, FLOOR.z0);
+  fixed.cells.set(grid.cells);
+  for (const d of desks) fixed.free(...deskRect(d.x, d.z, d.turned));
+  fixed.free(...tableRect(TX, TZ));
+  fixed.free(...poolRect(POOL.x, POOL.z));
+  // A slot is judged against the floor plan as it comes, not as the boss has
+  // rearranged it, so moving a desk never shuffles which item takes which slot.
+  const base = layoutOf(layoutId);
+  const stock = new Grid(W, D, FLOOR.x0, FLOOR.z0);
+  stock.cells.set(fixed.cells);
+  for (const [x, z, turned] of base.desks) stock.block(...deskRect(x, z, turned));
+  stock.block(...tableRect(...base.table));
+  stock.block(...poolRect(...base.pool));
+  const decorSlots = L.slots.filter(([x, z]) => !stock.blocked(...stock.cellOf(x, z)))
     .map(([x, z]) => ({ x, z, face: Math.atan2(0 - x, 1 - z) }));
   const setFinish = ({ floor, wall } = {}) => {
     top.color.set(FLOOR_TINT[floor] || '#ffffff');
@@ -1122,7 +1149,7 @@ export function buildOffice(scene, layoutId) {
   Object.assign(stations, wing.stations);
 
   const updateWalls = (camera, target, dt) => cutaway(walls, camera, target, dt);
-  return { grid, desks, stations, pool, standup, board, forbes, scribble, blinkers, globe: land, slab, updateWalls, decorSlots, setFinish, layout: L, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
+  return { grid, desks, stations, pool, standup, board, forbes, scribble, blinkers, globe: land, slab, updateWalls, decorSlots, setFinish, layout: L, custom: custom || {}, fixed, table, door: new THREE.Vector3(DOOR_X, 0, 14.4), reception: { seat: new THREE.Vector3(23.4, 0, 11.4), seatY: SEAT } };
 }
 
 

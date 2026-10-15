@@ -243,12 +243,13 @@ export class Guests {
     switch (op) {
       case 'hello':
         return {
-          staff: this.office.staff(),
+          staff: this.office.staff().filter((s) => !p.agents || p.agents.includes(s.id)),
           modes: Object.fromEntries(Object.entries(this.office.modes()).filter(([k]) => CLEARANCE.indexOf(k) <= CLEARANCE.indexOf(p.clearance))),
           jobs: this.jobsOf(link.id).map((j) => guestJob(j)),
           policy: {
             repos: p.repos, clearance: p.clearance, tokensPerDay: p.tokensPerDay, tokensToday: this.tokensToday(link.id),
             ourAgents: p.ourAgents !== false, theirAgents: this.copies ? p.theirAgents || 'off' : 'off',
+            agents: p.agents || null,
           },
           // We can run a lent agent in one of the guest's own projects (createJob's `home`).
           home: true,
@@ -272,9 +273,11 @@ export class Guests {
         this.checkTokens(link, p);
         if (this.jobsOf(link.id, true).length >= MAX_OPEN_JOBS) throw fail(429, `You can have ${MAX_OPEN_JOBS} jobs going at once here. Wait for one to finish.`);
         const prompt = String(args.prompt ?? '').slice(0, MAX_PROMPT);
+        const agentId = typeof args.agentId === 'string' ? args.agentId : '';
+        if (p.agents && agentId && !p.agents.includes(agentId)) throw fail(403, 'That agent isn’t lent to you.');
         const job = this.office.createJob(
-          { repo: home ? `${home.repo}@${home.host}` : args.repo, prompt, mode, model: typeof args.model === 'string' ? args.model : '', agentId: typeof args.agentId === 'string' ? args.agentId : '' },
-          { from: `@${link.peer}`, guest: { link: link.id }, ...(home && { away: home }) },
+          { repo: home ? `${home.repo}@${home.host}` : args.repo, prompt, mode, model: typeof args.model === 'string' ? args.model : '', agentId },
+          { from: `@${link.peer}`, guest: { link: link.id }, ...(home && { away: home }), ...(p.agents && { pool: p.agents }) },
         );
         return { job: guestJob(job) };
       }

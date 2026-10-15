@@ -17,7 +17,6 @@
   <body>
     <div class="app" id="app" data-m="office">
       <aside class="side">
-        <div class="side-grip" id="side-grip" role="separator" aria-orientation="vertical" aria-label="Resize the side panel" tabindex="0"></div>
         <header class="brand">
           <div class="title">
             <span class="title-start">
@@ -92,6 +91,7 @@
           <button type="button" data-tab="jobs">Jobs <span id="jobCount"></span></button>
           <button type="button" data-tab="projects">Projects</button>
           <button type="button" data-tab="team">Team</button>
+          <button type="button" data-tab="needs">Needs you <span id="needsCount"></span></button>
         </nav>
         <section class="pane" id="chatPane">
           <div class="channels" id="channels" role="tablist" aria-label="Channels"></div>
@@ -170,6 +170,9 @@
           </div>
           <div class="projects" id="projects"></div>
         </section>
+        <section class="pane" id="needsPane" hidden>
+          <div class="jobs needs" id="needs"></div>
+        </section>
         <section class="pane" id="jobsPane" hidden>
           <div class="jobs" id="jobs"></div>
           <button class="ghost" id="clear" hidden>Clear finished</button>
@@ -181,7 +184,7 @@
         <div id="labels"></div>
 
         <div class="hud">
-          <button type="button" class="chip pot" id="shopBtn" aria-haspopup="dialog" aria-expanded="false" title="Shop and office pot" hidden><b>₦0</b><span>Shop</span></button>
+          <button type="button" class="chip pot" id="shopBtn" aria-haspopup="dialog" aria-expanded="false" aria-label="Shop and office pot" title="Shop and office pot" hidden><b>₦0</b><span>Shop</span></button>
           <button type="button" class="chip pot shop-door" data-shop-tab="rich" aria-haspopup="dialog" aria-label="Forbes list: the richest agents" title="Forbes list: the richest agents" hidden><i aria-hidden="true">👑</i><span>Forbes list</span></button>
           <button type="button" class="chip pot shop-door" data-shop-tab="looks" aria-haspopup="dialog" aria-label="Customise the office" title="Customise the office: layout, paint, floor and furniture" hidden><i aria-hidden="true">🎨</i><span>Customise</span></button>
           <div class="chip away" id="away" hidden></div>
@@ -195,6 +198,9 @@
             </button>
             <button type="button" id="recenter" title="Recenter (R)" aria-label="Recenter">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+            </button>
+            <button type="button" id="arrange" aria-pressed="false" title="Arrange the office: move desks, tables and furniture" aria-label="Arrange the office">
+              <svg viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M12 2l-3 3M12 2l3 3M12 22l-3-3M12 22l3-3M2 12l3-3M2 12l3 3M22 12l-3-3M22 12l-3 3"/></svg>
             </button>
             <button type="button" id="standup" title="Call a standup" aria-label="Call a standup">
               <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="15" r="2"/><circle cx="19" cy="15" r="2"/><path d="M8.5 20.5a7.5 7.5 0 0 0 7 0M3.5 10.5a8.5 8.5 0 0 1 4.5-5M20.5 10.5a8.5 8.5 0 0 0-4.5-5"/></svg>
@@ -213,20 +219,23 @@
       <aside class="detail" id="detail" hidden></aside>
 
       <nav class="mnav" id="mnav" aria-label="Sections">
-        <button type="button" data-m="office" class="on">
-          <svg viewBox="0 0 24 24"><path d="M3 10.5L12 4l9 6.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg>Office
+        <button type="button" data-m="office" title="Office" aria-label="Office" class="on">
+          <svg viewBox="0 0 24 24"><path d="M3 10.5L12 4l9 6.5"/><path d="M5 9.5V20h14V9.5"/><path d="M10 20v-5h4v5"/></svg><span class="lbl">Office</span>
         </button>
-        <button type="button" data-m="chat">
-          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat<i class="dot" id="mChatDot" hidden></i>
+        <button type="button" data-m="chat" title="Chat" aria-label="Chat">
+          <svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg><span class="lbl">Chat</span><i class="dot" id="mChatDot" hidden></i>
         </button>
-        <button type="button" data-m="jobs">
-          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg>Jobs<b id="mJobCount"></b>
+        <button type="button" data-m="jobs" title="Jobs" aria-label="Jobs">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h10"/></svg><span class="lbl">Jobs</span><b id="mJobCount"></b>
         </button>
-        <button type="button" data-m="projects">
-          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Projects
+        <button type="button" data-m="projects" title="Projects" aria-label="Projects">
+          <svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="lbl">Projects</span>
         </button>
-        <button type="button" data-m="team">
-          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.4"/><path d="M17 14.5a4.6 4.6 0 0 1 4 5.5"/></svg>Team
+        <button type="button" data-m="team" title="Team" aria-label="Team">
+          <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.4"/><path d="M17 14.5a4.6 4.6 0 0 1 4 5.5"/></svg><span class="lbl">Team</span>
+        </button>
+        <button type="button" data-m="needs" title="Needs you" aria-label="Needs you">
+          <svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0 1 12 0v6l1.5 2h-15z"/><path d="M10 21h4"/></svg><span class="lbl">Needs you</span><b id="mNeedsCount"></b>
         </button>
       </nav>
     </div>

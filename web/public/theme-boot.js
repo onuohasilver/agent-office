@@ -8,5 +8,6 @@
     var r = document.documentElement;
     r.dataset.theme = t;
     r.dataset.mode = d ? 'dark' : 'light';
+    r.dataset.nav = localStorage.getItem('office.nav') === 'sidebar' ? 'sidebar' : 'dock';
   } catch (e) {}
 })();

@@ -9,6 +9,7 @@ import { PAY, modelPay, naira } from '../../shared/shop.js';
 
 import { openJourneys } from './journeys.js';
 import { openFiles } from './files.js';
+import { panes } from './panes.js';
 
 const $ = (id) => document.getElementById(id);
 const DEFAULT_EMOJI = ['👍', '❤️', '😂', '🎉', '👀', '🙏', '🔥', '✅'];
@@ -25,7 +26,8 @@ const md = new Marked({ gfm: true, breaks: true });
 md.use({
   renderer: {
     html: (t) => esc(t.text ?? t),
-    link: ({ href, text }) => (/^https?:\/\//i.test(href) ? `<a href="${esc(href)}" target="_blank" rel="noreferrer">${esc(text)}</a>` : esc(text)),
+    // doc:project/path.md opens that file in the office's file editor.
+    link: ({ href, text }) => (/^doc:[^/\s]+\/\S+$/i.test(href) ? `<a href="#doc=${esc(encodeURI(href.slice(4)))}" data-doc="${esc(href.slice(4))}">${esc(text)}</a>` : /^https?:\/\//i.test(href) ? `<a href="${esc(href)}" target="_blank" rel="noreferrer">${esc(text)}</a>` : esc(text)),
     image: ({ text }) => esc(text),
   },
 });
@@ -288,6 +290,7 @@ export class Hud {
     this.channels = [{ id: 'general', name: 'general' }];
     this.channel = store('office.channel') || 'general';
     this.unread = new Map();
+    this.curTab = 'chat';
 
     $('clear').onclick = async () => { await api('/api/jobs/clear', {}); this.closeDetail(); };
     $('away').onclick = (e) => {
@@ -297,6 +300,15 @@ export class Hud {
     $('attn').onclick = (e) => {
       const b = e.target.closest('[data-attn]');
       if (b) this.jumpTo(b.dataset.attn);
+    };
+    $('needs').onclick = async (e) => {
+      const x = e.target.closest('[data-dismiss]');
+      if (x) {
+        try { await api('/api/jobs/needs/dismiss', { id: x.dataset.dismiss || undefined }); } catch (err) { this.toast(err.message, 'bad'); }
+        return;
+      }
+      const btn = e.target.closest('[data-id]');
+      if (btn) this.app.openJob(btn.dataset.id);
     };
     $('jobs').onclick = (e) => {
       const btn = e.target.closest('[data-id]');
@@ -324,11 +336,17 @@ export class Hud {
         this.renderProjects();
       }
     };
-    document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => this.tab(b.dataset.tab)));
+    // On a wide screen each of these is a window: pressing one brings it up, or
+    // closes it if it is already on top. On a phone they take turns.
+    const launch = (name) => { if (!(panes.desktop() && panes.toggle(name))) this.tab(name); };
+    document.querySelectorAll('.tabs button').forEach((b) => (b.onclick = () => launch(b.dataset.tab)));
     document.querySelectorAll('#mnav button').forEach((b) => (b.onclick = () => {
       if (b.dataset.m === 'office') this.mobile('office');
-      else this.tab(b.dataset.m);
+      else launch(b.dataset.m);
     }));
+    document.addEventListener('panes:mode', () => this.syncPanes());
+    this.syncPanes(false);
+    if (panes.visible('projects')) this.loadProjects();
     this.bindViewToggle();
     this.bindTeam();
     this.bindChat();
@@ -433,11 +451,13 @@ export class Hud {
   renderStats(jobs, extra = 0) {
     const count = (s) => jobs.filter((j) => j.status === s && !j.awaitingBoss).length;
     const spent = jobs.reduce((a, j) => a + (j.cost || 0), extra);
+    const stat = (icon, value, label) =>
+      `<span title="${label}" aria-label="${value} ${label}" role="img"><svg viewBox="0 0 24 24" aria-hidden="true">${icon}</svg><b>${value}</b></span>`;
     $('stats').innerHTML = [
-      `<span><b>${count('working')}</b> working</span>`,
-      `<span><b>${count('queued')}</b> queued</span>`,
-      `<span><b>${count('done')}</b> shipped</span>`,
-      `<span><b>$${spent.toFixed(2)}</b> spent</span>`,
+      stat('<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>', count('working'), 'working'),
+      stat('<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>', count('queued'), 'queued'),
+      stat('<path d="m5 12 4.5 4.5L19 7"/>', count('done'), 'shipped'),
+      stat('<path d="M12 4v16M16 8c0-1.5-1.8-2.5-4-2.5S8 6.5 8 8s1.8 2.3 4 2.8 4 1.3 4 2.8-1.8 2.6-4 2.6-4-1-4-2.6"/>', `$${spent.toFixed(2)}`, 'spent'),
     ].join('');
   }
 
@@ -464,6 +484,41 @@ export class Hud {
     $('jobCount').textContent = open ? String(open) : '';
     $('mJobCount').textContent = open ? String(open) : '';
     this.renderProjects(jobs);
+    this.renderNeeds(jobs, staffName);
+  }
+
+  // ---------- what is waiting on the boss ----------
+
+  // Every job whose agent has asked something and is still owed an answer,
+  // longest-waiting first, with how long it has been.
+  renderNeeds(jobs = this.needJobs, staffName = this.needName) {
+    this.needJobs = jobs;
+    this.needName = staffName;
+    const KIND = { question: 'Question', decision: 'Decision', blocker: 'Blocked' };
+    const items = jobs
+      .filter((j) => j.asking && !j.asking.dismissed && !j.visitor && !j.guest && !j.remote && (j.awaitingBoss || j.status === 'working'))
+      .map((j) => ({ j, at: j.asking.at || j.endedAt || j.startedAt || j.queuedAt }))
+      .sort((a, b) => a.at - b.at);
+    const row = ({ j, at }) => `
+        <div class="need-wrap">
+        <button class="job need" data-id="${esc(j.id)}">
+          <span class="dot ${known(STATUS, j.status)}"></span>
+          <span class="t" title="${esc(j.title)}">${esc(askOf(j.title))}</span>
+          <time class="w" datetime="${new Date(at).toISOString()}" data-at="${at}" title="Waiting since ${esc(new Date(at).toLocaleString())}">${since(at)}</time>
+          <span class="m"><b class="kind ${known(KIND, j.asking.kind)}">${esc(KIND[j.asking.kind] || 'Waiting')}</b> · ${j.agentId ? esc(staffName(j.agentId)) : ''} · <span class="r">${esc(j.repo)}</span></span>
+          <span class="ask">${esc(String(j.asking.summary || '').slice(0, 300))}</span>
+        </button>
+        <button type="button" class="need-x" data-dismiss="${esc(j.id)}" aria-label="Dismiss" title="Dismiss"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>`;
+    $('needs').innerHTML = items.length
+      ? items.map(row).join('') + (items.length > 1 ? '<button type="button" class="ghost" data-dismiss="">Dismiss all</button>' : '')
+      : `<p class="empty">Nothing is waiting on you.</p>`;
+    $('needsCount').textContent = items.length ? String(items.length) : '';
+    $('mNeedsCount').textContent = items.length ? String(items.length) : '';
+    if (!this.needTick) {
+      // The waits tick up on their own, without a job changing.
+      this.needTick = setInterval(() => document.querySelectorAll('#needs time[data-at]').forEach((t) => { t.textContent = since(+t.dataset.at); }), 30000);
+    }
   }
 
   // Projects and Team share one list/icons choice, remembered per browser.
@@ -513,7 +568,7 @@ export class Hud {
 
   renderProjects(jobs = this.lastJobs || []) {
     this.lastJobs = jobs;
-    if ($('projectsPane').hidden) return;
+    if (!panes.visible('projects')) return;
     if (!this.repos) {
       $('projects').innerHTML = `<p class="empty">Looking for projects…</p>`;
       return;
@@ -590,7 +645,7 @@ export class Hud {
     const el = $('detail');
     el.hidden = false;
     el.innerHTML = `
-      <div class="d-head">
+      <div class="d-head" tabindex="0" aria-label="Job card. Drag to move it, arrow keys nudge it, Shift and arrows resize it, double-click puts it back.">
         <span class="pill ${known(STATUS, job.status)}">${statusText(job.status)}</span>
         <button class="x" title="Close (Esc)">×</button>
       </div>
@@ -1005,20 +1060,39 @@ export class Hud {
   mobile(m) {
     $('app').dataset.m = m === 'office' ? 'office' : 'side';
     if (m === 'chat') $('mChatDot').hidden = true;
-    document.querySelectorAll('#mnav button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+    if (panes.desktop()) panes.sync();
+    else document.querySelectorAll('#mnav button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
   }
 
   tab(name) {
+    this.curTab = name;
     this.mobile(name);
-    document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
-    $('chatPane').hidden = name !== 'chat' || !!this.thread;
-    $('threadPane').hidden = name !== 'chat' || !this.thread;
-    $('jobsPane').hidden = name !== 'jobs';
-    $('teamPane').hidden = name !== 'team';
-    $('projectsPane').hidden = name !== 'projects';
-    if (name === 'team') this.renderTeam();
-    if (name === 'projects') this.loadProjects();
+    panes.show(name);
+    this.syncPanes();
     if (name === 'chat') this.scrollChat(true);
+  }
+
+  // Which sections are showing: all of them in their own windows on a wide
+  // screen (the chat window swaps between the channel and a thread), one at a
+  // time in the sidebar on a phone. Run again when the screen crosses over.
+  syncPanes(draw = true) {
+    const name = this.curTab;
+    const wide = panes.desktop();
+    $('chatPane').hidden = !!this.thread || (!wide && name !== 'chat');
+    $('threadPane').hidden = !this.thread || (!wide && name !== 'chat');
+    $('jobsPane').hidden = !wide && name !== 'jobs';
+    $('teamPane').hidden = !wide && name !== 'team';
+    $('needsPane').hidden = !wide && name !== 'needs';
+    $('projectsPane').hidden = !wide && name !== 'projects';
+    if (wide) panes.sync();
+    else {
+      const m = $('app').dataset.m === 'office' ? 'office' : name;
+      document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === name));
+      document.querySelectorAll('#mnav button').forEach((b) => b.classList.toggle('on', b.dataset.m === m));
+    }
+    if (!draw) return;
+    if (panes.visible('team')) this.renderTeam();
+    if (panes.visible('projects')) this.loadProjects();
   }
 
   focusInput(prefix = '') {
@@ -1656,7 +1730,7 @@ export class Hud {
 
   // Live updates wait while a form has unsaved edits, so typing is never lost.
   renderTeam(force = false) {
-    if ($('teamPane').hidden || (!force && this.dirty())) return;
+    if (!panes.visible('team') || (!force && this.dirty())) return;
     const { staff, progress, dismissed } = this.app;
     const cap = progress?.capacity || 0;
     const form = (s) => `<form data-id="${esc(s.id)}">

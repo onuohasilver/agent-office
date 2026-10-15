@@ -424,6 +424,14 @@ const OFFICE = {
 
 // Footprints, half-width and depth from the slot, to keep people walking round.
 const FOOT = { neon: [0.9, 0.3], vending: [0.5, 0.45], arcade: [0.4, 0.45], jukebox: [0.5, 0.35], aquarium: [0.8, 0.35], pingpong: [0.7, 2.1] };
+// The floor an item takes at (x, z) turned to `face`, as [x0, x1, z0, z1].
+export function footRect(id, x, z, face = 0) {
+  const [hw, d] = FOOT[id];
+  const c = Math.cos(face), s = Math.sin(face);
+  const pts = [[-hw, -0.4], [hw, -0.4], [-hw, d], [hw, d]].map(([lx, lz]) => [x + lx * c + lz * s, z - lx * s + lz * c]);
+  const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
+  return [Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs)];
+}
 // Each item always takes the same slot, so buying one never moves another.
 const ORDER = Object.keys(OFFICE);
 
@@ -438,7 +446,9 @@ export function placeOfficeItems(office, itemIds = [], scene = office?.scene) {
   for (const g of office.decor || []) clear(g);
   office.decor = [];
   ids.forEach((id) => {
-    const slot = slots[ORDER.indexOf(id) % slots.length];
+    // The boss's own spot for it, if they've moved it, else its slot.
+    const own = office.custom?.items?.[id];
+    const slot = own ? { x: own[0], z: own[1], face: own[2] || 0 } : slots[ORDER.indexOf(id) % slots.length];
     if (!slot) return;
     const g = new THREE.Group();
     g.name = `decor-${id}`;
@@ -448,11 +458,8 @@ export function placeOfficeItems(office, itemIds = [], scene = office?.scene) {
     scene.add(g);
     office.decor.push(g);
     // Nothing is ever sold back, so once blocked a spot stays blocked.
-    const [hw, d] = FOOT[id];
-    const c = Math.cos(slot.face || 0), s = Math.sin(slot.face || 0);
-    const pts = [[-hw, -0.4], [hw, -0.4], [-hw, d], [hw, d]].map(([lx, lz]) => [slot.x + lx * c + lz * s, slot.z - lx * s + lz * c]);
-    const xs = pts.map((p) => p[0]), zs = pts.map((p) => p[1]);
-    if (!slot.blocked) office.grid?.block(Math.min(...xs), Math.max(...xs), Math.min(...zs), Math.max(...zs));
+    const [x0, x1, z0, z1] = footRect(id, slot.x, slot.z, slot.face);
+    if (!slot.blocked) office.grid?.block(x0, x1, z0, z1);
     slot.blocked = true;
   });
 }

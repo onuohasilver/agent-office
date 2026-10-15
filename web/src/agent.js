@@ -35,6 +35,34 @@ function blobTexture() {
   return (blobTex = new THREE.CanvasTexture(c));
 }
 
+// Rank glyph for the name tag: n 0-2 stack 1-3 chevrons, n 3-5 show 1-3 stars.
+function rankIcon(n) {
+  const NS = 'http://www.w3.org/2000/svg';
+  const stars = n >= 3;
+  const count = (stars ? n - 2 : n + 1);
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', stars ? `0 0 ${count * 10} 10` : '0 0 10 12');
+  svg.setAttribute('class', 'rank');
+  svg.setAttribute('aria-hidden', 'true');
+  for (let i = 0; i < count; i++) {
+    const el = document.createElementNS(NS, 'path');
+    if (stars) {
+      el.setAttribute('d', 'M5 .8l1.3 2.9 3.1.3-2.3 2.1.7 3.1L5 7.6 2.2 9.2l.7-3.1L.6 4l3.1-.3z');
+      el.setAttribute('transform', `translate(${i * 10} 0)`);
+      el.setAttribute('fill', 'currentColor');
+    } else {
+      el.setAttribute('d', `M1 ${6 - i * 3 + 3.5}L5 ${6 - i * 3 + 0.5}l4 3`);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', 'currentColor');
+      el.setAttribute('stroke-width', '1.6');
+      el.setAttribute('stroke-linecap', 'round');
+      el.setAttribute('stroke-linejoin', 'round');
+    }
+    svg.append(el);
+  }
+  return svg;
+}
+
 export class Agent {
   constructor(staff, world, labels, opts = {}) {
     this.staff = staff;
@@ -110,14 +138,28 @@ export class Agent {
     this.labelDirty = true;
   }
 
-  // Title and streak on the name tag, from the economy's books.
+  // Level glyph and streak on the name tag, from the economy's books. The
+  // title word lives in the tooltip; the tag shows rank chevrons (levels 1-3)
+  // or stars (levels 4-6).
   setPerks(p) {
-    const text = p ? `${p.title}${p.streak >= 2 ? ` 🔥${p.streak}` : ''}` : '';
-    if (this.perkEl.textContent === text) return;
-    this.perkEl.textContent = text;
-    this.perkEl.hidden = !text;
-    this.perkEl.title = p ? `Level ${p.n} ${p.title}${p.streak >= 2 ? `, ${p.streak}-day streak${p.boost ? ` (+${Math.round(p.boost * 100)}% wage)` : ''}` : ''}` : '';
+    const key = p ? `${p.n}|${p.streak >= 2 ? p.streak : 0}` : '';
+    if (this.perkKey === key) {
+      if (p) this.perkEl.title = this.perkTitle(p);
+      return;
+    }
+    this.perkKey = key;
+    this.perkEl.replaceChildren();
+    if (p) {
+      this.perkEl.append(rankIcon(p.n));
+      if (p.streak >= 2) this.perkEl.append(document.createTextNode(`🔥${p.streak}`));
+      this.perkEl.title = this.perkTitle(p);
+    } else this.perkEl.title = '';
+    this.perkEl.hidden = !p;
     this.labelDirty = true;
+  }
+
+  perkTitle(p) {
+    return `Level ${p.n} ${p.title}${p.streak >= 2 ? `, ${p.streak}-day streak${p.boost ? ` (+${Math.round(p.boost * 100)}% wage)` : ''}` : ''}`;
   }
 
   say(text, kind = '', ms = 0) {
