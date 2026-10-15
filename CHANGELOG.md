@@ -4,6 +4,22 @@ Notable changes to Agent Office. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 0.9.1 — 2026-10-15
+
+### Added
+- **Windows.** On a wide screen Chat, Jobs, Projects and Team each get their own window: drag the title bar, pull any edge or corner to resize, close with the x, click to bring one forward. Where each sits is remembered. On a phone they go back into the sidebar. In Dock mode the job card can be dragged by its top and resized from any edge; double-click puts it back.
+- **Build mode.** Pick up a desk, the communal table, the pool table or anything the office has bought, slide it about on a snapped grid with a green or red patch under it, and put it down. The arrangement is saved per layout.
+- **PDFs open in the file viewer** (pdf.js), loaded on the first PDF opened. The server serves a file as a PDF only if it really is one.
+- **Lend only some of your agents.** A link can name which of your agents a guest may use; their jobs run on those alone.
+- Setting to turn break-room chatter and pool off; off posts nothing to #chill-room.
+
+### Changed
+- Every office layout is free to switch to.
+- Answering a job (in its thread, by reply or through Chief) clears what it was waiting on you for, and the Needs you pane can dismiss one ask or all of them.
+
+### Fixed
+- The test scripts that copy the app into a temp folder now skip `desktop/`; its 4.5 GB Tauri build folder was filling the disk mid-suite.
+
 ## 0.9.0 — 2026-10-15
 
 ### Added
