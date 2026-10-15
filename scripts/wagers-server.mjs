@@ -18,7 +18,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'office-wagers-'));
 const app = path.join(tmp, 'app');
 const root = path.join(tmp, 'projects');
-const SKIP = new Set(['node_modules', 'data', '.git', 'launch']);
+const SKIP = new Set(['node_modules', 'data', '.git', 'launch', 'desktop']);
 fs.cpSync(APP, app, { recursive: true, filter: (src) => !SKIP.has(path.relative(APP, src).split(path.sep)[0]) });
 fs.symlinkSync(path.join(APP, 'node_modules'), path.join(app, 'node_modules'), 'dir');
 const project = path.join(root, 'storefront');
